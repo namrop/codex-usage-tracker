@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-usage-tracker"
+version = "0.1.0"
+description = "Track Codex usage snapshots from ChatGPT usage endpoint"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.28",
+  "flask>=3.0"
+]
+
+[project.scripts]
+codex-usage-tracker = "codex_usage_tracker.cli:main"
+
+[tool.setuptools.package-data]
+codex_usage_tracker = ["templates/*.html"]

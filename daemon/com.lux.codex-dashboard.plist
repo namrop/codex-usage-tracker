@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.lux.codex-dashboard</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>PYTHON_PATH</string>
+      <string>-m</string>
+      <string>codex_usage_tracker</string>
+      <string>dashboard</string>
+      <string>--port</string>
+      <string>5174</string>
+      <string>--atrium-root</string>
+      <string>/Users/luisramirez/Digital_Workspace</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/luisramirez/Library/Logs/codex-dashboard.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/luisramirez/Library/Logs/codex-dashboard.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/luisramirez/Code/codex-usage-tracker</string>
+  </dict>
+</plist>
