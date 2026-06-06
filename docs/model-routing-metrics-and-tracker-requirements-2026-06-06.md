@@ -12,7 +12,7 @@ The near-term routing policy is:
 
 > Codex remains default while healthy. When projected Codex usage threatens a protected reserve, move non-vision/non-critical work to DeepSeek-class fallbacks and preserve Codex for vision, final judgment, and high-priority emergencies.
 
-To make good pricing/model-switching decisions, the tracker needs to collect more than hourly Codex percentage snapshots. It needs quota state, token/cost correlation, direct-provider spend, routing decisions, model capabilities, and task outcomes at enough frequency to support projections before the user runs out of quota.
+To make good pricing/model-switching decisions, the tracker needs to collect more than hourly Codex percentage snapshots. It needs quota state, **Codex token/API-call accounting**, token/cost correlation, direct-provider spend, routing decisions, model capabilities, and task outcomes at enough frequency to support projections before the user runs out of quota.
 
 ## Current data sources
 
@@ -28,6 +28,7 @@ To make good pricing/model-switching decisions, the tracker needs to collect mor
    - DB: `/Users/luisramirez/.hermes/state.db`
    - Table/filter: `sessions` where `billing_provider = 'openai-codex'`
    - Current correlation implementation: `src/codex_usage_tracker/token_correlation.py`
+   - This is the current source for Codex-side token/API-call counts, but it is session/window-granularity unless the Hermes provider layer records individual Codex calls.
    - Useful fields already available in Hermes session rows:
      - `started_at`
      - `billing_provider`
@@ -107,7 +108,55 @@ Why:
 
 - The router needs to distinguish healthy, capped, unknown, reset, and transient-dropout states.
 
-### 2. Quota burn-rate projection rows
+### 2. Codex token/API-call accounting rows
+
+Frequency: **per Codex API call where Hermes can capture it**; otherwise **per Hermes session row and hourly correlation window** from `~/.hermes/state.db`.
+
+This is distinct from the hourly Codex quota snapshot. The quota endpoint tells us percent-used and reset state; the token/accounting rows tell us what work caused that movement.
+
+Suggested normalized row:
+
+```json
+{
+  "id": "uuid",
+  "started_at": "ISO-8601 UTC",
+  "completed_at": "ISO-8601 UTC",
+  "provider": "openai-codex",
+  "model": "gpt-5.3-codex-spark",
+  "session_id": "Hermes session id if available",
+  "route_decision_id": "uuid if routed automatically",
+  "codex_usage_window_start": "prior usage snapshot timestamp if correlated",
+  "codex_usage_window_end": "next usage snapshot timestamp if correlated",
+  "api_calls": 1,
+  "input_tokens": 12345,
+  "cache_read_tokens": 100000,
+  "cache_write_tokens": 0,
+  "output_tokens": 1200,
+  "reasoning_tokens": 500,
+  "prompt_tokens": 112345,
+  "total_tokens": 114045,
+  "cache_hit_pct": 88.98,
+  "source": "provider_response|hermes_session|hourly_correlation",
+  "quota_session_delta_pct": 0.2,
+  "quota_weekly_delta_pct": 0.1,
+  "latency_ms": 4200,
+  "error_class": null
+}
+```
+
+Requirements:
+
+- Track Codex tokens and API calls with the same bucket vocabulary used for direct providers: input, cache read, cache write, output, reasoning, prompt, total.
+- Keep `api_calls` explicit. Request count is not the cost model, but it is necessary for debugging throttling, retry loops, tool-call explosions, and provider-side anomalies.
+- Preserve the correlation-window linkage to Codex quota snapshots. A token row is most useful when it can answer: “these tokens/API calls occurred between the two quota samples that moved weekly usage by X%.”
+- If Hermes only has session-level aggregation, label the row `source: "hermes_session"` or `source: "hourly_correlation"` rather than pretending it is per-call.
+- Do not assign direct dollar spend to Codex token rows. Codex subscription allocation belongs in weekly budget state; these rows measure consumption pressure, not marginal API dollars.
+
+Why:
+
+- The router must know not only “Codex is at 74% weekly,” but which token/API-call shape is pushing it there and whether equivalent work can safely move to DeepSeek/MiMo/local lanes.
+
+### 3. Quota burn-rate projection rows
 
 Frequency: **recompute hourly** after each new usage snapshot. Also recompute on dashboard/API request from current ledgers.
 
@@ -141,7 +190,7 @@ Why:
 
 - The routing policy should enter caution before the reserve is crossed, not after.
 
-### 3. Protected reserve policy state
+### 4. Protected reserve policy state
 
 Frequency: **hourly** and exposed as latest JSON/API state.
 
@@ -188,7 +237,7 @@ Why:
 
 - Luis is not sure 20% is the right reserve. The tracker should produce evidence to tune it.
 
-### 4. Direct provider spend ledger
+### 5. Direct provider spend ledger
 
 Frequency: **per provider API call**. Aggregate hourly/daily/weekly.
 
@@ -232,7 +281,7 @@ Why:
 
 - The current Codex ledger can project hypothetical costs, but actual provider spend requires actual call accounting.
 
-### 5. Weekly budget state
+### 6. Weekly budget state
 
 Frequency: **hourly** plus update on every direct provider call.
 
@@ -257,7 +306,7 @@ Why:
 
 - Quota percentage and dollar budget are separate constraints. The router needs both.
 
-### 6. Routing decision ledger
+### 7. Routing decision ledger
 
 Frequency: **per automatic routing decision**, not merely hourly.
 
@@ -289,7 +338,7 @@ Why:
 
 - Model switching must be auditable. Without a decision ledger, bad routing policies cannot be debugged or backtested.
 
-### 7. Capability matrix
+### 8. Capability matrix
 
 Frequency: **manual/versioned updates**, with automatic checks where possible. Recompute eligibility per routing decision.
 
@@ -318,7 +367,7 @@ Why:
 
 - Cost-only switching will route vision/high-trust work to models that cannot satisfy the task.
 
-### 8. Task outcome metrics
+### 9. Task outcome metrics
 
 Frequency: **per task completion**, with periodic aggregation by task class/model.
 
@@ -349,7 +398,7 @@ Why:
 
 - The real metric is not raw token cost. It is cost per successful useful task.
 
-### 9. Backtest artifacts
+### 10. Backtest artifacts
 
 Frequency: **nightly or on-demand**, not necessarily hourly.
 
@@ -384,6 +433,7 @@ Artifact shape:
 | Data class | Frequency | Why |
 |---|---:|---|
 | Codex usage snapshot | hourly top-of-hour | matches reset/quota ledger and enough for weekly burn projection |
+| Codex token/API-call accounting | per Codex call if available; otherwise per Hermes session/window | explains what token/API-call shape caused quota movement |
 | Token correlation with Hermes sessions | hourly after usage snapshot; also on dashboard read | aligns quota movement with prior sample window |
 | Policy state / reserve mode | hourly after correlation | produces current routing recommendation |
 | Direct provider spend | per API call | required for hard `$100/week` budget enforcement |
@@ -400,6 +450,7 @@ Add these as implementation targets:
 
 ```text
 src/codex_usage_tracker/policy_state.py
+src/codex_usage_tracker/codex_call_accounting.py
 src/codex_usage_tracker/provider_spend.py
 src/codex_usage_tracker/routing_decisions.py
 src/codex_usage_tracker/capability_matrix.py
@@ -410,6 +461,7 @@ Add ledgers under Atrium runtime or repo-local output:
 
 ```text
 12_runtime/ledgers/model_routing/policy_state_ledger.jsonl
+12_runtime/ledgers/model_routing/codex_token_call_ledger.jsonl
 12_runtime/ledgers/model_routing/direct_provider_spend_ledger.jsonl
 12_runtime/ledgers/model_routing/routing_decision_ledger.jsonl
 12_runtime/ledgers/model_routing/task_outcome_ledger.jsonl
@@ -422,6 +474,7 @@ Add dashboard/API routes:
 ```text
 GET /api/policy-state
 GET /api/budget-state
+GET /api/codex-call-accounting
 GET /api/provider-spend
 GET /api/routing-decisions
 GET /api/backtests/latest
@@ -433,28 +486,34 @@ GET /api/backtests/latest
    - No new provider integration required.
    - Compute quota burn, reserve mode, and recommended default/fallback from Codex ledger + Hermes state DB.
 
-2. **Direct provider pricing table**
+2. **Codex token/API-call accounting**
+   - Normalize existing Hermes Codex session rows into the same token-bucket vocabulary used by provider spend rows.
+   - Add per-call capture later if the Hermes provider layer exposes individual Codex request/response usage.
+   - Keep hourly correlation rows so quota deltas stay explainable even before per-call capture exists.
+
+3. **Direct provider pricing table**
    - Version the DeepSeek/MiMo/MiniMax/Kimi/GLM/Qwen price assumptions.
    - Keep sources and timestamps.
 
-3. **Direct provider spend capture**
+4. **Direct provider spend capture**
    - Start with DeepSeek because it is already a serious fallback.
    - Add MiMo during benchmark testing.
 
-4. **Dashboard budget cards**
+5. **Dashboard budget cards**
    - Current Codex weekly/session state.
    - Protected reserve mode.
+   - Codex token/API-call burn this week and in the current quota window.
    - Direct API spend this week.
    - Total projected agentic spend vs `$100/week`.
 
-5. **Routing decision ledger**
+6. **Routing decision ledger**
    - Add only when Hermes is actually allowed to route automatically based on policy.
 
-6. **Task outcome tracking**
+7. **Task outcome tracking**
    - Start coarse: task class, provider/model, success/failure, retry count, cost.
    - Add richer quality metrics later.
 
-7. **Backtesting**
+8. **Backtesting**
    - Use existing weeks to pick the initial reserve threshold.
 
 ## Design cautions
@@ -474,9 +533,10 @@ The tracker is good enough for model-switching decisions when it can answer, fro
 
 1. How much Codex quota remains, and when does it reset?
 2. At current burn, will Codex cross the protected reserve before reset?
-3. Which provider should be default right now, and why?
-4. How much direct API spend has happened this week?
-5. Would switching this task violate capability requirements?
-6. What did similar tasks cost and how often did they succeed on each model?
-7. Would the last two Codex runouts have been prevented under this policy?
-8. Will total agentic operations stay below `$100/week`?
+3. What Codex token buckets and API-call counts caused the current quota movement?
+4. Which provider should be default right now, and why?
+5. How much direct API spend has happened this week?
+6. Would switching this task violate capability requirements?
+7. What did similar tasks cost and how often did they succeed on each model?
+8. Would the last two Codex runouts have been prevented under this policy?
+9. Will total agentic operations stay below `$100/week`?
