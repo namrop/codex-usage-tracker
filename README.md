@@ -102,6 +102,10 @@ Dashboard routes:
 - `GET /api/trend` — last 168 rows with fields:
   - `fetched_at`, `session_used_pct`, `weekly_used_pct`, `spark_session_used_pct`, `spark_weekly_used_pct`
 
+## Design notes
+
+- `docs/model-routing-metrics-and-tracker-requirements-2026-06-06.md` — requirements note for evolving this tracker into the data plane for quota-aware model routing and pricing decisions. It captures the Codex default-until-reserve policy, DeepSeek/MiMo fallback evaluation context, required new ledgers/metrics, collection frequencies, and dashboard/API targets.
+
 #### Tailscale funnel
 
 ```bash
