@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.lux.codex-usage-ledger-autocommit</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>PYTHON_PATH</string>
+      <string>-m</string>
+      <string>codex_usage_tracker</string>
+      <string>commit-ledger</string>
+      <string>--atrium-root</string>
+      <string>/Users/luisramirez/Digital_Workspace</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key>
+      <integer>23</integer>
+      <key>Minute</key>
+      <integer>55</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/luisramirez/Library/Logs/codex-usage-ledger-autocommit.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/luisramirez/Library/Logs/codex-usage-ledger-autocommit.log</string>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>WorkingDirectory</key>
+    <string>/Users/luisramirez/Code/codex-usage-tracker</string>
+  </dict>
+</plist>

@@ -4,6 +4,7 @@ set -euo pipefail
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 USAGE_TRACKER_PLIST="$LAUNCH_AGENTS_DIR/com.lux.codex-usage-tracker.plist"
 DASHBOARD_PLIST="$LAUNCH_AGENTS_DIR/com.lux.codex-dashboard.plist"
+AUTOCOMMIT_PLIST="$LAUNCH_AGENTS_DIR/com.lux.codex-usage-ledger-autocommit.plist"
 
 unload_and_remove() {
   local plist="$1"
@@ -19,5 +20,6 @@ unload_and_remove() {
 
 unload_and_remove "$USAGE_TRACKER_PLIST"
 unload_and_remove "$DASHBOARD_PLIST"
+unload_and_remove "$AUTOCOMMIT_PLIST"
 
 echo "Uninstall complete."

@@ -18,3 +18,10 @@ if [[ -f "$HOME/Library/Logs/codex-dashboard.log" ]]; then
 else
   echo "Log file not found: $HOME/Library/Logs/codex-dashboard.log"
 fi
+
+echo "--- codex-usage-ledger-autocommit.log (last 5 lines) ---"
+if [[ -f "$HOME/Library/Logs/codex-usage-ledger-autocommit.log" ]]; then
+  tail -n 5 "$HOME/Library/Logs/codex-usage-ledger-autocommit.log"
+else
+  echo "Log file not found: $HOME/Library/Logs/codex-usage-ledger-autocommit.log"
+fi

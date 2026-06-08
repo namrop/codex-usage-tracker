@@ -7,8 +7,10 @@ LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 
 USAGE_TRACKER_PLIST="$PLIST_DIR/com.lux.codex-usage-tracker.plist"
 DASHBOARD_PLIST="$PLIST_DIR/com.lux.codex-dashboard.plist"
+AUTOCOMMIT_PLIST="$PLIST_DIR/com.lux.codex-usage-ledger-autocommit.plist"
 USAGE_TRACKER_DEST="$LAUNCH_AGENTS_DIR/com.lux.codex-usage-tracker.plist"
 DASHBOARD_DEST="$LAUNCH_AGENTS_DIR/com.lux.codex-dashboard.plist"
+AUTOCOMMIT_DEST="$LAUNCH_AGENTS_DIR/com.lux.codex-usage-ledger-autocommit.plist"
 
 if [[ -n "${CODEX_TRACKER_PYTHON:-}" && -x "${CODEX_TRACKER_PYTHON}" ]]; then
   PYTHON_PATH="${CODEX_TRACKER_PYTHON}"
@@ -35,11 +37,19 @@ deploy_plist() {
 
 deploy_plist "$USAGE_TRACKER_PLIST" "$USAGE_TRACKER_DEST" "com.lux.codex-usage-tracker"
 deploy_plist "$DASHBOARD_PLIST" "$DASHBOARD_DEST" "com.lux.codex-dashboard"
+deploy_plist "$AUTOCOMMIT_PLIST" "$AUTOCOMMIT_DEST" "com.lux.codex-usage-ledger-autocommit"
 
-for plist in "$USAGE_TRACKER_DEST" "$DASHBOARD_DEST"; do
+for entry in \
+  "$USAGE_TRACKER_DEST:com.lux.codex-usage-tracker" \
+  "$DASHBOARD_DEST:com.lux.codex-dashboard" \
+  "$AUTOCOMMIT_DEST:com.lux.codex-usage-ledger-autocommit"; do
+  plist="${entry%%:*}"
+  label="${entry##*:}"
   echo "Loading $(basename "$plist")..."
   launchctl unload "$plist" 2>/dev/null || true
   launchctl load -w "$plist"
+  echo "Starting ${label}..."
+  launchctl start "$label" 2>/dev/null || true
 done
 
 echo "Deployment complete."

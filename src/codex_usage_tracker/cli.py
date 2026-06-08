@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from .fetcher import fetch_usage
+from .git_autocommit import commit_ledger
 from .ledger import append_row
 
 LOGGER = logging.getLogger(__name__)
@@ -70,6 +71,25 @@ def cmd_dump_raw(_: argparse.Namespace) -> int:
         print("Failed to fetch usage payload.", file=sys.stderr)
         return 1
     print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_commit_ledger(args: argparse.Namespace) -> int:
+    ledger_path = _resolve_ledger_path(args.atrium_root, args.ledger)
+    try:
+        result = commit_ledger(
+            repo_root=args.atrium_root,
+            ledger_path=ledger_path,
+            message=args.message,
+            dry_run=args.dry_run,
+        )
+    except Exception as exc:
+        print(f"Failed to commit ledger: {exc}", file=sys.stderr)
+        return 1
+
+    print(result.message)
+    if result.commit_sha:
+        print(f"commit_sha: {result.commit_sha}")
     return 0
 
 
@@ -138,6 +158,25 @@ def main() -> int:
 
     dump_parser = subparsers.add_parser("dump-raw", parents=[common], help="Fetch and print raw JSON payload")
     dump_parser.set_defaults(func=cmd_dump_raw)
+
+    commit_parser = subparsers.add_parser(
+        "commit-ledger",
+        parents=[common],
+        help="Validate and commit only the Codex usage ledger if it changed",
+    )
+    commit_parser.add_argument(
+        "--message",
+        dest="message",
+        default="Update Codex usage ledger",
+        help="Git commit message for ledger commits",
+    )
+    commit_parser.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="Validate and report what would be committed without staging or committing",
+    )
+    commit_parser.set_defaults(func=cmd_commit_ledger)
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Run the web dashboard")
     dashboard_parser.add_argument("--ledger", dest="ledger", default=None, help="Path to ledger JSONL file")

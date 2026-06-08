@@ -9,10 +9,11 @@ from ChatGPT’s usage endpoint, and appends normalized snapshots to a JSONL led
 - Refreshes expired access tokens automatically.
 - Fetches `/backend-api/wham/usage` from `chatgpt.com`.
 - Writes one normalized ledger row per run to a JSONL file.
-- Provides a small CLI with three subcommands:
+- Provides a small CLI with five subcommands:
 - `fetch`
 - `daemon`
 - `dump-raw`
+- `commit-ledger`
 - `dashboard`
 
 ## API endpoint
@@ -78,6 +79,16 @@ codex-usage-tracker dump-raw
 
 Prints the raw JSON response from the usage endpoint to stdout for inspection.
 
+### Commit ledger
+
+```bash
+codex-usage-tracker commit-ledger
+codex-usage-tracker commit-ledger --dry-run
+codex-usage-tracker commit-ledger --message "Update Codex usage ledger"
+```
+
+Validates the configured JSONL ledger and commits only that ledger path inside the Atrium repo if it changed. The command refuses to run when unrelated paths are already staged, so a scheduled ledger commit cannot accidentally sweep in other Atrium work.
+
 ### Dashboard
 
 ```bash
@@ -125,6 +136,10 @@ The package includes a small macOS LaunchAgent setup for both hourly collection 
 - Dashboard agent: `com.lux.codex-dashboard`
   - Runs `python3 -m codex_usage_tracker dashboard --port 5174 --atrium-root /Users/luisramirez/Digital_Workspace`.
   - Runs continuously to serve the web UI.
+- Ledger autocommit agent: `com.lux.codex-usage-ledger-autocommit`
+  - Runs `python3 -m codex_usage_tracker commit-ledger --atrium-root /Users/luisramirez/Digital_Workspace`.
+  - Scheduled daily at 23:55 local time.
+  - Commits only `12_runtime/ledgers/codex_usage/codex_usage_ledger.jsonl` and refuses unrelated staged files.
 
 ### Install
 
