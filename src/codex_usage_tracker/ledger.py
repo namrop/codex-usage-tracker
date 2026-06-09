@@ -18,7 +18,7 @@ def _to_int(value: Any) -> Optional[int]:
         return None
 
 
-def _to_float(value: Any, default: float = 0.0) -> float:
+def _to_float(value: Any, default: Optional[float] = 0.0) -> Optional[float]:
     try:
         if value is None:
             return default
@@ -27,20 +27,58 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _extract_spark_limits(data: Dict[str, Any]) -> Dict[str, Optional[float]]:
+def _window_after_fields(reset_at: Optional[int], now_epoch: float, prefix: str) -> Dict[str, Optional[float]]:
+    if reset_at is None:
+        return {
+            f"{prefix}_reset_after_seconds": None,
+            f"hours_until_{prefix}_reset": None,
+        }
+    seconds = max(0, int(reset_at - now_epoch))
+    return {
+        f"{prefix}_reset_after_seconds": seconds,
+        f"hours_until_{prefix}_reset": round(seconds / 3600.0, 3),
+    }
+
+
+def _normalize_rate_limit_entry(limit_name: str, rate_limit: Any) -> Dict[str, Any]:
+    if not isinstance(rate_limit, dict):
+        rate_limit = {}
+    primary = rate_limit.get("primary_window", {})
+    if not isinstance(primary, dict):
+        primary = {}
+    secondary = rate_limit.get("secondary_window", {})
+    if not isinstance(secondary, dict):
+        secondary = {}
+    return {
+        "limit_name": limit_name,
+        "session_used_pct": _to_float(primary.get("used_percent"), None),
+        "weekly_used_pct": _to_float(secondary.get("used_percent"), None),
+        "session_reset_at": _to_int(primary.get("reset_at")),
+        "weekly_reset_at": _to_int(secondary.get("reset_at")),
+        "allowed": bool(rate_limit.get("allowed", True)),
+        "limit_reached": bool(rate_limit.get("limit_reached", False)),
+    }
+
+
+def _extract_additional_rate_limits(data: Dict[str, Any]) -> list[Dict[str, Any]]:
     additional = data.get("additional_rate_limits", [])
     if not isinstance(additional, list):
-        return {
-            "spark_session_used_pct": None,
-            "spark_weekly_used_pct": None,
-            "spark_session_reset_at": None,
-            "spark_weekly_reset_at": None,
-        }
+        return []
 
-    matching = None
+    normalized = []
     for entry in additional:
         if not isinstance(entry, dict):
             continue
+        limit_name = str(entry.get("limit_name") or "")
+        if not limit_name:
+            continue
+        normalized.append(_normalize_rate_limit_entry(limit_name, entry.get("rate_limit", {})))
+    return normalized
+
+
+def _extract_spark_limits(additional_rate_limits: list[Dict[str, Any]]) -> Dict[str, Optional[float]]:
+    matching = None
+    for entry in additional_rate_limits:
         if entry.get("limit_name") == "GPT-5.3-Codex-Spark":
             matching = entry
             break
@@ -53,22 +91,11 @@ def _extract_spark_limits(data: Dict[str, Any]) -> Dict[str, Optional[float]]:
             "spark_weekly_reset_at": None,
         }
 
-    spark_rate_limit = matching.get("rate_limit", {})
-    if not isinstance(spark_rate_limit, dict):
-        spark_rate_limit = {}
-
-    spark_primary = spark_rate_limit.get("primary_window", {})
-    if not isinstance(spark_primary, dict):
-        spark_primary = {}
-    spark_secondary = spark_rate_limit.get("secondary_window", {})
-    if not isinstance(spark_secondary, dict):
-        spark_secondary = {}
-
     return {
-        "spark_session_used_pct": _to_float(spark_primary.get("used_percent"), None),
-        "spark_weekly_used_pct": _to_float(spark_secondary.get("used_percent"), None),
-        "spark_session_reset_at": _to_int(spark_primary.get("reset_at")),
-        "spark_weekly_reset_at": _to_int(spark_secondary.get("reset_at")),
+        "spark_session_used_pct": _to_float(matching.get("session_used_pct"), None),
+        "spark_weekly_used_pct": _to_float(matching.get("weekly_used_pct"), None),
+        "spark_session_reset_at": _to_int(matching.get("session_reset_at")),
+        "spark_weekly_reset_at": _to_int(matching.get("weekly_reset_at")),
     }
 
 
@@ -88,21 +115,39 @@ def append_row(data: Dict[str, Any], ledger_path: str) -> Dict[str, Any]:
     if not isinstance(credits, dict):
         credits = {}
 
-    spark_limits = _extract_spark_limits(data)
+    additional_rate_limits = _extract_additional_rate_limits(data)
+    spark_limits = _extract_spark_limits(additional_rate_limits)
     path = Path(ledger_path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    fetched_at = datetime.now(timezone.utc)
+    now_epoch = fetched_at.timestamp()
+    session_reset_at = _to_int(primary.get("reset_at"))
+    weekly_reset_at = _to_int(secondary.get("reset_at"))
+    session_used_pct = _to_float(primary.get("used_percent"), None)
+    weekly_used_pct = _to_float(secondary.get("used_percent"), None)
+    allowed = bool(rate_limit.get("allowed", True))
+    limit_reached = bool(rate_limit.get("limit_reached", False))
+    unknown_state = session_used_pct is None or weekly_used_pct is None or not isinstance(data.get("rate_limit"), dict)
+
     row: Dict[str, Any] = {
         "id": str(uuid.uuid4()),
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": fetched_at.isoformat(),
         "plan_type": str(data.get("plan_type", "")),
-        "session_used_pct": _to_float(primary.get("used_percent")),
-        "weekly_used_pct": _to_float(secondary.get("used_percent")),
-        "session_reset_at": _to_int(primary.get("reset_at")),
-        "weekly_reset_at": _to_int(secondary.get("reset_at")),
+        "allowed": allowed,
+        "limit_reached": limit_reached,
+        "session_used_pct": session_used_pct,
+        "weekly_used_pct": weekly_used_pct,
+        "session_reset_at": session_reset_at,
+        "weekly_reset_at": weekly_reset_at,
+        **_window_after_fields(session_reset_at, now_epoch, "session"),
+        **_window_after_fields(weekly_reset_at, now_epoch, "weekly"),
         "credits_balance": str(credits.get("balance", "")),
         "credits_has_credits": bool(credits.get("has_credits", False)),
         **spark_limits,
+        "additional_rate_limits_normalized": additional_rate_limits,
+        "raw_payload_present": bool(data),
+        "unknown_state": unknown_state,
         "raw_payload": data,
     }
 

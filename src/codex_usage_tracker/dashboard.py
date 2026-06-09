@@ -10,6 +10,21 @@ from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, render_template
 
+from .capability_matrix import get_capability_matrix
+from .codex_call_accounting import build_codex_accounting_rows
+from .jsonl_store import newest_first, read_jsonl
+from .policy_state import build_burn_projection_rows, latest_policy_state
+from .provider_spend import (
+    DIRECT_PROVIDER_SPEND_LEDGER,
+    ROUTING_DECISION_LEDGER,
+    TASK_OUTCOME_LEDGER,
+    latest_budget_state,
+    model_routing_ledger_path,
+    read_provider_spend_rows,
+    summarize_provider_spend,
+)
+from .token_correlation import build_token_correlation_rows, resolve_state_db_path
+
 
 DEFAULT_ATRIUM_ROOT = "/Users/luisramirez/Digital_Workspace"
 DEFAULT_LEDGER_RELATIVE_PATH = "12_runtime/ledgers/codex_usage/codex_usage_ledger.jsonl"
@@ -99,12 +114,23 @@ def create_app(atrium_root: str = DEFAULT_ATRIUM_ROOT, ledger: Optional[str] = N
                     "current_weekly_used_pct": None,
                     "current_spark_session_used_pct": None,
                     "current_spark_weekly_used_pct": None,
+                    "session_reset_at": None,
+                    "weekly_reset_at": None,
+                    "spark_session_reset_at": None,
+                    "spark_weekly_reset_at": None,
                     "plan_type": None,
+                    "allowed": None,
+                    "limit_reached": None,
+                    "ledger_path": resolved_ledger_path,
                 }
             )
 
         first = rows[-1].get("fetched_at")
         last = current.get("fetched_at")
+        rate_limit = current.get("raw_payload", {}).get("rate_limit", {})
+        allowed = rate_limit.get("allowed", True) if isinstance(rate_limit, dict) else True
+        limit_reached = rate_limit.get("limit_reached", False) if isinstance(rate_limit, dict) else False
+
         return jsonify(
             {
                 "total_rows": len(rows),
@@ -114,7 +140,14 @@ def create_app(atrium_root: str = DEFAULT_ATRIUM_ROOT, ledger: Optional[str] = N
                 "current_weekly_used_pct": _to_float(current.get("weekly_used_pct")),
                 "current_spark_session_used_pct": _to_float(current.get("spark_session_used_pct")),
                 "current_spark_weekly_used_pct": _to_float(current.get("spark_weekly_used_pct")),
+                "session_reset_at": current.get("session_reset_at"),
+                "weekly_reset_at": current.get("weekly_reset_at"),
+                "spark_session_reset_at": current.get("spark_session_reset_at"),
+                "spark_weekly_reset_at": current.get("spark_weekly_reset_at"),
                 "plan_type": current.get("plan_type"),
+                "allowed": allowed,
+                "limit_reached": limit_reached,
+                "ledger_path": resolved_ledger_path,
             }
         )
 
@@ -133,6 +166,100 @@ def create_app(atrium_root: str = DEFAULT_ATRIUM_ROOT, ledger: Optional[str] = N
             for row in rows
         ]
         return jsonify(trend_rows)
+
+    def _build_token_rows() -> List[Dict[str, Any]]:
+        return build_token_correlation_rows(
+            _load_ledger_rows(),
+            state_db_path=resolve_state_db_path(),
+            limit=168,
+        )
+
+    @app.route("/api/token-ledger")
+    def api_token_ledger():
+        token_rows = _build_token_rows()
+        token_rows.reverse()
+        return jsonify(token_rows)
+
+    @app.route("/api/token-chart")
+    def api_token_chart():
+        chart_rows = []
+        for row in _build_token_rows():
+            chart_rows.append(
+                {
+                    "window_start": row.get("window_start"),
+                    "window_end": row.get("window_end"),
+                    "session_used_pct": row.get("session_used_pct_end"),
+                    "weekly_used_pct": row.get("weekly_used_pct_end"),
+                    "session_delta_pct": row.get("session_delta_pct"),
+                    "weekly_delta_pct": row.get("weekly_delta_pct"),
+                    "api_calls": row.get("api_calls"),
+                    "input_tokens": row.get("input_tokens"),
+                    "cache_read_tokens": row.get("cache_read_tokens"),
+                    "cache_write_tokens": row.get("cache_write_tokens"),
+                    "noncached_prompt_tokens": int(row.get("input_tokens") or 0) + int(row.get("cache_write_tokens") or 0),
+                    "output_tokens": row.get("output_tokens"),
+                    "reasoning_tokens": row.get("reasoning_tokens"),
+                    "prompt_tokens": row.get("prompt_tokens"),
+                    "total_tokens": row.get("total_tokens"),
+                    "cache_hit_pct": row.get("cache_hit_pct"),
+                    "reset_or_drop": row.get("reset_or_drop"),
+                }
+            )
+        return jsonify(chart_rows)
+
+    @app.route("/api/codex-call-accounting")
+    def api_codex_call_accounting():
+        return jsonify(
+            build_codex_accounting_rows(
+                _load_ledger_rows(),
+                state_db_path=resolve_state_db_path(),
+                limit=168,
+            )
+        )
+
+    @app.route("/api/burn-projection")
+    def api_burn_projection():
+        return jsonify(build_burn_projection_rows(_load_ledger_rows()))
+
+    @app.route("/api/policy-state")
+    def api_policy_state():
+        return jsonify(latest_policy_state(_load_ledger_rows()))
+
+    @app.route("/api/budget-state")
+    def api_budget_state():
+        return jsonify(latest_budget_state(read_provider_spend_rows(atrium_root)))
+
+    @app.route("/api/capability-matrix")
+    def api_capability_matrix():
+        return jsonify(get_capability_matrix())
+
+    @app.route("/api/provider-spend")
+    def api_provider_spend():
+        return jsonify(summarize_provider_spend(read_provider_spend_rows(atrium_root)))
+
+    @app.route("/api/routing-decisions")
+    def api_routing_decisions():
+        path = model_routing_ledger_path(atrium_root, ROUTING_DECISION_LEDGER)
+        return jsonify({"rows": newest_first(read_jsonl(path), timestamp_key="decided_at")})
+
+    @app.route("/api/task-outcomes")
+    def api_task_outcomes():
+        path = model_routing_ledger_path(atrium_root, TASK_OUTCOME_LEDGER)
+        return jsonify({"rows": newest_first(read_jsonl(path), timestamp_key="completed_at")})
+
+    @app.route("/api/backtests/latest")
+    def api_backtests_latest():
+        backtests_dir = Path(model_routing_ledger_path(atrium_root, "12_runtime/ledgers/model_routing/backtests"))
+        if not backtests_dir.exists():
+            return jsonify({"latest": None, "rows": []})
+        files = sorted(backtests_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+        if not files:
+            return jsonify({"latest": None, "rows": []})
+        try:
+            payload = json.loads(files[0].read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = None
+        return jsonify({"latest": payload, "path": str(files[0])})
 
     return app
 

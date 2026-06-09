@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 venv/
 
+# Hermes/local planning artifacts
+.hermes/
+

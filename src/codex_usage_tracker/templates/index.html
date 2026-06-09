@@ -3,19 +3,36 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Codex Usage Dashboard</title>
+    <title>Codex Usage Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@500;600;700;800&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
       :root {
-        --bg: #1a1a2e;
-        --panel: #20203a;
-        --panel-soft: #2c2f4a;
-        --text: #f5f5ff;
-        --muted: #9aa0c7;
-        --accent: #e94560;
-        --accent-soft: #e94560cc;
-        --accent-2: #0f9d58;
-        --accent-3: #4ea5d9;
+        color-scheme: dark;
+        --bg: #0B0F1A;
+        --bg-deep: #070A12;
+        --panel: #1A2233;
+        --panel-raised: #202A40;
+        --panel-soft: #0E1F24;
+        --line: #00B3A4;
+        --line-soft: rgba(0, 179, 164, 0.32);
+        --text: #FFF8DC;
+        --muted: #D4B87B;
+        --muted-2: #C46A2D;
+        --session: #FF2F92;
+        --weekly: #FFC857;
+        --spark-session: #00B3A4;
+        --spark-weekly: #9D4EDD;
+        --warning: #FFC857;
+        --danger: #E10600;
+        --ok: #A4F000;
+        --cyan: #66E6FF;
+        --sky: #4CC9F0;
+        --copper: #C46A2D;
+        --token: #66E6FF;
+        --radius: 6px;
       }
 
       * {
@@ -25,302 +42,927 @@
       html,
       body {
         margin: 0;
-        font-family: "Trebuchet MS", "Fira Sans", "Avenir Next", "Segoe UI", sans-serif;
-        background: radial-gradient(circle at 20% 10%, #2c2f4a, var(--bg) 45%);
-        color: var(--text);
         min-height: 100vh;
       }
 
       body {
-        padding: 1.2rem;
+        font-family: Rajdhani, Avenir Next, Trebuchet MS, Segoe UI, sans-serif;
+        background:
+          linear-gradient(90deg, rgba(255, 200, 87, 0.08) 0 1px, transparent 1px 80px),
+          linear-gradient(180deg, rgba(0, 179, 164, 0.06) 0 1px, transparent 1px 80px),
+          var(--bg);
+        color: var(--text);
+        padding: 22px;
       }
 
-      .container {
-        max-width: 1200px;
+      .shell {
+        width: min(1680px, 100%);
         margin: 0 auto;
         display: grid;
-        gap: 1rem;
+        gap: 16px;
       }
 
-      header {
-        background: linear-gradient(120deg, var(--panel), var(--panel-soft));
-        border: 1px solid #35365a;
-        border-radius: 12px;
-        padding: 1.1rem 1.2rem;
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(280px, 1fr) minmax(260px, 0.72fr);
+        gap: 16px;
+        align-items: stretch;
+      }
+
+      .title-panel,
+      .status-panel,
+      .card,
+      .insight {
+        background: rgba(26, 34, 51, 0.92);
+        border: 1px solid var(--line-soft);
+        border-radius: var(--radius);
+        box-shadow: 0 18px 48px rgba(7, 10, 18, 0.42);
+      }
+
+      .title-panel {
+        padding: 24px 26px 22px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .title-panel::after {
+        content: "";
+        position: absolute;
+        inset: auto 20px 0 auto;
+        width: 34%;
+        height: 2px;
+        background: var(--weekly);
+        opacity: 0.72;
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 0.78rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
       }
 
       h1 {
-        margin: 0 0 0.3rem;
-        font-family: "Trebuchet MS", "Inter", "Segoe UI", sans-serif;
-        letter-spacing: 0.02em;
+        font-family: Oxanium, Rajdhani, sans-serif;
+        font-size: clamp(2.1rem, 4vw, 4.4rem);
+        line-height: 0.95;
+        letter-spacing: -0.055em;
+        text-wrap: balance;
       }
 
       .subtitle {
+        max-width: 68ch;
+        margin-top: 12px;
         color: var(--muted);
-        margin-bottom: 1rem;
+        line-height: 1.55;
       }
 
-      .stats {
+      .status-panel {
+        padding: 18px;
         display: grid;
-        grid-template-columns: repeat(4, minmax(140px, 1fr));
-        gap: 0.7rem;
+        grid-template-rows: auto 1fr auto;
+        gap: 14px;
       }
 
-      .stat {
-        background: var(--panel-soft);
-        padding: 0.8rem;
-        border-radius: 10px;
-        border: 1px solid #3b3d67;
+      .status-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
       }
 
-      .stat .label {
-        color: var(--muted);
-        font-size: 0.85rem;
-      }
-
-      .stat .value {
-        font-size: 1.6rem;
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        width: fit-content;
+        border: 1px solid rgba(164, 240, 0, 0.55);
+        border-radius: 999px;
+        padding: 7px 11px;
+        color: var(--ok);
+        background: rgba(164, 240, 0, 0.12);
         font-weight: 700;
       }
 
-      .card {
-        background: linear-gradient(180deg, #252646, #20203a);
-        border: 1px solid #3b3d67;
-        border-radius: 12px;
-        padding: 1rem;
+      .status-pill.capped {
+        color: var(--danger);
+        border-color: rgba(225, 6, 0, 0.55);
+        background: rgba(225, 6, 0, 0.12);
       }
 
-      .card h2 {
-        margin-top: 0;
-        font-size: 1.1rem;
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
       }
 
-      .chart-grid {
+      .mini-grid {
         display: grid;
-        grid-template-columns: 1fr;
-        gap: 1rem;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .metric {
+        min-width: 0;
+        border: 1px solid var(--line-soft);
+        border-radius: 4px;
+        padding: 12px;
+        background: rgba(14, 31, 36, 0.76);
+      }
+
+      .metric .label,
+      .micro-label {
+        color: var(--muted-2);
+        font-size: 0.76rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .metric .value {
+        margin-top: 3px;
+        font-family: Oxanium, Rajdhani, sans-serif;
+        font-size: clamp(1.35rem, 2.4vw, 2.25rem);
+        line-height: 1;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+
+      .metric .hint,
+      .freshness {
+        color: var(--muted);
+        font-size: 0.86rem;
+        line-height: 1.45;
+      }
+
+      .metric .hint {
+        margin-top: 8px;
+      }
+
+      .insights {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(170px, 1fr));
+        gap: 12px;
+      }
+
+      .insight {
+        padding: 13px 14px;
+        display: grid;
+        gap: 7px;
+      }
+
+      .insight strong {
+        font-family: Oxanium, Rajdhani, sans-serif;
+        font-size: 1.05rem;
+        letter-spacing: -0.015em;
+      }
+
+      .insight span {
+        color: var(--muted);
+        font-size: 0.9rem;
+        line-height: 1.35;
+      }
+
+      .card {
+        padding: 16px;
+      }
+
+      .card-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 12px;
+      }
+
+      .card-title {
+        display: grid;
+        gap: 5px;
+      }
+
+      h2 {
+        font-family: Oxanium, Rajdhani, sans-serif;
+        font-size: clamp(1.12rem, 2vw, 1.55rem);
+        letter-spacing: -0.025em;
+      }
+
+      .caption {
+        color: var(--muted);
+        line-height: 1.45;
+        font-size: 0.94rem;
       }
 
       .toolbar {
         display: flex;
-        gap: 0.5rem;
-        align-items: center;
-        margin-bottom: 0.75rem;
+        gap: 8px;
         flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      button,
+      summary {
+        font: inherit;
       }
 
       .toggle,
       .refresh-btn {
-        background: #111127;
-        color: var(--text);
-        border: 1px solid #4b4d77;
+        border: 1px solid var(--line);
         border-radius: 999px;
-        padding: 0.35rem 0.8rem;
+        background: rgba(26, 34, 51, 0.88);
+        color: var(--text);
+        padding: 8px 13px;
         cursor: pointer;
+        transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+      }
+
+      .toggle:hover,
+      .refresh-btn:hover {
+        transform: translateY(-1px);
+        border-color: var(--muted);
       }
 
       .toggle.active {
-        background: var(--accent-soft);
-        border-color: transparent;
+        background: rgba(255, 200, 87, 0.18);
+        border-color: var(--weekly);
+        color: var(--weekly);
       }
 
       .chart-wrap {
         position: relative;
-        min-height: 250px;
+        min-height: 278px;
+      }
+
+      .chart-wrap.week {
+        min-height: 430px;
+      }
+
+      .chart-wrap.token-wide {
+        min-height: 390px;
+      }
+
+      .detail-grid.token-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .series-key {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+      }
+
+      .key-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .swatch {
+        width: 18px;
+        height: 3px;
+        border-radius: 999px;
+        background: var(--series-color);
+      }
+
+      details.card {
+        padding: 0;
+        overflow: hidden;
+      }
+
+      summary {
+        cursor: pointer;
+        padding: 16px;
+        list-style: none;
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      summary .card-header {
+        margin-bottom: 0;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+        border-top: 1px solid var(--line-soft);
       }
 
       table {
         width: 100%;
+        min-width: 720px;
         border-collapse: collapse;
-        min-width: 620px;
+        font-variant-numeric: tabular-nums;
       }
 
       th,
       td {
-        border-bottom: 1px solid #3b3d67;
-        text-align: left;
-        padding: 0.65rem 0.4rem;
+        border-bottom: 1px solid var(--line-soft);
+        padding: 10px 14px;
         white-space: nowrap;
       }
 
       th {
         color: var(--muted);
-        cursor: pointer;
+        text-align: left;
         user-select: none;
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
 
-      th.sortable:hover {
-        color: var(--text);
+      th.sortable {
+        cursor: pointer;
+      }
+
+      td:not(:first-child),
+      th:not(:first-child) {
+        text-align: right;
       }
 
       tbody tr:hover {
-        background: #2a2a46;
+        background: rgba(14, 31, 36, 0.74);
       }
 
-      .table-wrap {
-        overflow-x: auto;
-        border-radius: 8px;
-        border: 1px solid #3b3d67;
-        margin-bottom: 1rem;
+      .mono {
+        font-family: SFMono-Regular, Consolas, Liberation Mono, monospace;
+        font-size: 0.82rem;
       }
 
-      @media (max-width: 900px) {
-        .stats {
-          grid-template-columns: repeat(2, minmax(120px, 1fr));
-        }
-
-        .container {
-          padding-bottom: 2rem;
-        }
-
-        .stat .value {
-          font-size: 1.35rem;
-        }
+      #ledgerPath {
+        display: block;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
-      @media (max-width: 600px) {
-        body {
-          padding: 0.8rem;
-        }
+      .color-session { color: var(--session); }
+      .color-weekly { color: var(--weekly); }
+      .color-spark-session { color: var(--spark-session); }
+      .color-spark-weekly { color: var(--spark-weekly); }
+      .color-token { color: var(--token); }
+      .negative { color: var(--danger); }
+      .neutral { color: var(--muted); }
 
-        .stats {
+      @media (max-width: 1100px) {
+        .hero,
+        .detail-grid,
+        .detail-grid.token-grid {
           grid-template-columns: 1fr;
+        }
+
+        .insights {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 640px) {
+        body {
+          padding: 12px;
+        }
+
+        .title-panel,
+        .status-panel,
+        .card {
+          border-radius: 6px;
+        }
+
+        .mini-grid,
+        .insights {
+          grid-template-columns: 1fr;
+        }
+
+        .card-header {
+          display: grid;
+        }
+
+        .toolbar {
+          justify-content: flex-start;
+        }
+
+        .chart-wrap.week {
+          min-height: 340px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.001ms !important;
+          scroll-behavior: auto !important;
+          transition-duration: 0.001ms !important;
         }
       }
     </style>
   </head>
   <body>
-    <div class="container">
-      <header>
-        <h1>Codex Usage Dashboard</h1>
-        <p class="subtitle">Interactive usage trend viewer for Codex snapshots</p>
-        <div class="stats">
-          <div class="stat">
-            <div class="label">Plan</div>
-            <div class="value" id="planType">—</div>
-          </div>
-          <div class="stat">
-            <div class="label">Current Session Used</div>
-            <div class="value" id="currentSession">—</div>
-          </div>
-          <div class="stat">
-            <div class="label">Current Weekly Used</div>
-            <div class="value" id="currentWeekly">—</div>
-          </div>
-          <div class="stat">
-            <div class="label">Spark Session / Weekly</div>
-            <div class="value" id="sparkUsage">—</div>
-          </div>
+    <main class="shell">
+      <section class="hero" aria-label="Codex usage summary">
+        <div class="title-panel">
+          <p class="eyebrow">Codex usage monitor</p>
+          <h1>Limits, resets, and headroom.</h1>
+          <p class="subtitle">
+            Local ledger snapshots for Codex and Spark. Every chart stays pinned to 0–100%,
+            so caps, resets, and sudden drops stay visible.
+          </p>
         </div>
-      </header>
 
-      <section class="card">
-        <div class="toolbar">
-          <h2 style="margin: 0 0 0.5rem 0;">Session usage % (line)</h2>
-          <button class="toggle active" data-window="24">Last 24 samples</button>
-          <button class="toggle" data-window="168">Last 168 samples</button>
-          <button class="refresh-btn" id="refreshSummary">Refresh</button>
+        <aside class="status-panel">
+          <div class="status-row">
+            <div class="status-pill" id="globalStatus"><span class="dot"></span><span>Loading</span></div>
+            <div class="micro-label" id="planType">plan · —</div>
+          </div>
+          <div class="mini-grid">
+            <div class="metric">
+              <div class="label">Session</div>
+              <div class="value color-session" id="currentSession">—</div>
+              <div class="hint" id="sessionReset">reset: —</div>
+            </div>
+            <div class="metric">
+              <div class="label">Weekly</div>
+              <div class="value color-weekly" id="currentWeekly">—</div>
+              <div class="hint" id="weeklyReset">reset: —</div>
+            </div>
+            <div class="metric">
+              <div class="label">Spark session</div>
+              <div class="value color-spark-session" id="sparkSession">—</div>
+              <div class="hint" id="sparkSessionReset">reset: —</div>
+            </div>
+            <div class="metric">
+              <div class="label">Spark weekly</div>
+              <div class="value color-spark-weekly" id="sparkWeekly">—</div>
+              <div class="hint" id="sparkWeeklyReset">reset: —</div>
+            </div>
+          </div>
+          <div class="freshness" id="freshness">Waiting for the first ledger sample.</div>
+        </aside>
+      </section>
+
+      <section class="insights" aria-label="Derived usage insights">
+        <div class="insight">
+          <div class="micro-label">Weekly peak</div>
+          <strong id="weekPeak">—</strong>
+          <span id="weekPeakHint">Highest weekly usage in the current window.</span>
         </div>
-        <div class="chart-wrap">
-          <canvas id="sessionChart"></canvas>
+        <div class="insight">
+          <div class="micro-label">Session peak</div>
+          <strong id="sessionPeak">—</strong>
+          <span id="sessionPeakHint">Highest session usage in the current window.</span>
+        </div>
+        <div class="insight">
+          <div class="micro-label">Chart window</div>
+          <strong id="windowSpan">—</strong>
+          <span id="windowSpanHint">Samples currently plotted.</span>
+        </div>
+        <div class="insight">
+          <div class="micro-label">Ledger</div>
+          <strong id="rowCount">—</strong>
+          <span id="ledgerPath" class="mono">ledger unavailable</span>
         </div>
       </section>
 
       <section class="card">
-        <h2>Weekly usage % (line)</h2>
+        <div class="card-header">
+          <div class="card-title">
+            <h2>Usage over time</h2>
+            <p class="caption">
+              Full week is the default. It shows pressure building, reset cliffs, and short
+              session bursts without changing the y-axis.
+            </p>
+          </div>
+          <div class="toolbar" aria-label="Chart window controls">
+            <button class="toggle" data-window="24">24 samples</button>
+            <button class="toggle active" data-window="168">Full week</button>
+            <button class="refresh-btn" id="refreshSummary">Refresh</button>
+          </div>
+        </div>
+        <div class="chart-wrap week">
+          <canvas id="weekChart" aria-label="Codex usage chart from 0 to 100 percent"></canvas>
+        </div>
+        <div class="series-key" aria-hidden="true">
+          <span class="key-pill"><span class="swatch" style="--series-color: var(--session)"></span>Session</span>
+          <span class="key-pill"><span class="swatch" style="--series-color: var(--weekly)"></span>Weekly</span>
+          <span class="key-pill"><span class="swatch" style="--series-color: var(--spark-session)"></span>Spark session</span>
+          <span class="key-pill"><span class="swatch" style="--series-color: var(--spark-weekly)"></span>Spark weekly</span>
+        </div>
+      </section>
+
+      <section class="detail-grid" aria-label="Detail charts">
+        <article class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <h2>Session usage</h2>
+              <p class="caption">Short-window usage on the same 0–100% scale.</p>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="sessionChart" aria-label="Session usage detail chart from 0 to 100 percent"></canvas>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <h2>Weekly usage</h2>
+              <p class="caption">Weekly cap movement and reset drops.</p>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="weeklyChart" aria-label="Weekly usage detail chart from 0 to 100 percent"></canvas>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <h2>Spark usage</h2>
+              <p class="caption">Spark session and weekly usage on the same scale.</p>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="sparkChart" aria-label="Spark usage detail chart from 0 to 100 percent"></canvas>
+          </div>
+        </article>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <h2>Recent session samples</h2>
+            <p class="caption">Last 24 session readings as bars, still fixed at 0–100%.</p>
+          </div>
+        </div>
         <div class="chart-wrap">
-          <canvas id="weeklyChart"></canvas>
+          <canvas id="sessionBarChart" aria-label="Recent session usage samples from 0 to 100 percent"></canvas>
         </div>
       </section>
 
       <section class="card">
-        <h2>Spark usage % (line)</h2>
-        <div class="chart-wrap">
-          <canvas id="sparkChart"></canvas>
+        <div class="card-header">
+          <div class="card-title">
+            <h2>Usage × tokens over time</h2>
+            <p class="caption">
+              Hermes Codex token volume per sample window against the resulting session and weekly quota positions.
+              Token bars use the left axis; quota lines stay pinned to 0–100% on the right axis.
+            </p>
+          </div>
+        </div>
+        <div class="chart-wrap token-wide">
+          <canvas id="tokenUsageChart" aria-label="Token volume bars with session and weekly usage percentage lines"></canvas>
+        </div>
+        <div class="series-key" aria-hidden="true">
+          <span class="key-pill"><span class="swatch" style="--series-color: var(--token)"></span>Total tokens</span>
+          <span class="key-pill"><span class="swatch" style="--series-color: var(--session)"></span>Session usage</span>
+          <span class="key-pill"><span class="swatch" style="--series-color: var(--weekly)"></span>Weekly usage</span>
         </div>
       </section>
 
-      <section class="card">
-        <h2>Session usage % (last 24 samples)</h2>
-        <div class="chart-wrap">
-          <canvas id="sessionBarChart"></canvas>
-        </div>
+      <section class="detail-grid token-grid" aria-label="Token detail charts">
+        <article class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <h2>Token bucket mix</h2>
+              <p class="caption">Stacked token buckets per sample window.</p>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="tokenBucketChart" aria-label="Stacked token buckets over time"></canvas>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <h2>Quota movement</h2>
+              <p class="caption">Session and weekly percentage deltas per token window, including reset drops.</p>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="tokenDeltaChart" aria-label="Quota percentage movement per token window"></canvas>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <h2>Cache hit rate</h2>
+              <p class="caption">Prompt-cache share from Hermes buckets; gaps mean no prompt tokens in that window.</p>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="cacheHitChart" aria-label="Cache hit rate over token windows from 0 to 100 percent"></canvas>
+          </div>
+        </article>
       </section>
 
-      <section class="card">
-        <h2>Raw rows (latest 24)</h2>
+      <details class="card" open>
+        <summary>
+          <div class="card-header">
+            <div class="card-title">
+              <h2>Token correlation ledger</h2>
+              <p class="caption">
+                Hermes token buckets joined to adjacent Codex usage snapshots. Each row maps
+                tokens sent during a sample window to the next quota percentage movement.
+              </p>
+            </div>
+            <span class="micro-label">usage × tokens</span>
+          </div>
+        </summary>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th class="sortable" data-key="fetched_at" data-type="date">Fetched At</th>
+                <th>Window</th>
+                <th>Δ Session</th>
+                <th>Δ Weekly</th>
+                <th>Calls</th>
+                <th>Input</th>
+                <th>Cache read</th>
+                <th>Output</th>
+                <th>Reasoning</th>
+                <th>Total</th>
+                <th>Cache hit</th>
+                <th>Tokens / session %</th>
+                <th>Tokens / weekly %</th>
+              </tr>
+            </thead>
+            <tbody id="tokenLedgerBody"></tbody>
+          </table>
+        </div>
+      </details>
+
+      <details class="card">
+        <summary>
+          <div class="card-header">
+            <div class="card-title">
+              <h2>Ledger rows</h2>
+              <p class="caption">Latest 24 rows. Click a header to sort.</p>
+            </div>
+            <span class="micro-label">open rows</span>
+          </div>
+        </summary>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="sortable" data-key="fetched_at" data-type="date">Fetched at</th>
                 <th class="sortable" data-key="session_used_pct" data-type="num">Session</th>
                 <th class="sortable" data-key="weekly_used_pct" data-type="num">Weekly</th>
-                <th class="sortable" data-key="spark_session_used_pct" data-type="num">Spark Session</th>
-                <th class="sortable" data-key="spark_weekly_used_pct" data-type="num">Spark Weekly</th>
+                <th class="sortable" data-key="spark_session_used_pct" data-type="num">Spark session</th>
+                <th class="sortable" data-key="spark_weekly_used_pct" data-type="num">Spark weekly</th>
               </tr>
             </thead>
             <tbody id="rawTableBody"></tbody>
           </table>
         </div>
-      </section>
-    </div>
+      </details>
+    </main>
 
     <script>
+      const SERIES = {
+        session: getCss("--session"),
+        weekly: getCss("--weekly"),
+        sparkSession: getCss("--spark-session"),
+        sparkWeekly: getCss("--spark-weekly"),
+        muted: getCss("--muted"),
+        line: getCss("--line-soft"),
+        warning: getCss("--warning"),
+        token: getCss("--token"),
+        input: getCss("--sky"),
+        cacheRead: getCss("--spark-session"),
+        cacheWrite: getCss("--copper"),
+        output: getCss("--weekly"),
+        reasoning: getCss("--spark-weekly"),
+      };
+
       const state = {
-        window: 24,
+        window: 168,
         trend: [],
+        tokenChart: [],
         table: [],
+        tokenLedger: [],
         sortBy: "fetched_at",
         sortDir: "desc",
       };
 
-      const planTypeEl = document.getElementById("planType");
-      const currentSessionEl = document.getElementById("currentSession");
-      const currentWeeklyEl = document.getElementById("currentWeekly");
-      const sparkUsageEl = document.getElementById("sparkUsage");
-      const tableBody = document.getElementById("rawTableBody");
-      const summaryRefresh = document.getElementById("refreshSummary");
+      const els = {
+        globalStatus: document.getElementById("globalStatus"),
+        planType: document.getElementById("planType"),
+        currentSession: document.getElementById("currentSession"),
+        currentWeekly: document.getElementById("currentWeekly"),
+        sparkSession: document.getElementById("sparkSession"),
+        sparkWeekly: document.getElementById("sparkWeekly"),
+        sessionReset: document.getElementById("sessionReset"),
+        weeklyReset: document.getElementById("weeklyReset"),
+        sparkSessionReset: document.getElementById("sparkSessionReset"),
+        sparkWeeklyReset: document.getElementById("sparkWeeklyReset"),
+        freshness: document.getElementById("freshness"),
+        weekPeak: document.getElementById("weekPeak"),
+        weekPeakHint: document.getElementById("weekPeakHint"),
+        sessionPeak: document.getElementById("sessionPeak"),
+        sessionPeakHint: document.getElementById("sessionPeakHint"),
+        windowSpan: document.getElementById("windowSpan"),
+        windowSpanHint: document.getElementById("windowSpanHint"),
+        rowCount: document.getElementById("rowCount"),
+        ledgerPath: document.getElementById("ledgerPath"),
+        tableBody: document.getElementById("rawTableBody"),
+        tokenLedgerBody: document.getElementById("tokenLedgerBody"),
+        refresh: document.getElementById("refreshSummary"),
+      };
 
-      const sessionCanvas = document.getElementById("sessionChart");
-      const weeklyCanvas = document.getElementById("weeklyChart");
-      const sparkCanvas = document.getElementById("sparkChart");
-      const sessionBarCanvas = document.getElementById("sessionBarChart");
+      const canvases = {
+        week: document.getElementById("weekChart"),
+        session: document.getElementById("sessionChart"),
+        weekly: document.getElementById("weeklyChart"),
+        spark: document.getElementById("sparkChart"),
+        sessionBar: document.getElementById("sessionBarChart"),
+        tokenUsage: document.getElementById("tokenUsageChart"),
+        tokenBucket: document.getElementById("tokenBucketChart"),
+        tokenDelta: document.getElementById("tokenDeltaChart"),
+        cacheHit: document.getElementById("cacheHitChart"),
+      };
 
+      let weekChart;
       let sessionChart;
       let weeklyChart;
       let sparkChart;
       let sessionBarChart;
+      let tokenUsageChart;
+      let tokenBucketChart;
+      let tokenDeltaChart;
+      let cacheHitChart;
 
-      function formatTimestamp(ts) {
+      const thresholdPlugin = {
+        id: "thresholdPlugin",
+        afterDraw(chart) {
+          const yScale = chart.scales.y;
+          const area = chart.chartArea;
+          if (!yScale || !area) return;
+          const ctx = chart.ctx;
+          const y = yScale.getPixelForValue(80);
+          ctx.save();
+          ctx.beginPath();
+          ctx.setLineDash([5, 6]);
+          ctx.moveTo(area.left, y);
+          ctx.lineTo(area.right, y);
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = SERIES.warning;
+          ctx.globalAlpha = 0.6;
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 0.75;
+          ctx.fillStyle = SERIES.warning;
+          ctx.font = "11px Rajdhani, Avenir Next, sans-serif";
+          ctx.fillText("80%", area.right - 30, y - 6);
+          ctx.restore();
+        },
+      };
+
+      const endpointLabelPlugin = {
+        id: "endpointLabelPlugin",
+        afterDatasetsDraw(chart) {
+          if (chart.canvas.id !== "weekChart") return;
+          const ctx = chart.ctx;
+          const area = chart.chartArea;
+          const labels = [];
+          chart.data.datasets.forEach((dataset, datasetIndex) => {
+            const meta = chart.getDatasetMeta(datasetIndex);
+            if (meta.hidden) return;
+            const lastIndex = dataset.data.map((value) => value !== null && value !== undefined && Number.isFinite(Number(value))).lastIndexOf(true);
+            if (lastIndex < 0) return;
+            const point = meta.data[lastIndex];
+            if (!point) return;
+            labels.push({
+              text: dataset.label,
+              color: dataset.borderColor,
+              x: Math.min(point.x + 8, area.right - 104),
+              y: Math.max(area.top + 16, Math.min(area.bottom - 10, point.y)),
+            });
+          });
+
+          labels.sort((a, b) => a.y - b.y);
+          for (let i = 1; i < labels.length; i += 1) {
+            if (labels[i].y - labels[i - 1].y < 16) labels[i].y = labels[i - 1].y + 16;
+          }
+          for (let i = labels.length - 2; i >= 0; i -= 1) {
+            if (labels[i + 1].y > area.bottom - 8) labels[i + 1].y = area.bottom - 8;
+            if (labels[i + 1].y - labels[i].y < 16) labels[i].y = labels[i + 1].y - 16;
+          }
+
+          ctx.save();
+          ctx.font = "12px Rajdhani, Avenir Next, sans-serif";
+          labels.forEach((label) => {
+            const y = Math.max(area.top + 16, Math.min(area.bottom - 8, label.y));
+            ctx.fillStyle = label.color;
+            ctx.fillText(label.text, label.x, y);
+          });
+          ctx.restore();
+        },
+      };
+
+      Chart.register(thresholdPlugin);
+
+      function getCss(name) {
+        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      }
+
+      function formatTimestamp(ts, opts = {}) {
         if (!ts) return "—";
         const dt = new Date(ts);
+        if (!Number.isFinite(dt.getTime())) return "—";
         return dt.toLocaleString([], {
-          month: "short",
-          day: "numeric",
+          month: opts.compact ? undefined : "short",
+          day: opts.compact ? undefined : "numeric",
           hour: "2-digit",
           minute: "2-digit",
         });
       }
 
-      function percent(value) {
+      function resetTimestamp(value) {
+        if (!value && value !== 0) return null;
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return null;
+        return new Date(numeric * 1000);
+      }
+
+      function formatReset(value) {
+        const dt = resetTimestamp(value);
+        if (!dt) return "reset: unknown";
+        const now = Date.now();
+        const deltaMs = dt.getTime() - now;
+        const abs = Math.abs(deltaMs);
+        const hours = Math.floor(abs / 3600000);
+        const minutes = Math.round((abs % 3600000) / 60000);
+        const clock = dt.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        if (deltaMs <= 0) return `reset passed · ${clock}`;
+        if (hours >= 24) return `resets in ${Math.round(hours / 24)}d, ${clock}`;
+        if (hours >= 1) return `resets in ${hours}h ${minutes}m`;
+        return `resets in ${minutes}m`;
+      }
+
+      function percent(value, digits = 1) {
         if (value === null || value === undefined) return "—";
         const asNum = Number(value);
         if (!Number.isFinite(asNum)) return "—";
-        return `${asNum.toFixed(2)}%`;
+        return `${asNum.toFixed(digits)}%`;
       }
 
-      function formatRawRows(rows) {
-        return rows.slice(0, 24);
+      function signedPercent(value, digits = 1) {
+        if (value === null || value === undefined) return "—";
+        const asNum = Number(value);
+        if (!Number.isFinite(asNum)) return "—";
+        const sign = asNum > 0 ? "+" : "";
+        return `${sign}${asNum.toFixed(digits)}%`;
       }
 
-      function renderHeader(summary) {
-        planTypeEl.textContent = summary.plan_type || "—";
-        currentSessionEl.textContent = percent(summary.current_session_used_pct);
-        currentWeeklyEl.textContent = percent(summary.current_weekly_used_pct);
-        const sparkSession = percent(summary.current_spark_session_used_pct);
-        const sparkWeekly = percent(summary.current_spark_weekly_used_pct);
-        sparkUsageEl.textContent = `${sparkSession} / ${sparkWeekly}`;
+      function intFormat(value) {
+        const asNum = Number(value);
+        if (!Number.isFinite(asNum)) return "—";
+        return new Intl.NumberFormat().format(Math.round(asNum));
+      }
+
+      function compactIntFormat(value) {
+        const asNum = Number(value);
+        if (!Number.isFinite(asNum)) return "—";
+        return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(asNum);
+      }
+
+      function ratioFormat(value) {
+        if (value === null || value === undefined) return "—";
+        const asNum = Number(value);
+        if (!Number.isFinite(asNum)) return "—";
+        return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(asNum);
+      }
+
+      function deltaClass(value) {
+        const asNum = Number(value);
+        if (!Number.isFinite(asNum)) return "neutral";
+        if (asNum < 0) return "negative";
+        if (asNum > 0) return "color-token";
+        return "neutral";
+      }
+
+      function numeric(value) {
+        const asNum = Number(value);
+        return Number.isFinite(asNum) ? asNum : null;
       }
 
       function trendSlice() {
@@ -328,8 +970,254 @@
         return source.slice(Math.max(0, source.length - state.window));
       }
 
+      function tokenSlice() {
+        const source = state.tokenChart.slice();
+        return source.slice(Math.max(0, source.length - state.window));
+      }
+
       function buildLabels(rows) {
         return rows.map((row) => formatTimestamp(row.fetched_at));
+      }
+
+      function buildTokenLabels(rows) {
+        return rows.map((row) => formatTimestamp(row.window_end));
+      }
+
+      function percentageChartOptions({ legend = false, endpointLabels = false } = {}) {
+        return {
+          maintainAspectRatio: false,
+          responsive: true,
+          interaction: { mode: "index", intersect: false },
+          animation: { duration: 260 },
+          elements: { line: { borderWidth: 2 }, point: { radius: 0, hitRadius: 10, hoverRadius: 3 } },
+          scales: {
+            y: {
+              min: 0,
+              max: 100,
+              border: { color: SERIES.line },
+              ticks: {
+                color: SERIES.muted,
+                stepSize: 25,
+                callback: (value) => `${value}%`,
+              },
+              grid: { color: "rgba(0, 179, 164, 0.10)" },
+            },
+            x: {
+              border: { color: SERIES.line },
+              ticks: {
+                color: SERIES.muted,
+                autoSkip: true,
+                maxRotation: 0,
+                minRotation: 0,
+                maxTicksLimit: state.window > 24 ? 9 : 6,
+              },
+              grid: { display: false },
+            },
+          },
+          plugins: {
+            legend: {
+              display: legend && !endpointLabels,
+              labels: { color: getCss("--text"), usePointStyle: true, boxWidth: 8 },
+            },
+            tooltip: {
+              displayColors: false,
+              backgroundColor: "rgba(11, 15, 26, 0.96)",
+              borderColor: SERIES.line,
+              borderWidth: 1,
+              padding: 10,
+              callbacks: {
+                label: (context) => `${context.dataset.label}: ${percent(context.parsed.y)}`,
+              },
+            },
+          },
+        };
+      }
+
+      function refreshChartOptions(chart, options) {
+        chart.options.scales.x.ticks.maxTicksLimit = options.scales.x.ticks.maxTicksLimit;
+        chart.options.plugins.legend.display = options.plugins.legend.display;
+        chart.update();
+      }
+
+      function lineDataset(label, data, color, extra = {}) {
+        return {
+          label,
+          data,
+          borderColor: color,
+          backgroundColor: color,
+          tension: 0.24,
+          fill: false,
+          spanGaps: true,
+          ...extra,
+        };
+      }
+
+      function barDataset(label, data, color, extra = {}) {
+        return {
+          label,
+          data,
+          type: "bar",
+          backgroundColor: `${color}A8`,
+          borderColor: color,
+          borderWidth: 1,
+          borderRadius: 4,
+          ...extra,
+        };
+      }
+
+      function tokenVolumeChartOptions() {
+        return {
+          maintainAspectRatio: false,
+          responsive: true,
+          interaction: { mode: "index", intersect: false },
+          animation: { duration: 260 },
+          scales: {
+            yTokens: {
+              type: "linear",
+              position: "left",
+              beginAtZero: true,
+              border: { color: SERIES.line },
+              ticks: { color: SERIES.muted, callback: (value) => compactIntFormat(value) },
+              grid: { color: "rgba(0, 179, 164, 0.10)" },
+              title: { display: true, text: "tokens", color: SERIES.muted },
+            },
+            yUsage: {
+              type: "linear",
+              position: "right",
+              min: 0,
+              max: 100,
+              border: { color: SERIES.line },
+              ticks: { color: SERIES.muted, callback: (value) => `${value}%` },
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: "quota used", color: SERIES.muted },
+            },
+            x: {
+              border: { color: SERIES.line },
+              ticks: { color: SERIES.muted, autoSkip: true, maxRotation: 0, minRotation: 0, maxTicksLimit: state.window > 24 ? 9 : 6 },
+              grid: { display: false },
+            },
+          },
+          plugins: {
+            legend: { display: true, labels: { color: getCss("--text"), usePointStyle: true, boxWidth: 8 } },
+            tooltip: {
+              displayColors: true,
+              backgroundColor: "rgba(11, 15, 26, 0.96)",
+              borderColor: SERIES.line,
+              borderWidth: 1,
+              padding: 10,
+              callbacks: {
+                label: (context) => context.dataset.yAxisID === "yUsage"
+                  ? `${context.dataset.label}: ${percent(context.parsed.y)}`
+                  : `${context.dataset.label}: ${intFormat(context.parsed.y)}`,
+              },
+            },
+          },
+        };
+      }
+
+      function tokenBucketChartOptions({ stacked = false, pct = false, delta = false } = {}) {
+        return {
+          maintainAspectRatio: false,
+          responsive: true,
+          interaction: { mode: "index", intersect: false },
+          animation: { duration: 260 },
+          scales: {
+            y: {
+              beginAtZero: !delta,
+              min: pct ? 0 : undefined,
+              max: pct ? 100 : undefined,
+              stacked,
+              border: { color: SERIES.line },
+              ticks: { color: SERIES.muted, callback: (value) => pct || delta ? `${value}%` : compactIntFormat(value) },
+              grid: { color: "rgba(0, 179, 164, 0.10)" },
+            },
+            x: {
+              stacked,
+              border: { color: SERIES.line },
+              ticks: { color: SERIES.muted, autoSkip: true, maxRotation: 0, minRotation: 0, maxTicksLimit: state.window > 24 ? 7 : 5 },
+              grid: { display: false },
+            },
+          },
+          plugins: {
+            legend: { display: true, labels: { color: getCss("--text"), usePointStyle: true, boxWidth: 8 } },
+            tooltip: {
+              backgroundColor: "rgba(11, 15, 26, 0.96)",
+              borderColor: SERIES.line,
+              borderWidth: 1,
+              padding: 10,
+              callbacks: {
+                label: (context) => pct || delta
+                  ? `${context.dataset.label}: ${signedPercent(context.parsed.y)}`
+                  : `${context.dataset.label}: ${intFormat(context.parsed.y)}`,
+              },
+            },
+          },
+        };
+      }
+
+      function renderHeader(summary) {
+        const capped = summary.limit_reached || summary.allowed === false;
+        els.globalStatus.classList.toggle("capped", Boolean(capped));
+        els.globalStatus.innerHTML = `<span class="dot"></span><span>${capped ? "Capped" : "Ready"}</span>`;
+        els.planType.textContent = `plan · ${summary.plan_type || "—"}`;
+        els.currentSession.textContent = percent(summary.current_session_used_pct);
+        els.currentWeekly.textContent = percent(summary.current_weekly_used_pct);
+        els.sparkSession.textContent = percent(summary.current_spark_session_used_pct);
+        els.sparkWeekly.textContent = percent(summary.current_spark_weekly_used_pct);
+        els.sessionReset.textContent = formatReset(summary.session_reset_at);
+        els.weeklyReset.textContent = formatReset(summary.weekly_reset_at);
+        els.sparkSessionReset.textContent = formatReset(summary.spark_session_reset_at);
+        els.sparkWeeklyReset.textContent = formatReset(summary.spark_weekly_reset_at);
+        els.freshness.textContent = `Last sample ${formatTimestamp(summary.last_fetched_at)} · first sample ${formatTimestamp(summary.first_fetched_at)}.`;
+        els.rowCount.textContent = `${summary.total_rows || 0} rows`;
+        els.ledgerPath.textContent = summary.ledger_path || "ledger unavailable";
+        els.ledgerPath.title = summary.ledger_path || "";
+      }
+
+      function findPeak(rows, key) {
+        return rows.reduce((best, row) => {
+          const value = numeric(row[key]);
+          if (value === null) return best;
+          if (!best || value > best.value) return { value, row };
+          return best;
+        }, null);
+      }
+
+      function renderInsights() {
+        const rows = trendSlice();
+        const weekPeak = findPeak(rows, "weekly_used_pct");
+        const sessionPeak = findPeak(rows, "session_used_pct");
+        const first = rows[0];
+        const last = rows[rows.length - 1];
+
+        els.weekPeak.textContent = weekPeak ? percent(weekPeak.value) : "—";
+        els.weekPeakHint.textContent = weekPeak ? `Peaked ${formatTimestamp(weekPeak.row.fetched_at)}.` : "No weekly samples in this window.";
+        els.sessionPeak.textContent = sessionPeak ? percent(sessionPeak.value) : "—";
+        els.sessionPeakHint.textContent = sessionPeak ? `Peaked ${formatTimestamp(sessionPeak.row.fetched_at)}.` : "No session samples in this window.";
+        els.windowSpan.textContent = rows.length ? `${rows.length} samples` : "—";
+        els.windowSpanHint.textContent = first && last ? `${formatTimestamp(first.fetched_at)} → ${formatTimestamp(last.fetched_at)}.` : "No ledger rows to chart.";
+      }
+
+      function buildOrUpdateWeekChart() {
+        const rows = trendSlice();
+        const labels = buildLabels(rows);
+        const datasets = [
+          lineDataset("Session", rows.map((row) => row.session_used_pct), SERIES.session),
+          lineDataset("Weekly", rows.map((row) => row.weekly_used_pct), SERIES.weekly, { borderWidth: 2.5 }),
+          lineDataset("Spark session", rows.map((row) => row.spark_session_used_pct), SERIES.sparkSession),
+          lineDataset("Spark weekly", rows.map((row) => row.spark_weekly_used_pct), SERIES.sparkWeekly),
+        ];
+
+        const options = percentageChartOptions({ legend: false });
+        if (!weekChart) {
+          weekChart = new Chart(canvases.week, { type: "line", data: { labels, datasets }, options });
+          return;
+        }
+        weekChart.data.labels = labels;
+        weekChart.data.datasets.forEach((dataset, index) => {
+          dataset.data = datasets[index].data;
+        });
+        refreshChartOptions(weekChart, options);
       }
 
       function buildOrUpdateSessionChart() {
@@ -337,46 +1225,16 @@
         const labels = buildLabels(rows);
         const values = rows.map((row) => row.session_used_pct);
         if (!sessionChart) {
-          sessionChart = new Chart(sessionCanvas, {
+          sessionChart = new Chart(canvases.session, {
             type: "line",
-            data: {
-              labels,
-              datasets: [
-                {
-                  label: "session_used_pct",
-                  data: values,
-                  borderColor: "#e94560",
-                  backgroundColor: "#e9456080",
-                  tension: 0.28,
-                  fill: false,
-                  spanGaps: true,
-                },
-              ],
-            },
-            options: {
-              maintainAspectRatio: false,
-              responsive: true,
-              scales: {
-                y: {
-                  beginAtZero: false,
-                  ticks: { color: "#9aa0c7" },
-                  grid: { color: "#2f3250" },
-                },
-                x: {
-                  ticks: { color: "#9aa0c7" },
-                  grid: { color: "#2f3250" },
-                },
-              },
-              plugins: {
-                legend: { labels: { color: "#f5f5ff" } },
-              },
-            },
+            data: { labels, datasets: [lineDataset("Session", values, SERIES.session)] },
+            options: percentageChartOptions(),
           });
           return;
         }
         sessionChart.data.labels = labels;
         sessionChart.data.datasets[0].data = values;
-        sessionChart.update();
+        refreshChartOptions(sessionChart, percentageChartOptions());
       }
 
       function buildOrUpdateWeeklyChart() {
@@ -384,46 +1242,16 @@
         const labels = buildLabels(rows);
         const values = rows.map((row) => row.weekly_used_pct);
         if (!weeklyChart) {
-          weeklyChart = new Chart(weeklyCanvas, {
+          weeklyChart = new Chart(canvases.weekly, {
             type: "line",
-            data: {
-              labels,
-              datasets: [
-                {
-                  label: "weekly_used_pct",
-                  data: values,
-                  borderColor: "#4ea5d9",
-                  backgroundColor: "#4ea5d980",
-                  tension: 0.28,
-                  fill: false,
-                  spanGaps: true,
-                },
-              ],
-            },
-            options: {
-              maintainAspectRatio: false,
-              responsive: true,
-              scales: {
-                y: {
-                  beginAtZero: false,
-                  ticks: { color: "#9aa0c7" },
-                  grid: { color: "#2f3250" },
-                },
-                x: {
-                  ticks: { color: "#9aa0c7" },
-                  grid: { color: "#2f3250" },
-                },
-              },
-              plugins: {
-                legend: { labels: { color: "#f5f5ff" } },
-              },
-            },
+            data: { labels, datasets: [lineDataset("Weekly", values, SERIES.weekly, { borderWidth: 2.5 })] },
+            options: percentageChartOptions(),
           });
           return;
         }
         weeklyChart.data.labels = labels;
         weeklyChart.data.datasets[0].data = values;
-        weeklyChart.update();
+        refreshChartOptions(weeklyChart, percentageChartOptions());
       }
 
       function buildOrUpdateSparkChart() {
@@ -432,107 +1260,125 @@
         const sessionValues = rows.map((row) => row.spark_session_used_pct);
         const weeklyValues = rows.map((row) => row.spark_weekly_used_pct);
         if (!sparkChart) {
-          sparkChart = new Chart(sparkCanvas, {
+          sparkChart = new Chart(canvases.spark, {
             type: "line",
             data: {
               labels,
               datasets: [
-                {
-                  label: "spark_session_used_pct",
-                  data: sessionValues,
-                  borderColor: "#0f9d58",
-                  backgroundColor: "#0f9d5880",
-                  tension: 0.28,
-                  fill: false,
-                  spanGaps: true,
-                },
-                {
-                  label: "spark_weekly_used_pct",
-                  data: weeklyValues,
-                  borderColor: "#f4a261",
-                  backgroundColor: "#f4a26180",
-                  tension: 0.28,
-                  fill: false,
-                  spanGaps: true,
-                },
+                lineDataset("Spark session", sessionValues, SERIES.sparkSession),
+                lineDataset("Spark weekly", weeklyValues, SERIES.sparkWeekly),
               ],
             },
-            options: {
-              maintainAspectRatio: false,
-              responsive: true,
-              scales: {
-                y: {
-                  beginAtZero: false,
-                  ticks: { color: "#9aa0c7" },
-                  grid: { color: "#2f3250" },
-                },
-                x: {
-                  ticks: { color: "#9aa0c7" },
-                  grid: { color: "#2f3250" },
-                },
-              },
-              plugins: {
-                legend: { labels: { color: "#f5f5ff" } },
-              },
-            },
+            options: percentageChartOptions({ legend: true }),
           });
           return;
         }
         sparkChart.data.labels = labels;
         sparkChart.data.datasets[0].data = sessionValues;
         sparkChart.data.datasets[1].data = weeklyValues;
-        sparkChart.update();
+        refreshChartOptions(sparkChart, percentageChartOptions({ legend: true }));
       }
 
       function buildOrUpdateSessionBarChart() {
-        const rows = trendSlice();
-        const bars = rows.slice(-24);
+        const bars = trendSlice().slice(-24);
         const labels = buildLabels(bars);
         const values = bars.map((row) => row.session_used_pct);
         if (!sessionBarChart) {
-          sessionBarChart = new Chart(sessionBarCanvas, {
+          sessionBarChart = new Chart(canvases.sessionBar, {
             type: "bar",
             data: {
               labels,
               datasets: [
                 {
-                  label: "session_used_pct",
+                  label: "Session",
                   data: values,
-                  backgroundColor: "#e94560b5",
-                  borderColor: "#e94560",
+                  backgroundColor: "rgba(255, 47, 146, 0.64)",
+                  borderColor: SERIES.session,
                   borderWidth: 1,
+                  borderRadius: 5,
                 },
               ],
             },
-            options: {
-              maintainAspectRatio: false,
-              responsive: true,
-              scales: {
-                y: {
-                  beginAtZero: false,
-                  ticks: { color: "#9aa0c7" },
-                  grid: { color: "#2f3250" },
-                },
-                x: {
-                  ticks: { color: "#9aa0c7" },
-                  grid: { color: "#2f3250" },
-                },
-              },
-              plugins: {
-                legend: { labels: { color: "#f5f5ff" } },
-              },
-            },
+            options: percentageChartOptions(),
           });
           return;
         }
         sessionBarChart.data.labels = labels;
         sessionBarChart.data.datasets[0].data = values;
-        sessionBarChart.update();
+        refreshChartOptions(sessionBarChart, percentageChartOptions());
+      }
+
+      function replaceChartData(chart, labels, datasets, options) {
+        chart.data.labels = labels;
+        chart.data.datasets = datasets;
+        chart.options = options;
+        chart.update();
+      }
+
+      function buildOrUpdateTokenUsageChart() {
+        const rows = tokenSlice();
+        const labels = buildTokenLabels(rows);
+        const datasets = [
+          barDataset("Total tokens", rows.map((row) => row.total_tokens), SERIES.token, { yAxisID: "yTokens", order: 2 }),
+          lineDataset("Session usage", rows.map((row) => row.session_used_pct), SERIES.session, { yAxisID: "yUsage", order: 1, borderWidth: 2.5 }),
+          lineDataset("Weekly usage", rows.map((row) => row.weekly_used_pct), SERIES.weekly, { yAxisID: "yUsage", order: 0, borderWidth: 2.5 }),
+        ];
+        const options = tokenVolumeChartOptions();
+        if (!tokenUsageChart) {
+          tokenUsageChart = new Chart(canvases.tokenUsage, { type: "bar", data: { labels, datasets }, options });
+          return;
+        }
+        replaceChartData(tokenUsageChart, labels, datasets, options);
+      }
+
+      function buildOrUpdateTokenBucketChart() {
+        const rows = tokenSlice();
+        const labels = buildTokenLabels(rows);
+        const datasets = [
+          barDataset("Input", rows.map((row) => row.input_tokens), SERIES.input, { stack: "tokens" }),
+          barDataset("Cache read", rows.map((row) => row.cache_read_tokens), SERIES.cacheRead, { stack: "tokens" }),
+          barDataset("Cache write", rows.map((row) => row.cache_write_tokens), SERIES.cacheWrite, { stack: "tokens" }),
+          barDataset("Output", rows.map((row) => row.output_tokens), SERIES.output, { stack: "tokens" }),
+          barDataset("Reasoning", rows.map((row) => row.reasoning_tokens), SERIES.reasoning, { stack: "tokens" }),
+        ];
+        const options = tokenBucketChartOptions({ stacked: true });
+        if (!tokenBucketChart) {
+          tokenBucketChart = new Chart(canvases.tokenBucket, { type: "bar", data: { labels, datasets }, options });
+          return;
+        }
+        replaceChartData(tokenBucketChart, labels, datasets, options);
+      }
+
+      function buildOrUpdateTokenDeltaChart() {
+        const rows = tokenSlice();
+        const labels = buildTokenLabels(rows);
+        const datasets = [
+          barDataset("Δ Session", rows.map((row) => row.session_delta_pct), SERIES.session),
+          barDataset("Δ Weekly", rows.map((row) => row.weekly_delta_pct), SERIES.weekly),
+        ];
+        const options = tokenBucketChartOptions({ delta: true });
+        if (!tokenDeltaChart) {
+          tokenDeltaChart = new Chart(canvases.tokenDelta, { type: "bar", data: { labels, datasets }, options });
+          return;
+        }
+        replaceChartData(tokenDeltaChart, labels, datasets, options);
+      }
+
+      function buildOrUpdateCacheHitChart() {
+        const rows = tokenSlice();
+        const labels = buildTokenLabels(rows);
+        const datasets = [lineDataset("Cache hit", rows.map((row) => row.cache_hit_pct), SERIES.cacheRead, { borderWidth: 2.5 })];
+        const options = tokenBucketChartOptions({ pct: true });
+        if (!cacheHitChart) {
+          cacheHitChart = new Chart(canvases.cacheHit, { type: "line", data: { labels, datasets }, options });
+          return;
+        }
+        replaceChartData(cacheHitChart, labels, datasets, options);
       }
 
       function renderTable() {
-        const rows = formatRawRows(state.table);
-        tableBody.innerHTML = "";
+        const rows = state.table.slice(0, 24);
+        els.tableBody.innerHTML = "";
         rows.forEach((row) => {
           const tr = document.createElement("tr");
           tr.innerHTML = `
@@ -542,7 +1388,31 @@
             <td>${percent(row.spark_session_used_pct)}</td>
             <td>${percent(row.spark_weekly_used_pct)}</td>
           `;
-          tableBody.appendChild(tr);
+          els.tableBody.appendChild(tr);
+        });
+      }
+
+      function renderTokenLedger() {
+        const rows = state.tokenLedger.slice(0, 24);
+        els.tokenLedgerBody.innerHTML = "";
+        rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          const title = Array.isArray(row.models) && row.models.length ? ` title="${row.models.join(", " )}"` : "";
+          tr.innerHTML = `
+            <td>${formatTimestamp(row.window_start, { compact: true })} → ${formatTimestamp(row.window_end, { compact: true })}</td>
+            <td class="${deltaClass(row.session_delta_pct)}">${signedPercent(row.session_delta_pct)}</td>
+            <td class="${deltaClass(row.weekly_delta_pct)}">${signedPercent(row.weekly_delta_pct)}</td>
+            <td${title}>${intFormat(row.api_calls)}</td>
+            <td>${intFormat(row.input_tokens)}</td>
+            <td>${intFormat(row.cache_read_tokens)}</td>
+            <td>${intFormat(row.output_tokens)}</td>
+            <td>${intFormat(row.reasoning_tokens)}</td>
+            <td>${intFormat(row.total_tokens)}</td>
+            <td>${percent(row.cache_hit_pct)}</td>
+            <td>${ratioFormat(row.tokens_per_session_pct)}</td>
+            <td>${ratioFormat(row.tokens_per_weekly_pct)}</td>
+          `;
+          els.tokenLedgerBody.appendChild(tr);
         });
       }
 
@@ -550,60 +1420,75 @@
         const av = a[key];
         const bv = b[key];
         if (type === "num") {
-          const nA = av === null || av === undefined || Number.isNaN(Number(av)) ? Number.NEGATIVE_INFINITY : Number(av);
-          const nB = bv === null || bv === undefined || Number.isNaN(Number(bv)) ? Number.NEGATIVE_INFINITY : Number(bv);
+          const nA = numeric(av) ?? Number.NEGATIVE_INFINITY;
+          const nB = numeric(bv) ?? Number.NEGATIVE_INFINITY;
           return dir === "asc" ? nA - nB : nB - nA;
         }
-        const tA = av || "";
-        const tB = bv || "";
         const parsedA = type === "date" && av ? new Date(av).getTime() : NaN;
         const parsedB = type === "date" && bv ? new Date(bv).getTime() : NaN;
         if (Number.isFinite(parsedA) && Number.isFinite(parsedB)) {
           return dir === "asc" ? parsedA - parsedB : parsedB - parsedA;
         }
-        if (tA < tB) return dir === "asc" ? -1 : 1;
-        if (tA > tB) return dir === "asc" ? 1 : -1;
-        return 0;
+        return dir === "asc" ? String(av || "").localeCompare(String(bv || "")) : String(bv || "").localeCompare(String(av || ""));
       }
 
       function renderSortedTable() {
-        const sorted = [...state.table].sort((a, b) =>
-          compareValues(a, b, state.sortBy, state.sortBy === "fetched_at" ? "date" : "num", state.sortDir),
-        );
-        state.table = sorted;
+        state.table = [...state.table].sort((a, b) => compareValues(a, b, state.sortBy, state.sortBy === "fetched_at" ? "date" : "num", state.sortDir));
         renderTable();
       }
 
-      async function hydrate() {
-        const [summaryRes, trendRes, dataRes] = await Promise.all([
-          fetch("/api/summary"),
-          fetch("/api/trend"),
-          fetch("/api/data"),
-        ]);
-        const summary = await summaryRes.json();
-        const trend = await trendRes.json();
-        const data = await dataRes.json();
-
-        state.trend = Array.isArray(trend) ? trend : [];
-        state.table = Array.isArray(data) ? data : [];
-
-        renderHeader(summary);
+      function renderCharts() {
+        buildOrUpdateWeekChart();
         buildOrUpdateSessionChart();
         buildOrUpdateWeeklyChart();
         buildOrUpdateSparkChart();
         buildOrUpdateSessionBarChart();
-        renderSortedTable();
+        buildOrUpdateTokenUsageChart();
+        buildOrUpdateTokenBucketChart();
+        buildOrUpdateTokenDeltaChart();
+        buildOrUpdateCacheHitChart();
+        renderInsights();
+      }
+
+      async function hydrate() {
+        els.refresh.disabled = true;
+        els.refresh.textContent = "Refreshing…";
+        try {
+          const [summaryRes, trendRes, dataRes, tokenLedgerRes, tokenChartRes] = await Promise.all([
+            fetch("/api/summary"),
+            fetch("/api/trend"),
+            fetch("/api/data"),
+            fetch("/api/token-ledger"),
+            fetch("/api/token-chart"),
+          ]);
+          if (!summaryRes.ok || !trendRes.ok || !dataRes.ok || !tokenLedgerRes.ok || !tokenChartRes.ok) throw new Error("API request failed");
+          const summary = await summaryRes.json();
+          const trend = await trendRes.json();
+          const data = await dataRes.json();
+          const tokenLedger = await tokenLedgerRes.json();
+          const tokenChart = await tokenChartRes.json();
+          state.trend = Array.isArray(trend) ? trend : [];
+          state.tokenChart = Array.isArray(tokenChart) ? tokenChart : [];
+          state.table = Array.isArray(data) ? data : [];
+          state.tokenLedger = Array.isArray(tokenLedger) ? tokenLedger : [];
+          renderHeader(summary);
+          renderCharts();
+          renderTokenLedger();
+          renderSortedTable();
+        } catch (error) {
+          els.freshness.textContent = `Refresh failed: ${error.message}`;
+        } finally {
+          els.refresh.disabled = false;
+          els.refresh.textContent = "Refresh";
+        }
       }
 
       document.querySelectorAll(".toggle").forEach((btn) => {
         btn.addEventListener("click", () => {
-          document.querySelectorAll(".toggle").forEach((n) => n.classList.remove("active"));
+          document.querySelectorAll(".toggle").forEach((node) => node.classList.remove("active"));
           btn.classList.add("active");
-          state.window = Number(btn.dataset.window || 24);
-          buildOrUpdateSessionChart();
-          buildOrUpdateWeeklyChart();
-          buildOrUpdateSparkChart();
-          buildOrUpdateSessionBarChart();
+          state.window = Number(btn.dataset.window || 168);
+          renderCharts();
           renderSortedTable();
         });
       });
@@ -622,8 +1507,7 @@
         });
       });
 
-      summaryRefresh.addEventListener("click", hydrate);
-
+      els.refresh.addEventListener("click", hydrate);
       hydrate();
       setInterval(hydrate, 60000);
     </script>
