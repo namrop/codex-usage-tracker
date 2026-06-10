@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -15,31 +16,52 @@ LOGGER = logging.getLogger(__name__)
 
 TOKEN_URL = "https://auth.openai.com/oauth/token"
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-AUTH_FILE = Path.home() / ".hermes" / "auth.json"
 BASE_URL = "https://chatgpt.com"
 
 
+def _resolve_auth_file() -> Path:
+    """Resolve Codex OAuth token storage across Hermes layouts.
+
+    Legacy desktop installs store auth at ``~/.hermes/auth.json``. Hermes
+    profiles and Sol primary use ``HERMES_HOME`` directly, with auth at
+    ``$HERMES_HOME/auth.json``. ``CODEX_USAGE_AUTH_FILE`` is a narrow escape
+    hatch for supervised deployments that need an explicit path.
+    """
+
+    explicit = os.environ.get("CODEX_USAGE_AUTH_FILE")
+    if explicit:
+        return Path(explicit).expanduser()
+
+    hermes_home = os.environ.get("HERMES_HOME")
+    if hermes_home:
+        return Path(hermes_home).expanduser() / "auth.json"
+
+    return Path.home() / ".hermes" / "auth.json"
+
+
 def _read_auth_file() -> Optional[Dict[str, Any]]:
-    if not AUTH_FILE.exists():
-        LOGGER.error("Auth file not found: %s", AUTH_FILE)
+    auth_file = _resolve_auth_file()
+    if not auth_file.exists():
+        LOGGER.error("Auth file not found: %s", auth_file)
         return None
 
     try:
-        with AUTH_FILE.open("r", encoding="utf-8") as fp:
+        with auth_file.open("r", encoding="utf-8") as fp:
             return json.load(fp)
     except (OSError, json.JSONDecodeError) as exc:
-        LOGGER.error("Failed to read auth file %s: %s", AUTH_FILE, exc)
+        LOGGER.error("Failed to read auth file %s: %s", auth_file, exc)
         return None
 
 
 def _write_auth_file(payload: Dict[str, Any]) -> bool:
+    auth_file = _resolve_auth_file()
     try:
-        AUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with AUTH_FILE.open("w", encoding="utf-8") as fp:
+        auth_file.parent.mkdir(parents=True, exist_ok=True)
+        with auth_file.open("w", encoding="utf-8") as fp:
             json.dump(payload, fp, indent=2)
         return True
     except OSError as exc:
-        LOGGER.error("Failed to save auth file %s: %s", AUTH_FILE, exc)
+        LOGGER.error("Failed to save auth file %s: %s", auth_file, exc)
         return False
 
 
@@ -147,7 +169,7 @@ def get_credentials() -> Optional[Dict[str, Any]]:
         refreshed_tokens["account_id"] = refreshed["account_id"]
 
     if not _persist_tokens(auth_payload, refreshed_tokens):
-        LOGGER.warning("Could not persist refreshed tokens to %s", AUTH_FILE)
+        LOGGER.warning("Could not persist refreshed tokens to %s", _resolve_auth_file())
 
     return {
         "api_key": new_access_token,
