@@ -20,6 +20,9 @@ def resolve_state_db_path(cli_value: Optional[str] = None) -> str:
     env_value = os.environ.get("HERMES_STATE_DB_PATH")
     if env_value:
         return env_value
+    hermes_home = os.environ.get("HERMES_HOME")
+    if hermes_home:
+        return str(Path(hermes_home).expanduser() / "state.db")
     return DEFAULT_HERMES_STATE_DB
 
 

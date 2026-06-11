@@ -5,11 +5,30 @@ import sqlite3
 from datetime import datetime, timezone
 
 from codex_usage_tracker.dashboard import create_app
-from codex_usage_tracker.token_correlation import build_token_correlation_rows
+from codex_usage_tracker.token_correlation import build_token_correlation_rows, resolve_state_db_path
 
 
 def _epoch(value: str) -> float:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+
+
+def test_resolve_state_db_path_uses_explicit_env_then_hermes_home(tmp_path, monkeypatch):
+    hermes_home = tmp_path / "profile-home"
+    explicit = tmp_path / "custom-state.db"
+
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    assert resolve_state_db_path() == str(hermes_home / "state.db")
+
+    monkeypatch.setenv("HERMES_STATE_DB_PATH", str(explicit))
+    assert resolve_state_db_path() == str(explicit)
+    assert resolve_state_db_path("/cli/state.db") == "/cli/state.db"
+
+
+def test_resolve_state_db_path_falls_back_to_legacy_home(monkeypatch):
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.delenv("HERMES_STATE_DB_PATH", raising=False)
+
+    assert resolve_state_db_path() == "~/.hermes/state.db"
 
 
 def _make_state_db(path):
