@@ -66,3 +66,37 @@ def test_dashboard_exposes_policy_budget_capability_and_scaffold_routes(tmp_path
     assert client.get("/api/routing-decisions").status_code == 200
     assert client.get("/api/task-outcomes").status_code == 200
     assert client.get("/api/backtests/latest").status_code == 200
+
+
+def test_dashboard_summary_exposes_banked_reset_credits(tmp_path, monkeypatch):
+    ledger = tmp_path / "usage.jsonl"
+    _write_usage_ledger(
+        ledger,
+        [
+            {
+                "fetched_at": "2026-06-04T02:00:00+00:00",
+                "weekly_used_pct": 74.0,
+                "session_used_pct": 7.0,
+                "weekly_reset_at": 1781137839,
+                "allowed": True,
+                "limit_reached": False,
+                "raw_payload": {"rate_limit_reset_credits": {"available_count": 3}},
+            },
+        ],
+    )
+    monkeypatch.setenv("HERMES_STATE_DB_PATH", str(tmp_path / "missing.db"))
+
+    client = create_app(atrium_root=str(tmp_path / "atrium"), ledger=str(ledger)).test_client()
+
+    summary = client.get("/api/summary")
+    assert summary.status_code == 200
+    assert summary.get_json()["rate_limit_reset_credits_available"] == 3
+
+    data = client.get("/api/data")
+    assert data.status_code == 200
+    assert data.get_json()[0]["rate_limit_reset_credits_available"] == 3
+
+    page = client.get("/")
+    assert page.status_code == 200
+    assert b"Banked resets" in page.data
+    assert b"manual" in page.data

@@ -417,6 +417,7 @@
       .color-weekly { color: var(--weekly); }
       .color-spark-session { color: var(--spark-session); }
       .color-spark-weekly { color: var(--spark-weekly); }
+      .color-reset { color: var(--cyan); }
       .color-token { color: var(--token); }
       .negative { color: var(--danger); }
       .neutral { color: var(--muted); }
@@ -510,6 +511,11 @@
               <div class="label">Spark weekly</div>
               <div class="value color-spark-weekly" id="sparkWeekly">—</div>
               <div class="hint" id="sparkWeeklyReset">reset: —</div>
+            </div>
+            <div class="metric">
+              <div class="label">Banked resets</div>
+              <div class="value color-reset" id="resetCredits">—</div>
+              <div class="hint" id="resetCreditsHint">manual consumption only</div>
             </div>
           </div>
           <div class="freshness" id="freshness">Waiting for the first ledger sample.</div>
@@ -728,6 +734,7 @@
                 <th class="sortable" data-key="weekly_used_pct" data-type="num">Weekly</th>
                 <th class="sortable" data-key="spark_session_used_pct" data-type="num">Spark session</th>
                 <th class="sortable" data-key="spark_weekly_used_pct" data-type="num">Spark weekly</th>
+                <th class="sortable" data-key="rate_limit_reset_credits_available" data-type="num">Banked resets</th>
               </tr>
             </thead>
             <tbody id="rawTableBody"></tbody>
@@ -774,6 +781,8 @@
         weeklyReset: document.getElementById("weeklyReset"),
         sparkSessionReset: document.getElementById("sparkSessionReset"),
         sparkWeeklyReset: document.getElementById("sparkWeeklyReset"),
+        resetCredits: document.getElementById("resetCredits"),
+        resetCreditsHint: document.getElementById("resetCreditsHint"),
         freshness: document.getElementById("freshness"),
         weekPeak: document.getElementById("weekPeak"),
         weekPeakHint: document.getElementById("weekPeakHint"),
@@ -937,6 +946,15 @@
         const asNum = Number(value);
         if (!Number.isFinite(asNum)) return "—";
         return new Intl.NumberFormat().format(Math.round(asNum));
+      }
+
+      function resetCreditsHint(value) {
+        const asNum = Number(value);
+        if (!Number.isFinite(asNum)) return "manual reserve: unknown";
+        const rounded = Math.round(asNum);
+        if (rounded <= 0) return "no banked manual resets";
+        if (rounded === 1) return "1 manual reset available";
+        return `${intFormat(rounded)} manual resets available`;
       }
 
       function compactIntFormat(value) {
@@ -1168,6 +1186,8 @@
         els.weeklyReset.textContent = formatReset(summary.weekly_reset_at);
         els.sparkSessionReset.textContent = formatReset(summary.spark_session_reset_at);
         els.sparkWeeklyReset.textContent = formatReset(summary.spark_weekly_reset_at);
+        els.resetCredits.textContent = intFormat(summary.rate_limit_reset_credits_available);
+        els.resetCreditsHint.textContent = resetCreditsHint(summary.rate_limit_reset_credits_available);
         els.freshness.textContent = `Last sample ${formatTimestamp(summary.last_fetched_at)} · first sample ${formatTimestamp(summary.first_fetched_at)}.`;
         els.rowCount.textContent = `${summary.total_rows || 0} rows`;
         els.ledgerPath.textContent = summary.ledger_path || "ledger unavailable";
@@ -1387,6 +1407,7 @@
             <td>${percent(row.weekly_used_pct)}</td>
             <td>${percent(row.spark_session_used_pct)}</td>
             <td>${percent(row.spark_weekly_used_pct)}</td>
+            <td>${intFormat(row.rate_limit_reset_credits_available)}</td>
           `;
           els.tableBody.appendChild(tr);
         });

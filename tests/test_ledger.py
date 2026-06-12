@@ -31,6 +31,25 @@ def test_append_row_preserves_unknown_usage_and_availability_fields(tmp_path):
     assert "hours_until_weekly_reset" in row
 
 
+def test_append_row_captures_banked_reset_credits(tmp_path):
+    ledger = tmp_path / "usage.jsonl"
+    row = append_row(
+        {
+            "plan_type": "pro",
+            "rate_limit": {
+                "allowed": True,
+                "limit_reached": False,
+                "primary_window": {"used_percent": 8.0, "reset_at": 1780700000},
+                "secondary_window": {"used_percent": 12.0, "reset_at": 1781137839},
+            },
+            "rate_limit_reset_credits": {"available_count": 2},
+        },
+        str(ledger),
+    )
+
+    assert row["rate_limit_reset_credits_available"] == 2
+
+
 def test_append_row_normalizes_all_additional_rate_limits_and_keeps_spark_compat_fields(tmp_path):
     ledger = tmp_path / "usage.jsonl"
     row = append_row(

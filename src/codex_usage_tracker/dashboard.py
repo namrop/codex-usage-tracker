@@ -65,6 +65,8 @@ def _load_rows(ledger_path: str) -> List[Dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
             if isinstance(payload, dict):
+                if "rate_limit_reset_credits_available" not in payload:
+                    payload["rate_limit_reset_credits_available"] = _reset_credits_available(payload)
                 rows.append(payload)
 
     rows.sort(key=lambda row: _normalize_timestamp(row.get("fetched_at")), reverse=True)
@@ -82,6 +84,28 @@ def _to_float(value: Any) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _to_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _reset_credits_available(row: Dict[str, Any]) -> Optional[int]:
+    explicit = _to_int(row.get("rate_limit_reset_credits_available"))
+    if explicit is not None:
+        return explicit
+    raw_payload = row.get("raw_payload")
+    if not isinstance(raw_payload, dict):
+        return None
+    reset_credits = raw_payload.get("rate_limit_reset_credits")
+    if not isinstance(reset_credits, dict):
+        return None
+    return _to_int(reset_credits.get("available_count"))
 
 
 def create_app(atrium_root: str = DEFAULT_ATRIUM_ROOT, ledger: Optional[str] = None) -> Flask:
@@ -121,6 +145,7 @@ def create_app(atrium_root: str = DEFAULT_ATRIUM_ROOT, ledger: Optional[str] = N
                     "plan_type": None,
                     "allowed": None,
                     "limit_reached": None,
+                    "rate_limit_reset_credits_available": None,
                     "ledger_path": resolved_ledger_path,
                 }
             )
@@ -147,6 +172,7 @@ def create_app(atrium_root: str = DEFAULT_ATRIUM_ROOT, ledger: Optional[str] = N
                 "plan_type": current.get("plan_type"),
                 "allowed": allowed,
                 "limit_reached": limit_reached,
+                "rate_limit_reset_credits_available": _reset_credits_available(current),
                 "ledger_path": resolved_ledger_path,
             }
         )

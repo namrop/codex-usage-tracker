@@ -27,6 +27,13 @@ def _to_float(value: Any, default: Optional[float] = 0.0) -> Optional[float]:
         return default
 
 
+def _extract_reset_credits_available(data: Dict[str, Any]) -> Optional[int]:
+    reset_credits = data.get("rate_limit_reset_credits", {})
+    if not isinstance(reset_credits, dict):
+        return None
+    return _to_int(reset_credits.get("available_count"))
+
+
 def _window_after_fields(reset_at: Optional[int], now_epoch: float, prefix: str) -> Dict[str, Optional[float]]:
     if reset_at is None:
         return {
@@ -117,6 +124,7 @@ def append_row(data: Dict[str, Any], ledger_path: str) -> Dict[str, Any]:
 
     additional_rate_limits = _extract_additional_rate_limits(data)
     spark_limits = _extract_spark_limits(additional_rate_limits)
+    reset_credits_available = _extract_reset_credits_available(data)
     path = Path(ledger_path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -144,6 +152,7 @@ def append_row(data: Dict[str, Any], ledger_path: str) -> Dict[str, Any]:
         **_window_after_fields(weekly_reset_at, now_epoch, "weekly"),
         "credits_balance": str(credits.get("balance", "")),
         "credits_has_credits": bool(credits.get("has_credits", False)),
+        "rate_limit_reset_credits_available": reset_credits_available,
         **spark_limits,
         "additional_rate_limits_normalized": additional_rate_limits,
         "raw_payload_present": bool(data),
