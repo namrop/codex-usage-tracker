@@ -16,6 +16,7 @@ from typing import Optional
 from .fetcher import fetch_usage
 from .git_autocommit import commit_ledger
 from .ledger import append_row
+from .public_projection import write_public_projection
 
 LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +54,21 @@ def _print_summary(payload: dict) -> None:
         print(f"credits_has_credits: {credits.get('has_credits')}")
 
 
+def _write_public_projection_for_args(args: argparse.Namespace, ledger_path: str) -> Optional[str]:
+    if getattr(args, "no_public_projection", False):
+        return None
+    projection_path = getattr(args, "public_projection", None)
+    if not projection_path:
+        return None
+    output_path = write_public_projection(
+        ledger_path,
+        projection_path=projection_path,
+        limit=getattr(args, "public_projection_limit", 168),
+        source=getattr(args, "public_projection_source", "sol-public-projection"),
+    )
+    return str(output_path)
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
     ledger_path = _resolve_ledger_path(args.atrium_root, args.ledger)
     payload = fetch_usage()
@@ -61,7 +77,10 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         return 1
 
     append_row(payload, ledger_path)
+    projection_path = _write_public_projection_for_args(args, ledger_path)
     _print_summary(payload)
+    if projection_path:
+        print(f"public_projection: {projection_path}")
     return 0
 
 
@@ -90,6 +109,22 @@ def cmd_commit_ledger(args: argparse.Namespace) -> int:
     print(result.message)
     if result.commit_sha:
         print(f"commit_sha: {result.commit_sha}")
+    return 0
+
+
+def cmd_write_public_projection(args: argparse.Namespace) -> int:
+    ledger_path = _resolve_ledger_path(args.atrium_root, args.ledger)
+    try:
+        output_path = write_public_projection(
+            ledger_path,
+            projection_path=args.public_projection,
+            limit=args.public_projection_limit,
+            source=args.public_projection_source,
+        )
+    except Exception as exc:
+        print(f"Failed to write public projection: {exc}", file=sys.stderr)
+        return 1
+    print(f"public_projection: {output_path}")
     return 0
 
 
@@ -130,7 +165,10 @@ def cmd_daemon(args: argparse.Namespace) -> int:
             continue
         try:
             append_row(payload, ledger_path)
+            projection_path = _write_public_projection_for_args(args, ledger_path)
             print(f"{now} usage snapshot saved to {ledger_path}")
+            if projection_path:
+                print(f"{now} public projection saved to {projection_path}")
             _print_summary(payload)
         except Exception as exc:  # broad for I/O or parsing errors
             print(f"{now} failed to append ledger row: {exc}")
@@ -148,6 +186,31 @@ def main() -> int:
         dest="atrium_root",
         default=DEFAULT_ATRIUM_ROOT,
         help=f"Atrium root path (default: {DEFAULT_ATRIUM_ROOT})",
+    )
+    common.add_argument(
+        "--public-projection",
+        dest="public_projection",
+        default=None,
+        help="Path for public-safe derived token chart JSON to write after fetch/daemon appends",
+    )
+    common.add_argument(
+        "--public-projection-source",
+        dest="public_projection_source",
+        default="sol-public-projection",
+        help="Source marker to embed in the public projection payload",
+    )
+    common.add_argument(
+        "--public-projection-limit",
+        dest="public_projection_limit",
+        type=int,
+        default=168,
+        help="Maximum derived hourly windows to project (default: 168)",
+    )
+    common.add_argument(
+        "--no-public-projection",
+        dest="no_public_projection",
+        action="store_true",
+        help="Skip writing the public-safe derived token chart JSON after fetch/daemon writes",
     )
 
     fetch_parser = subparsers.add_parser("fetch", parents=[common], help="Fetch usage and append a row")
@@ -177,6 +240,13 @@ def main() -> int:
         help="Validate and report what would be committed without staging or committing",
     )
     commit_parser.set_defaults(func=cmd_commit_ledger)
+
+    public_projection_parser = subparsers.add_parser(
+        "write-public-projection",
+        parents=[common],
+        help="Write the public-safe derived Codex token chart JSON without fetching a new usage snapshot",
+    )
+    public_projection_parser.set_defaults(func=cmd_write_public_projection)
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Run the web dashboard")
     dashboard_parser.add_argument("--ledger", dest="ledger", default=None, help="Path to ledger JSONL file")

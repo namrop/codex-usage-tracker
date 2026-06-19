@@ -9,12 +9,14 @@ from ChatGPT’s usage endpoint, and appends normalized snapshots to a JSONL led
 - Refreshes expired access tokens automatically.
 - Fetches `/backend-api/wham/usage` from `chatgpt.com`.
 - Writes one normalized ledger row per run to a JSONL file.
-- Provides a small CLI with five subcommands:
+- Provides a small CLI with six subcommands:
 - `fetch`
 - `daemon`
 - `dump-raw`
 - `commit-ledger`
+- `write-public-projection`
 - `dashboard`
+- Can write a public-safe derived token chart JSON so a DMZ host never needs the raw Codex ledger.
 
 ## API endpoint
 
@@ -88,6 +90,36 @@ codex-usage-tracker commit-ledger --message "Update Codex usage ledger"
 ```
 
 Validates the configured JSONL ledger and commits only that ledger path inside the Atrium repo if it changed. The command refuses to run when unrelated paths are already staged, so a scheduled ledger commit cannot accidentally sweep in other Atrium work.
+
+### Public projection for Namrop / DMZ hosts
+
+The raw Codex ledger contains private account/runtime fields in `raw_payload` and should not be copied to a DMZ host. Use the projection command to write only the derived chart payload consumed by Namrop:
+
+```bash
+codex-usage-tracker write-public-projection \
+  --ledger /srv/pharos/atrium/canon/12_runtime/ledgers/codex_usage/codex_usage_ledger.jsonl \
+  --public-projection /tmp/namrop-public/codex-token-chart.json \
+  --public-projection-source sol-public-projection
+```
+
+The payload contains only:
+
+- rolling window timestamps;
+- derived token buckets and API/session counts;
+- cache hit percentage;
+- quota deltas and reset/drop markers;
+- a compact `summary` object.
+
+It intentionally excludes raw usage rows, `raw_payload`, email, `user_id`, `account_id`, OAuth tokens, prompts, transcripts, and unrestricted local paths.
+
+For a VPS/DMZ deployment, run this on the trusted host and push only the generated JSON artifact, for example with a separate cron/systemd step:
+
+```bash
+rsync -az --chmod=F644 /tmp/namrop-public/codex-token-chart.json \
+  namrop-vps:/var/www/namrop-public/codex-token-chart.json
+```
+
+`fetch` and `daemon` can also write the public projection immediately after a private ledger append when given `--public-projection PATH`. This keeps the sidecar explicit and avoids surprising untracked files beside the raw ledger. Pass `--no-public-projection` to disable the sidecar write in wrapper scripts that set a default path.
 
 ### Dashboard
 
