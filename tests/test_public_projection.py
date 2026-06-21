@@ -7,6 +7,7 @@ from datetime import datetime
 from codex_usage_tracker.public_projection import (
     build_public_projection,
     default_public_projection_path,
+    suppress_gap_spikes,
     write_public_projection,
 )
 
@@ -126,3 +127,59 @@ def test_write_public_projection_writes_pretty_json_next_to_ledger_by_default(tm
     assert payload["source"] == "test-public"
     assert payload["rows"][0]["total_tokens"] == 1060
     assert output_path.name == "codex_token_chart_public.json"
+
+
+def test_public_projection_suppresses_multi_hour_sampling_gap_spikes():
+    rows = [
+        {
+            "window_start": "2026-06-12T22:00:00+00:00",
+            "window_end": "2026-06-20T01:00:00+00:00",
+            "span_hours": 171.0,
+            "codex_sessions": 593,
+            "api_calls": 19617,
+            "input_tokens": 138993064,
+            "cache_read_tokens": 1950931456,
+            "cache_write_tokens": 0,
+            "output_tokens": 6775923,
+            "reasoning_tokens": 1965825,
+            "prompt_tokens": 2089924520,
+            "total_tokens": 2098666268,
+            "cache_hit_pct": 93.3,
+            "noncached_prompt_pct": 6.7,
+            "tokens_per_session_pct": None,
+            "tokens_per_weekly_pct": None,
+            "models": ["gpt-5.5"],
+        },
+        {
+            "window_start": "2026-06-20T01:00:00+00:00",
+            "window_end": "2026-06-20T02:00:00+00:00",
+            "span_hours": 1.0,
+            "codex_sessions": 9,
+            "api_calls": 347,
+            "input_tokens": 4156933,
+            "cache_read_tokens": 39144448,
+            "cache_write_tokens": 0,
+            "output_tokens": 158038,
+            "reasoning_tokens": 34293,
+            "prompt_tokens": 43301381,
+            "total_tokens": 43493712,
+            "cache_hit_pct": 90.4,
+            "noncached_prompt_pct": 9.6,
+            "tokens_per_session_pct": 3953974.0,
+            "tokens_per_weekly_pct": 21746856.0,
+            "models": ["gpt-5.5"],
+        },
+    ]
+
+    sanitized = suppress_gap_spikes(rows)
+
+    assert sanitized[0]["data_gap"] is True
+    assert sanitized[0]["span_hours"] == 171.0
+    assert sanitized[0]["total_tokens"] == 0
+    assert sanitized[0]["api_calls"] == 0
+    assert sanitized[0]["codex_sessions"] == 0
+    assert sanitized[0]["cache_hit_pct"] is None
+    assert sanitized[0]["models"] == []
+    assert sanitized[1]["data_gap"] is False
+    assert sanitized[1]["total_tokens"] == 43493712
+    assert sanitized[1]["api_calls"] == 347

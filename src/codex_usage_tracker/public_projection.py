@@ -10,6 +10,7 @@ from .token_correlation import build_token_correlation_rows, resolve_state_db_pa
 
 PUBLIC_PROJECTION_FILENAME = "codex_token_chart_public.json"
 DEFAULT_PUBLIC_PROJECTION_SOURCE = "sol-public-projection"
+MAX_PUBLIC_CHART_WINDOW_HOURS = 2.25
 
 
 def default_public_projection_path(ledger_path: str) -> Path:
@@ -52,6 +53,37 @@ def summarize_public_rows(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def suppress_gap_spikes(rows: List[Dict[str, Any]], *, max_window_hours: float = MAX_PUBLIC_CHART_WINDOW_HOURS) -> List[Dict[str, Any]]:
+    """Zero token buckets for long sampling gaps so public charts do not show multi-day backlog as one hourly spike."""
+    sanitized: List[Dict[str, Any]] = []
+    for row in rows:
+        next_row = dict(row)
+        span_hours = float(next_row.get("span_hours") or 0)
+        if span_hours > max_window_hours:
+            for key in (
+                "codex_sessions",
+                "api_calls",
+                "input_tokens",
+                "cache_read_tokens",
+                "cache_write_tokens",
+                "output_tokens",
+                "reasoning_tokens",
+                "prompt_tokens",
+                "total_tokens",
+            ):
+                next_row[key] = 0
+            next_row["cache_hit_pct"] = None
+            next_row["noncached_prompt_pct"] = None
+            next_row["tokens_per_session_pct"] = None
+            next_row["tokens_per_weekly_pct"] = None
+            next_row["models"] = []
+            next_row["data_gap"] = True
+        else:
+            next_row["data_gap"] = False
+        sanitized.append(next_row)
+    return sanitized
+
+
 def build_public_projection(
     ledger_path: str,
     *,
@@ -65,10 +97,12 @@ def build_public_projection(
     summary cards. It does not project raw usage snapshots, raw API payloads,
     transcript/session bodies, credentials, or unrestricted local paths.
     """
-    rows = build_token_correlation_rows(
-        _read_usage_rows(ledger_path),
-        state_db_path=resolve_state_db_path(state_db_path),
-        limit=limit,
+    rows = suppress_gap_spikes(
+        build_token_correlation_rows(
+            _read_usage_rows(ledger_path),
+            state_db_path=resolve_state_db_path(state_db_path),
+            limit=limit,
+        )
     )
     return {
         "rows": rows,
