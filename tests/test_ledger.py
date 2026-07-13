@@ -31,6 +31,35 @@ def test_append_row_preserves_unknown_usage_and_availability_fields(tmp_path):
     assert "hours_until_weekly_reset" in row
 
 
+def test_append_row_preserves_unknown_weekly_usage_when_secondary_window_is_null(tmp_path):
+    ledger = tmp_path / "usage.jsonl"
+
+    row = append_row(
+        {
+            "plan_type": "pro",
+            "rate_limit": {
+                "primary_window": {"used_percent": 12.0},
+                "secondary_window": None,
+            },
+        },
+        str(ledger),
+    )
+
+    assert row["session_used_pct"] == 12.0
+    assert row["weekly_used_pct"] is None
+    assert row["unknown_state"] is True
+
+
+def test_append_row_preserves_unknown_usage_when_rate_limit_is_null(tmp_path):
+    ledger = tmp_path / "usage.jsonl"
+
+    row = append_row({"plan_type": "pro", "rate_limit": None}, str(ledger))
+
+    assert row["session_used_pct"] is None
+    assert row["weekly_used_pct"] is None
+    assert row["unknown_state"] is True
+
+
 def test_append_row_captures_banked_reset_credits(tmp_path):
     ledger = tmp_path / "usage.jsonl"
     row = append_row(

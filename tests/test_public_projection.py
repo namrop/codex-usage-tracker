@@ -20,12 +20,15 @@ def _make_state_db(path):
     conn = sqlite3.connect(path)
     conn.execute(
         """
-        CREATE TABLE sessions (
-            id TEXT PRIMARY KEY,
-            started_at REAL NOT NULL,
-            billing_provider TEXT,
+        CREATE TABLE llm_usage_events (
+            timestamp REAL NOT NULL,
+            session_id TEXT,
+            provider TEXT,
             model TEXT,
-            api_call_count INTEGER DEFAULT 0,
+            api_call_index INTEGER,
+            record_kind TEXT,
+            usage_source TEXT,
+            measurement_confidence TEXT,
             input_tokens INTEGER DEFAULT 0,
             cache_read_tokens INTEGER DEFAULT 0,
             cache_write_tokens INTEGER DEFAULT 0,
@@ -36,15 +39,16 @@ def _make_state_db(path):
     )
     conn.executemany(
         """
-        INSERT INTO sessions (
-            id, started_at, billing_provider, model, api_call_count,
-            input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO llm_usage_events (
+            timestamp, session_id, provider, model, api_call_index, record_kind,
+            usage_source, measurement_confidence, input_tokens, cache_read_tokens,
+            cache_write_tokens, output_tokens, reasoning_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
-            ("codex-a", _epoch("2026-06-04T01:15:00Z"), "openai-codex", "gpt-5.5", 2, 100, 900, 0, 50, 10),
-            ("other-provider", _epoch("2026-06-04T01:30:00Z"), "deepseek", "deepseek-v4-pro", 9, 9999, 9999, 0, 9999, 0),
-            ("codex-b", _epoch("2026-06-04T02:10:00Z"), "openai-codex", "gpt-5.5", 3, 300, 700, 100, 100, 30),
+            (_epoch("2026-06-04T01:15:00Z"), "codex-a", "openai-codex", "gpt-5.5", 1, "api_attempt", "provider_reported", "exact", 100, 900, 0, 50, 10),
+            (_epoch("2026-06-04T01:30:00Z"), "other-provider", "deepseek", "deepseek-v4-pro", 1, "api_attempt", "provider_reported", "exact", 9999, 9999, 0, 9999, 0),
+            (_epoch("2026-06-04T02:10:00Z"), "codex-b", "openai-codex", "gpt-5.5", 3, "historical_aggregate", "reconstructed", "reconstructed", 300, 700, 100, 100, 30),
         ],
     )
     conn.commit()
@@ -92,14 +96,14 @@ def test_build_public_projection_exposes_only_derived_chart_payload(tmp_path):
     assert payload["source"] == "test-public"
     assert len(payload["rows"]) == 2
     assert payload["rows"][0]["window_start"] == "2026-06-04T01:00:00+00:00"
-    assert payload["rows"][0]["api_calls"] == 2
-    assert payload["rows"][0]["total_tokens"] == 1060
+    assert payload["rows"][0]["api_calls"] == 1
+    assert payload["rows"][0]["total_tokens"] == 1050
     assert payload["summary"] == {
         "updated_at": "2026-06-04T03:00:00+00:00",
         "window_count": 2,
-        "total_tokens": 2290,
-        "api_calls": 5,
-        "latest_total_tokens": 1230,
+        "total_tokens": 2250,
+        "api_calls": 4,
+        "latest_total_tokens": 1200,
         "latest_cache_hit_pct": 63.6,
     }
     serialized = json.dumps(payload)
@@ -125,7 +129,7 @@ def test_write_public_projection_writes_pretty_json_next_to_ledger_by_default(tm
     assert output_path == default_public_projection_path(str(ledger))
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["source"] == "test-public"
-    assert payload["rows"][0]["total_tokens"] == 1060
+    assert payload["rows"][0]["total_tokens"] == 1050
     assert output_path.name == "codex_token_chart_public.json"
 
 

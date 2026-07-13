@@ -100,6 +100,8 @@ def _empty_token_totals() -> Dict[str, Any]:
         "output_tokens": 0,
         "reasoning_tokens": 0,
         "models": [],
+        "usage_source": None,
+        "measurement_confidence": None,
     }
 
 
@@ -107,7 +109,7 @@ def _load_token_windows(
     state_db_path: str,
     windows: List[tuple[datetime, datetime]],
 ) -> Dict[tuple[datetime, datetime], Dict[str, Any]]:
-    """Aggregate openai-codex session tokens inside usage-sample windows."""
+    """Aggregate openai-codex attempt events inside usage-sample windows."""
     if not windows:
         return {}
     path = Path(state_db_path).expanduser()
@@ -118,24 +120,28 @@ def _load_token_windows(
     start_epoch = min(start.timestamp() for start, _ in windows)
     end_epoch = max(end.timestamp() for _, end in windows)
     try:
-        conn = sqlite3.connect(path)
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
             SELECT
-                started_at,
+                timestamp,
+                session_id,
                 model,
-                COALESCE(api_call_count, 0) AS api_call_count,
+                api_call_index,
+                record_kind,
+                usage_source,
+                measurement_confidence,
                 COALESCE(input_tokens, 0) AS input_tokens,
                 COALESCE(cache_read_tokens, 0) AS cache_read_tokens,
                 COALESCE(cache_write_tokens, 0) AS cache_write_tokens,
                 COALESCE(output_tokens, 0) AS output_tokens,
                 COALESCE(reasoning_tokens, 0) AS reasoning_tokens
-            FROM sessions
-            WHERE billing_provider = 'openai-codex'
-              AND started_at >= ?
-              AND started_at < ?
-            ORDER BY started_at ASC
+            FROM llm_usage_events
+            WHERE provider = 'openai-codex'
+              AND timestamp >= ?
+              AND timestamp < ?
+            ORDER BY timestamp ASC
             """,
             (start_epoch, end_epoch),
         ).fetchall()
@@ -150,13 +156,18 @@ def _load_token_windows(
     # Window count is tiny (<=168 in the dashboard), so a linear scan is clearer
     # than trying to align SQLite date buckets with irregular usage samples.
     for row in rows:
-        started_at = datetime.fromtimestamp(float(row["started_at"]), timezone.utc)
+        event_at = datetime.fromtimestamp(float(row["timestamp"]), timezone.utc)
         for window in windows:
             start, end = window
-            if start <= started_at < end:
+            if start <= event_at < end:
                 bucket = totals[window]
-                bucket["codex_sessions"] += 1
-                bucket["api_calls"] += int(row["api_call_count"] or 0)
+                session_id = row["session_id"]
+                if session_id:
+                    bucket.setdefault("_session_ids", set()).add(str(session_id))
+                if row["record_kind"] == "api_attempt":
+                    bucket["api_calls"] += 1
+                elif row["record_kind"] == "historical_aggregate" and row["usage_source"] == "reconstructed":
+                    bucket["api_calls"] += int(row["api_call_index"] or 0)
                 bucket["input_tokens"] += int(row["input_tokens"] or 0)
                 bucket["cache_read_tokens"] += int(row["cache_read_tokens"] or 0)
                 bucket["cache_write_tokens"] += int(row["cache_write_tokens"] or 0)
@@ -165,11 +176,30 @@ def _load_token_windows(
                 model = row["model"]
                 if model:
                     bucket.setdefault("_model_counts", Counter())[str(model)] += 1
+                usage_source = row["usage_source"]
+                if usage_source:
+                    bucket.setdefault("_usage_sources", set()).add(str(usage_source))
+                confidence = row["measurement_confidence"]
+                if confidence:
+                    bucket.setdefault("_confidence_values", set()).add(str(confidence))
                 break
 
     for bucket in totals.values():
+        bucket["codex_sessions"] = len(bucket.pop("_session_ids", set()))
         model_counts = bucket.pop("_model_counts", Counter())
         bucket["models"] = [model for model, _ in model_counts.most_common(4)]
+        usage_sources = bucket.pop("_usage_sources", set())
+        if len(usage_sources) == 1:
+            bucket["usage_source"] = next(iter(usage_sources))
+        elif usage_sources:
+            bucket["usage_source"] = "mixed"
+        confidence_values = bucket.pop("_confidence_values", set())
+        if "reconstructed" in confidence_values:
+            bucket["measurement_confidence"] = "reconstructed"
+        elif len(confidence_values) == 1:
+            bucket["measurement_confidence"] = next(iter(confidence_values))
+        elif confidence_values:
+            bucket["measurement_confidence"] = "mixed"
     return totals
 
 
@@ -182,10 +212,12 @@ def build_token_correlation_rows(
     """Build an hourly-ish ledger from adjacent usage samples and Hermes tokens.
 
     Each returned row represents the activity window between two usage samples.
-    Tokens are summed for Hermes sessions that started in that window. Usage
-    deltas are computed from the first sample to the second sample, so a sample
-    taken at 02:00 is compared against the prior sample at 01:00 and receives
-    the Hermes token traffic from [01:00, 02:00).
+    Tokens are summed for Hermes provider-attempt events recorded in that window.
+    Usage deltas are computed from the first sample to the second sample, so a
+    sample taken at 02:00 is compared against the prior sample at 01:00 and
+    receives the Hermes token traffic from [01:00, 02:00). Historical aggregate
+    rows remain explicitly reconstructed; a legacy database without the event
+    table yields zero totals rather than reverting to session-start attribution.
     """
     samples = _sorted_usage_samples(usage_rows)
     if len(samples) < 2:
@@ -208,7 +240,7 @@ def build_token_correlation_rows(
         output_tokens = int(totals["output_tokens"])
         reasoning_tokens = int(totals["reasoning_tokens"])
         prompt_tokens = input_tokens + cache_read_tokens + cache_write_tokens
-        total_tokens = prompt_tokens + output_tokens + reasoning_tokens
+        total_tokens = prompt_tokens + output_tokens
         session_delta = _delta(left.get("session_used_pct"), right.get("session_used_pct"))
         weekly_delta = _delta(left.get("weekly_used_pct"), right.get("weekly_used_pct"))
         spark_session_delta = _delta(left.get("spark_session_used_pct"), right.get("spark_session_used_pct"))
@@ -246,6 +278,8 @@ def build_token_correlation_rows(
                 "tokens_per_session_pct": None if reset_or_drop else _positive_ratio(total_tokens, session_delta),
                 "tokens_per_weekly_pct": None if reset_or_drop else _positive_ratio(total_tokens, weekly_delta),
                 "models": totals.get("models", []),
+                "usage_source": totals.get("usage_source"),
+                "measurement_confidence": totals.get("measurement_confidence"),
             }
         )
     return rows

@@ -16,12 +16,15 @@ def _make_state_db(path):
     conn = sqlite3.connect(path)
     conn.execute(
         """
-        CREATE TABLE sessions (
-            id TEXT PRIMARY KEY,
-            started_at REAL NOT NULL,
-            billing_provider TEXT,
+        CREATE TABLE llm_usage_events (
+            timestamp REAL NOT NULL,
+            session_id TEXT,
+            provider TEXT,
             model TEXT,
-            api_call_count INTEGER DEFAULT 0,
+            api_call_index INTEGER,
+            record_kind TEXT,
+            usage_source TEXT,
+            measurement_confidence TEXT,
             input_tokens INTEGER DEFAULT 0,
             cache_read_tokens INTEGER DEFAULT 0,
             cache_write_tokens INTEGER DEFAULT 0,
@@ -32,12 +35,13 @@ def _make_state_db(path):
     )
     conn.execute(
         """
-        INSERT INTO sessions (
-            id, started_at, billing_provider, model, api_call_count,
-            input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO llm_usage_events (
+            timestamp, session_id, provider, model, api_call_index, record_kind,
+            usage_source, measurement_confidence, input_tokens, cache_read_tokens,
+            cache_write_tokens, output_tokens, reasoning_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        ("codex-a", _epoch("2026-06-04T01:15:00Z"), "openai-codex", "gpt-5.5", 2, 100, 900, 0, 50, 10),
+        (_epoch("2026-06-04T01:15:00Z"), "codex-a", "openai-codex", "gpt-5.5", 1, "api_attempt", "provider_reported", "exact", 100, 900, 0, 50, 10),
     )
     conn.commit()
     conn.close()
@@ -77,7 +81,7 @@ def test_cmd_write_public_projection_uses_default_neighbor_path(tmp_path, monkey
     output = ledger.with_name("codex_token_chart_public.json")
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["source"] == "test-public"
-    assert payload["rows"][0]["total_tokens"] == 1060
+    assert payload["rows"][0]["total_tokens"] == 1050
     assert str(output) in capsys.readouterr().out
 
 
@@ -145,3 +149,99 @@ def test_cmd_fetch_writes_public_projection_after_private_ledger_append_when_con
     assert payload["source"] == "test-public"
     assert "raw_payload" not in json.dumps(payload)
     assert len(payload["rows"]) >= 1
+
+
+def _fetch_args(tmp_path, ledger):
+    return argparse.Namespace(
+        atrium_root=str(tmp_path),
+        ledger=str(ledger),
+        public_projection=None,
+        public_projection_source="test-public",
+        public_projection_limit=168,
+        no_public_projection=False,
+    )
+
+
+def test_cmd_fetch_renders_unknown_weekly_usage_when_secondary_window_is_null(tmp_path, monkeypatch, capsys):
+    ledger = tmp_path / "usage.jsonl"
+    monkeypatch.setattr(
+        cli,
+        "fetch_usage",
+        lambda: {
+            "plan_type": "pro",
+            "rate_limit": {
+                "primary_window": {"used_percent": 12.0},
+                "secondary_window": None,
+            },
+        },
+    )
+
+    assert cli.cmd_fetch(_fetch_args(tmp_path, ledger)) == 0
+
+    row = json.loads(ledger.read_text(encoding="utf-8"))
+    assert row["weekly_used_pct"] is None
+    assert "weekly_used_pct: None" in capsys.readouterr().out
+
+
+def test_cmd_fetch_renders_unknown_usage_when_rate_limit_is_null(tmp_path, monkeypatch, capsys):
+    ledger = tmp_path / "usage.jsonl"
+    monkeypatch.setattr(cli, "fetch_usage", lambda: {"plan_type": "pro", "rate_limit": None})
+
+    assert cli.cmd_fetch(_fetch_args(tmp_path, ledger)) == 0
+
+    row = json.loads(ledger.read_text(encoding="utf-8"))
+    assert row["session_used_pct"] is None
+    assert row["weekly_used_pct"] is None
+    output = capsys.readouterr().out
+    assert "session_used_pct: None" in output
+    assert "weekly_used_pct: None" in output
+
+
+def test_cmd_fetch_reports_summary_failure_after_successful_append_separately(tmp_path, monkeypatch, capsys):
+    ledger = tmp_path / "usage.jsonl"
+    monkeypatch.setattr(cli, "fetch_usage", lambda: {"plan_type": "pro", "rate_limit": None})
+    monkeypatch.setattr(cli, "_print_summary", lambda payload: (_ for _ in ()).throw(RuntimeError("summary boom")))
+
+    assert cli.cmd_fetch(_fetch_args(tmp_path, ledger)) == 1
+
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+    stderr = capsys.readouterr().err
+    assert "Failed to render usage summary: summary boom" in stderr
+    assert "append" not in stderr.lower()
+
+
+def test_cmd_fetch_stops_after_append_failure_and_reports_that_phase(tmp_path, monkeypatch, capsys):
+    ledger = tmp_path / "usage.jsonl"
+    monkeypatch.setattr(cli, "fetch_usage", lambda: {"plan_type": "pro", "rate_limit": None})
+    monkeypatch.setattr(cli, "append_row", lambda payload, path: (_ for _ in ()).throw(OSError("disk boom")))
+    monkeypatch.setattr(
+        cli,
+        "_write_public_projection_for_args",
+        lambda args, path: (_ for _ in ()).throw(AssertionError("projection must not run")),
+    )
+
+    assert cli.cmd_fetch(_fetch_args(tmp_path, ledger)) == 1
+
+    stderr = capsys.readouterr().err
+    assert "Failed to append ledger row: disk boom" in stderr
+    assert "projection" not in stderr.lower()
+
+
+def test_cmd_fetch_reports_projection_failure_without_relabeling_the_append(tmp_path, monkeypatch, capsys):
+    ledger = tmp_path / "usage.jsonl"
+    summary_calls = []
+    monkeypatch.setattr(cli, "fetch_usage", lambda: {"plan_type": "pro", "rate_limit": None})
+    monkeypatch.setattr(
+        cli,
+        "_write_public_projection_for_args",
+        lambda args, path: (_ for _ in ()).throw(RuntimeError("projection boom")),
+    )
+    monkeypatch.setattr(cli, "_print_summary", lambda payload: summary_calls.append(payload))
+
+    assert cli.cmd_fetch(_fetch_args(tmp_path, ledger)) == 1
+
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+    assert len(summary_calls) == 1
+    stderr = capsys.readouterr().err
+    assert "Failed to write public projection: projection boom" in stderr
+    assert "append" not in stderr.lower()

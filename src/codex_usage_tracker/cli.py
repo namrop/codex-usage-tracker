@@ -41,15 +41,21 @@ def _sleep_until_next_hour() -> float:
 
 
 def _print_summary(payload: dict) -> None:
-    rate_limit = payload.get("rate_limit", {})
-    primary = rate_limit.get("primary_window", {})
-    secondary = rate_limit.get("secondary_window", {})
+    rate_limit = payload.get("rate_limit")
+    if not isinstance(rate_limit, dict):
+        rate_limit = {}
+    primary = rate_limit.get("primary_window")
+    if not isinstance(primary, dict):
+        primary = {}
+    secondary = rate_limit.get("secondary_window")
+    if not isinstance(secondary, dict):
+        secondary = {}
 
     print(f"plan_type: {payload.get('plan_type')}")
     print(f"session_used_pct: {primary.get('used_percent')}")
     print(f"weekly_used_pct: {secondary.get('used_percent')}")
-    if payload.get("credits") is not None:
-        credits = payload["credits"]
+    credits = payload.get("credits")
+    if isinstance(credits, dict):
         print(f"credits_balance: {credits.get('balance')}")
         print(f"credits_has_credits: {credits.get('has_credits')}")
 
@@ -76,12 +82,29 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         print("Failed to fetch usage payload.", file=sys.stderr)
         return 1
 
-    append_row(payload, ledger_path)
-    projection_path = _write_public_projection_for_args(args, ledger_path)
-    _print_summary(payload)
+    try:
+        append_row(payload, ledger_path)
+    except Exception as exc:
+        print(f"Failed to append ledger row: {exc}", file=sys.stderr)
+        return 1
+
+    failed = False
+    projection_path = None
+    try:
+        projection_path = _write_public_projection_for_args(args, ledger_path)
+    except Exception as exc:
+        print(f"Failed to write public projection: {exc}", file=sys.stderr)
+        failed = True
+
+    try:
+        _print_summary(payload)
+    except Exception as exc:
+        print(f"Failed to render usage summary: {exc}", file=sys.stderr)
+        failed = True
+
     if projection_path:
         print(f"public_projection: {projection_path}")
-    return 0
+    return 1 if failed else 0
 
 
 def cmd_dump_raw(_: argparse.Namespace) -> int:
@@ -165,13 +188,22 @@ def cmd_daemon(args: argparse.Namespace) -> int:
             continue
         try:
             append_row(payload, ledger_path)
-            projection_path = _write_public_projection_for_args(args, ledger_path)
-            print(f"{now} usage snapshot saved to {ledger_path}")
-            if projection_path:
-                print(f"{now} public projection saved to {projection_path}")
-            _print_summary(payload)
-        except Exception as exc:  # broad for I/O or parsing errors
+        except Exception as exc:
             print(f"{now} failed to append ledger row: {exc}")
+            continue
+
+        print(f"{now} usage snapshot saved to {ledger_path}")
+        try:
+            projection_path = _write_public_projection_for_args(args, ledger_path)
+        except Exception as exc:
+            print(f"{now} failed to write public projection: {exc}")
+            projection_path = None
+        if projection_path:
+            print(f"{now} public projection saved to {projection_path}")
+        try:
+            _print_summary(payload)
+        except Exception as exc:
+            print(f"{now} failed to render usage summary: {exc}")
 
     return 0
 
