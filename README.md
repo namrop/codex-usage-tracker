@@ -1,22 +1,33 @@
 # codex-usage-tracker
 
-`codex-usage-tracker` is a tiny utility that reads your Codex OAuth token, fetches usage
-from ChatGPT’s usage endpoint, and appends normalized snapshots to a JSONL ledger.
+`codex-usage-tracker` collects Codex subscription snapshots and normalizes private
+cross-harness usage, quota, and billing facts into distinct canonical ledgers.
+SQLite is the operational hot store; JSONL remains the legacy Codex snapshot and
+explicit interchange format.
 
 ## What it does
 
-- Loads Codex credentials from `~/.hermes/auth.json`.
-- Refreshes expired access tokens automatically.
-- Fetches `/backend-api/wham/usage` from `chatgpt.com`.
-- Writes one normalized ledger row per run to a JSONL file.
-- Provides a small CLI with six subcommands:
-- `fetch`
-- `daemon`
-- `dump-raw`
-- `commit-ledger`
-- `write-public-projection`
-- `dashboard`
-- Can write a public-safe derived token chart JSON so a DMZ host never needs the raw Codex ledger.
+- Loads Codex credentials from `~/.hermes/auth.json`, refreshes expired access
+  tokens, and fetches `/backend-api/wham/usage` from `chatgpt.com`.
+- Preserves the legacy Codex JSONL snapshot daemon and public-safe projection.
+- Collects usage from Hermes, Claude Code, and OpenCode plus quota/account
+  observations from Codex, Claude Code, OpenRouter, DeepSeek, and estimated
+  OpenCode Go windows.
+- Maintains separate `usage_event_v1`, `quota_observation_v1`, and
+  `billing_fact_v1` SQLite ledgers.
+- Provides ten CLI subcommands:
+  - `fetch`
+  - `daemon`
+  - `dump-raw`
+  - `commit-ledger`
+  - `write-public-projection`
+  - `collect-all`
+  - `migrate-ledger`
+  - `export-ledger`
+  - `audit-ledger`
+  - `dashboard`
+- Can write a public-safe derived token chart JSON so a DMZ host never needs any
+  private canonical ledger.
 
 ## API endpoint
 
@@ -42,10 +53,14 @@ pip install -e .
 
 ## CLI usage
 
-Each subcommand accepts:
+The Codex snapshot commands (`fetch`, `daemon`, `dump-raw`,
+`commit-ledger`, and `write-public-projection`) accept:
 
 - `--ledger PATH` (optional)
 - `--atrium-root PATH` (default `/Users/luisramirez/Digital_Workspace`)
+
+`collect-all` has its own source and destination path flags documented below;
+`dashboard` accepts the Codex ledger/Atrium flags plus its host and port.
 
 If `--ledger` is omitted, the default is:
 
@@ -144,6 +159,122 @@ Dashboard routes:
   - total rows, first/last `fetched_at`, current usage percentages, and `plan_type`
 - `GET /api/trend` — last 168 rows with fields:
   - `fetched_at`, `session_used_pct`, `weekly_used_pct`, `spark_session_used_pct`, `spark_weekly_used_pct`
+
+## Cross-harness private accounting
+
+`collect-all` maintains three distinct private canonical ledgers without changing
+the source harness stores:
+
+- `usage_event_v1` is the additive request/aggregate ledger populated from Hermes
+  `llm_usage_events`, Claude Code assistant receipts, and current or legacy
+  OpenCode SQLite databases;
+- `quota_observation_v1` is the point-in-time snapshot ledger populated from the
+  existing Codex snapshot ledger, the authenticated Claude Code CLI `/usage`
+  view, estimated OpenCode Go windows, and optional provider account APIs;
+- `billing_fact_v1` is the signed monetary ledger for invoice lines, charges,
+  credits, refunds, payments, taxes, and adjustments. `collect-all` binds and
+  creates this ledger but does not synthesize billing facts from request-cost
+  estimates.
+
+SQLite is the operational default. Each fact class has its own type-bound WAL
+ledger under `~/.local/state/codex-usage-tracker/`:
+
+- `usage_events.sqlite3`
+- `quota_observations.sqlite3`
+- `billing_facts.sqlite3`
+
+The three destination paths must be distinct. Reusing or aliasing a destination
+is rejected before source collection or any write. Existing JSONL ledgers remain
+supported as an explicit compatibility/interchange backend, but SQLite is the
+hot store.
+
+On Sol, source defaults are `/var/lib/hermes/primary/state.db`,
+`~/.claude/projects`, `~/.local/share/opencode/opencode-stable.db`, and
+`~/.local/share/opencode/opencode-local.db`. The existing Codex snapshot ledger
+in the Atrium canon is read-only to this command. Every path can be overridden:
+
+```bash
+codex-usage-tracker collect-all \
+  --state-db /var/lib/hermes/primary/state.db \
+  --claude-root ~/.claude/projects \
+  --opencode-db ~/.local/share/opencode/opencode-stable.db \
+  --opencode-db ~/.local/share/opencode/opencode-local.db \
+  --usage-ledger ~/.local/state/codex-usage-tracker/usage_events.sqlite3 \
+  --quota-ledger ~/.local/state/codex-usage-tracker/quota_observations.sqlite3 \
+  --billing-ledger ~/.local/state/codex-usage-tracker/billing_facts.sqlite3
+```
+
+Use `--dry-run` to validate adapters, type bindings, and replay/conflict behavior
+without creating locks, changing permissions, or writing ledger artifacts. Use
+`--no-live-quota` for a completely local run. Successful runs print one compact
+JSON summary and no source payloads.
+
+### Migration, audit, and JSONL interchange
+
+Migrate each legacy JSONL separately and bind the destination explicitly:
+
+```bash
+codex-usage-tracker migrate-ledger \
+  --source-jsonl ~/.local/state/codex-usage-tracker/unified_usage.jsonl \
+  --destination-sqlite ~/.local/state/codex-usage-tracker/usage_events.sqlite3 \
+  --fact-type usage_event_v1
+
+codex-usage-tracker migrate-ledger \
+  --source-jsonl ~/.local/state/codex-usage-tracker/quota_observations.jsonl \
+  --destination-sqlite ~/.local/state/codex-usage-tracker/quota_observations.sqlite3 \
+  --fact-type quota_observation_v1
+```
+
+Run `migrate-ledger ... --dry-run` first. Audit a SQLite ledger with
+`audit-ledger --sqlite PATH --fact-type TYPE`. Export canonical JSONL with
+`export-ledger --source-sqlite PATH --destination-jsonl PATH --fact-type TYPE`.
+Migration and export reject source/destination aliases.
+
+Live OpenRouter and DeepSeek collection reads `OPENROUTER_API_KEY` and
+`DEEPSEEK_API_KEY` from `/var/lib/hermes/primary/.env` by default. Claude
+subscription limits come from the authenticated Claude Code CLI itself: the
+tracker opens a short-lived safe-mode TUI in a private probe directory, invokes
+Claude Code's built-in `/usage` view, captures the displayed five-hour, weekly,
+and Fable-week percentages and reset times, and exits without making a model
+call. It reuses one deterministic probe session ID to avoid flooding Claude
+Code's session history. The probe requires `tmux`. Configure this boundary with
+`--claude-command`, `--claude-probe-dir`, and `--claude-quota-timeout`.
+
+The optional `--dotenv PATH` loader recognizes only the OpenRouter and DeepSeek
+credential names, does no variable or command expansion, and never copies
+credentials to ledger rows. Existing process environment values take
+precedence. A live provider failure is isolated: other sources still collect,
+while the compact summary reports only the source name and exception class.
+
+Canonical writers validate schema version 1, recursively reject credential
+field names, canonicalize with RFC 8785/JCS, and enforce idempotent source
+identities. SQLite uses exact immutable schema validation, WAL mode, private
+`0600` database/sidecar/lock artifacts, transactionally serialized first-start,
+and indexed append/query paths. Replaying an identical source identity is a
+no-op; replaying it with different content is an error. Explicit audits scan and
+revalidate every stored payload. Token accounting keeps input, cache read,
+cache write, output, and reasoning buckets separate; reasoning is diagnostic
+and is not added twice where canonical output already includes it.
+
+The dashboard exposes private aggregates when configured with
+`UNIFIED_USAGE_LEDGER_PATH`, `QUOTA_LEDGER_PATH`, and `BILLING_LEDGER_PATH` (or
+the corresponding `create_app` arguments):
+
+- `GET /api/unified-usage` supports `provider`, `harness`, `purpose`,
+  `model_requested`, and `days`; it returns token/request-cost totals,
+  provider/model groups, and exact/reconstructed coverage;
+- `GET /api/subscriptions` supports `provider`, `harness`, and `quota_name`; it
+  returns the latest observation per subscription window and normalized
+  observation history;
+- `GET /api/billing` supports `provider`, `transaction_kind`, `status`,
+  `currency`, and `days`; it returns signed totals separately by currency and
+  transaction kind plus an allowlisted transaction projection.
+
+Billing totals are never combined with `usage_event_v1` estimated or actual
+request costs. Private API reads are schema-bound, indexed for typed filters,
+and capped per request. These endpoints and all three canonical ledgers are
+private. Do not publish them to a DMZ; continue using `write-public-projection`
+for public-safe Codex charts.
 
 ## Design notes
 

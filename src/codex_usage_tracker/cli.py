@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 import logging
 import os
@@ -11,8 +12,10 @@ import signal
 import sys
 import time as time_module
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
+from .canonical_ledger import audit_sqlite_ledger, export_sqlite_to_jsonl, migrate_jsonl_to_sqlite
 from .fetcher import fetch_usage
 from .git_autocommit import commit_ledger
 from .ledger import append_row
@@ -23,6 +26,13 @@ LOGGER = logging.getLogger(__name__)
 
 DEFAULT_ATRIUM_ROOT = "/Users/luisramirez/Digital_Workspace"
 DEFAULT_LEDGER_RELATIVE_PATH = "12_runtime/ledgers/codex_usage/codex_usage_ledger.jsonl"
+DEFAULT_SOL_ATRIUM_ROOT = "/srv/pharos/atrium/canon"
+DEFAULT_SOL_HERMES_HOME = os.environ.get("HERMES_HOME") or "/var/lib/hermes/primary"
+DEFAULT_CLAUDE_PROBE_DIR = "~/.local/state/codex-usage-tracker/claude-probe"
+DEFAULT_UNIFIED_USAGE_LEDGER = "~/.local/state/codex-usage-tracker/usage_events.sqlite3"
+DEFAULT_QUOTA_LEDGER = "~/.local/state/codex-usage-tracker/quota_observations.sqlite3"
+DEFAULT_BILLING_LEDGER = "~/.local/state/codex-usage-tracker/billing_facts.sqlite3"
+CANONICAL_FACT_TYPES = ("usage_event_v1", "quota_observation_v1", "billing_fact_v1")
 
 
 def _resolve_ledger_path(atrium_root: str, cli_value: Optional[str]) -> str:
@@ -163,6 +173,105 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_compact_json(payload: dict) -> None:
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+
+
+def cmd_migrate_ledger(args: argparse.Namespace) -> int:
+    try:
+        result = migrate_jsonl_to_sqlite(
+            args.source_jsonl,
+            args.destination_sqlite,
+            fact_type=args.fact_type,
+            dry_run=args.dry_run,
+        )
+    except Exception as exc:
+        print(f"migrate-ledger failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    _print_compact_json(
+        {
+            "counts": asdict(result),
+            "dry_run": args.dry_run,
+            "fact_type": args.fact_type,
+            "paths": {
+                "source_jsonl": str(Path(args.source_jsonl).expanduser()),
+                "destination_sqlite": str(Path(args.destination_sqlite).expanduser()),
+            },
+        }
+    )
+    return 0
+
+
+def cmd_export_ledger(args: argparse.Namespace) -> int:
+    try:
+        count = export_sqlite_to_jsonl(
+            args.source_sqlite,
+            args.destination_jsonl,
+            fact_type=args.fact_type,
+        )
+    except Exception as exc:
+        print(f"export-ledger failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    _print_compact_json(
+        {
+            "counts": {"exported": count},
+            "fact_type": args.fact_type,
+            "paths": {
+                "source_sqlite": str(Path(args.source_sqlite).expanduser()),
+                "destination_jsonl": str(Path(args.destination_jsonl).expanduser()),
+            },
+        }
+    )
+    return 0
+
+
+def cmd_audit_ledger(args: argparse.Namespace) -> int:
+    try:
+        count = audit_sqlite_ledger(args.sqlite, fact_type=args.fact_type)
+    except Exception as exc:
+        print(f"audit-ledger failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    _print_compact_json(
+        {
+            "counts": {"audited": count},
+            "fact_type": args.fact_type,
+            "paths": {"sqlite": str(Path(args.sqlite).expanduser())},
+        }
+    )
+    return 0
+
+
+def cmd_collect_all(args: argparse.Namespace) -> int:
+    from .collector import collect_all
+
+    opencode_dbs = args.opencode_db or [
+        "~/.local/share/opencode/opencode-stable.db",
+        "~/.local/share/opencode/opencode-local.db",
+    ]
+    try:
+        result = collect_all(
+            state_db=args.state_db,
+            claude_root=args.claude_root,
+            opencode_dbs=opencode_dbs,
+            codex_ledger=args.codex_ledger,
+            usage_ledger=args.usage_ledger,
+            quota_ledger=args.quota_ledger,
+            billing_ledger=args.billing_ledger,
+            dotenv=args.dotenv,
+            claude_quota_command=args.claude_command,
+            claude_probe_dir=args.claude_probe_dir,
+            claude_quota_timeout=args.claude_quota_timeout,
+            live_quota=not args.no_live_quota,
+            dry_run=args.dry_run,
+            source_prefix=args.source_prefix,
+        )
+    except Exception as exc:
+        print(f"collect-all failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    _print_compact_json(result)
+    return 0
+
+
 def cmd_daemon(args: argparse.Namespace) -> int:
     ledger_path = _resolve_ledger_path(args.atrium_root, args.ledger)
     stop_event = threading.Event()
@@ -279,6 +388,106 @@ def main() -> int:
         help="Write the public-safe derived Codex token chart JSON without fetching a new usage snapshot",
     )
     public_projection_parser.set_defaults(func=cmd_write_public_projection)
+
+    migrate_parser = subparsers.add_parser(
+        "migrate-ledger",
+        help="Migrate a canonical JSONL ledger to a type-bound SQLite ledger",
+    )
+    migrate_parser.add_argument("--source-jsonl", required=True, help="Canonical JSONL source path")
+    migrate_parser.add_argument(
+        "--destination-sqlite", required=True, help="Canonical SQLite destination path"
+    )
+    migrate_parser.add_argument("--fact-type", required=True, choices=CANONICAL_FACT_TYPES)
+    migrate_parser.add_argument(
+        "--dry-run", action="store_true", help="Validate and summarize without creating artifacts"
+    )
+    migrate_parser.set_defaults(func=cmd_migrate_ledger)
+
+    export_parser = subparsers.add_parser(
+        "export-ledger",
+        help="Export a type-bound canonical SQLite ledger to JSONL",
+    )
+    export_parser.add_argument("--source-sqlite", required=True, help="Canonical SQLite source path")
+    export_parser.add_argument(
+        "--destination-jsonl", required=True, help="Canonical JSONL destination path"
+    )
+    export_parser.add_argument("--fact-type", required=True, choices=CANONICAL_FACT_TYPES)
+    export_parser.set_defaults(func=cmd_export_ledger)
+
+    audit_parser = subparsers.add_parser(
+        "audit-ledger",
+        help="Audit a type-bound canonical SQLite ledger",
+    )
+    audit_parser.add_argument("--sqlite", required=True, help="Canonical SQLite ledger path")
+    audit_parser.add_argument("--fact-type", required=True, choices=CANONICAL_FACT_TYPES)
+    audit_parser.set_defaults(func=cmd_audit_ledger)
+
+    collect_parser = subparsers.add_parser(
+        "collect-all",
+        help="Collect canonical usage and quota facts and bind the billing ledger",
+    )
+    collect_parser.add_argument(
+        "--state-db",
+        default=os.environ.get("HERMES_STATE_DB_PATH") or f"{DEFAULT_SOL_HERMES_HOME}/state.db",
+        help="Hermes state.db path",
+    )
+    collect_parser.add_argument("--claude-root", default="~/.claude/projects", help="Claude Code projects root")
+    collect_parser.add_argument(
+        "--opencode-db",
+        action="append",
+        default=None,
+        help="OpenCode SQLite path; repeat for stable/local stores",
+    )
+    collect_parser.add_argument(
+        "--codex-ledger",
+        default=os.environ.get("CODEX_USAGE_LEDGER_PATH")
+        or f"{DEFAULT_SOL_ATRIUM_ROOT}/{DEFAULT_LEDGER_RELATIVE_PATH}",
+        help="Existing Codex snapshot ledger (read only)",
+    )
+    collect_parser.add_argument(
+        "--usage-ledger",
+        default=os.environ.get("UNIFIED_USAGE_LEDGER_PATH") or DEFAULT_UNIFIED_USAGE_LEDGER,
+        help="Canonical private usage ledger (SQLite by default; JSONL compatible)",
+    )
+    collect_parser.add_argument(
+        "--quota-ledger",
+        default=os.environ.get("QUOTA_LEDGER_PATH") or DEFAULT_QUOTA_LEDGER,
+        help="Canonical private quota ledger (SQLite by default; JSONL compatible)",
+    )
+    collect_parser.add_argument(
+        "--billing-ledger",
+        default=os.environ.get("BILLING_LEDGER_PATH") or DEFAULT_BILLING_LEDGER,
+        help="Canonical private billing ledger (SQLite by default; JSONL compatible)",
+    )
+    collect_parser.add_argument(
+        "--dotenv",
+        default=f"{DEFAULT_SOL_HERMES_HOME}/.env",
+        help="Optional allowlisted provider credential dotenv",
+    )
+    collect_parser.add_argument(
+        "--claude-command",
+        default="claude",
+        help="Claude Code CLI executable used to capture the authenticated /usage view",
+    )
+    collect_parser.add_argument(
+        "--claude-probe-dir",
+        default=DEFAULT_CLAUDE_PROBE_DIR,
+        help="Private tracker-owned working directory for the Claude Code /usage probe",
+    )
+    collect_parser.add_argument(
+        "--claude-quota-timeout",
+        type=float,
+        default=25.0,
+        help="Seconds to wait for Claude Code's /usage view",
+    )
+    collect_parser.add_argument("--source-prefix", default="sol", help="Stable source namespace prefix")
+    collect_parser.add_argument(
+        "--no-live-quota",
+        action="store_true",
+        help="Skip the Claude Code /usage probe and provider network quota fetches",
+    )
+    collect_parser.add_argument("--dry-run", action="store_true", help="Validate and summarize without ledger writes")
+    collect_parser.set_defaults(func=cmd_collect_all)
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Run the web dashboard")
     dashboard_parser.add_argument("--ledger", dest="ledger", default=None, help="Path to ledger JSONL file")

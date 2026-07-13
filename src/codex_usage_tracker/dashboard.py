@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 import json
 import os
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 from .capability_matrix import get_capability_matrix
 from .codex_call_accounting import build_codex_accounting_rows
@@ -24,10 +25,57 @@ from .provider_spend import (
     summarize_provider_spend,
 )
 from .token_correlation import build_token_correlation_rows, resolve_state_db_path
+from .canonical_ledger import (
+    IdentityConflictError,
+    MalformedLedgerError,
+    ValidationError,
+    query_sqlite_facts,
+    read_facts,
+)
 
 
 DEFAULT_ATRIUM_ROOT = "/Users/luisramirez/Digital_Workspace"
 DEFAULT_LEDGER_RELATIVE_PATH = "12_runtime/ledgers/codex_usage/codex_usage_ledger.jsonl"
+QUOTA_RESPONSE_FIELDS = (
+    "harness",
+    "observed_at",
+    "provider",
+    "quota_name",
+    "quota_scope",
+    "window_kind",
+    "window_started_at",
+    "window_ends_at",
+    "resets_at",
+    "limit_value",
+    "remaining_value",
+    "used_value",
+    "unit",
+    "measurement_confidence",
+)
+BILLING_RESPONSE_FIELDS = (
+    "provider",
+    "occurred_at",
+    "billing_period_start",
+    "billing_period_end",
+    "transaction_kind",
+    "status",
+    "amount",
+    "currency",
+    "description_code",
+)
+_SQLITE_LEDGER_SUFFIXES = frozenset({".sqlite3", ".sqlite", ".db"})
+_PRIVATE_API_SQLITE_LIMIT = 10_000
+_PRIVATE_API_MAX_ROWS = 100_000
+_PRIVATE_API_MAX_JSONL_BYTES = 128 * 1024 * 1024
+_MAX_PRIVATE_API_DAYS = 36_500
+
+
+class UnsupportedLedgerSuffix(ValueError):
+    pass
+
+
+class PrivateLedgerQueryTooLarge(ValueError):
+    pass
 
 
 def _resolve_ledger_path(atrium_root: str, cli_value: Optional[str]) -> str:
@@ -47,6 +95,83 @@ def _normalize_timestamp(raw_timestamp: Any) -> float:
         return datetime.fromisoformat(value).timestamp()
     except (TypeError, ValueError):
         return 0.0
+
+
+def _fact_datetime(raw_timestamp: Any) -> datetime:
+    if not isinstance(raw_timestamp, str):
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _private_facts(
+    ledger_path: str,
+    *,
+    fact_type: str,
+    filters: dict[str, str],
+    cutoff: datetime | None = None,
+    order: str = "asc",
+) -> list[dict[str, Any]]:
+    """Dispatch canonical private reads by explicit suffix and preserve JSONL."""
+    path = Path(ledger_path).expanduser()
+    suffix = path.suffix.casefold()
+    if suffix == ".jsonl":
+        if path.exists() and path.stat().st_size > _PRIVATE_API_MAX_JSONL_BYTES:
+            raise PrivateLedgerQueryTooLarge("JSONL ledger exceeds private API byte limit")
+        rows = [row for row in read_facts(path) if row.get("fact_type") == fact_type]
+        for field, expected in filters.items():
+            rows = [row for row in rows if row.get(field) == expected]
+        timestamp_field = "observed_at" if fact_type == "quota_observation_v1" else "occurred_at"
+        if cutoff is not None:
+            rows = [row for row in rows if _fact_datetime(row.get(timestamp_field)) >= cutoff]
+        if len(rows) > _PRIVATE_API_MAX_ROWS:
+            raise PrivateLedgerQueryTooLarge("ledger query exceeds private API row limit")
+        rows.sort(
+            key=lambda row: _fact_datetime(row.get(timestamp_field)),
+            reverse=order == "desc",
+        )
+        return rows
+    if suffix in _SQLITE_LEDGER_SUFFIXES:
+        lower_bound = cutoff.isoformat() if cutoff is not None else None
+        # One SELECT/fetchall call observes one SQLite read snapshot. Reopening
+        # connections between OFFSET pages would permit concurrent appends to
+        # duplicate or omit facts in an aggregate response.
+        rows = query_sqlite_facts(
+            path,
+            fact_type=fact_type,
+            filters=filters,
+            occurred_or_observed_at_gte=lower_bound,
+            order=order,
+            limit=_PRIVATE_API_MAX_ROWS + 1,
+        )
+        if len(rows) > _PRIVATE_API_MAX_ROWS:
+            raise PrivateLedgerQueryTooLarge("ledger query exceeds private API row limit")
+        return rows
+    raise UnsupportedLedgerSuffix(f"unsupported ledger suffix: {suffix or '<none>'}")
+
+
+def _days_argument() -> tuple[datetime | None, tuple[Any, int] | None]:
+    days_text = request.args.get("days")
+    if days_text is None:
+        return None, None
+    try:
+        days = int(days_text)
+    except ValueError:
+        return None, (jsonify({"error": "days must be an integer"}), 400)
+    if days < 0:
+        return None, (jsonify({"error": "days must be nonnegative"}), 400)
+    if days > _MAX_PRIVATE_API_DAYS:
+        return None, (jsonify({"error": f"days must be no greater than {_MAX_PRIVATE_API_DAYS}"}), 400)
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    except OverflowError:
+        return None, (jsonify({"error": "days is outside the supported range"}), 400)
+    return cutoff, None
 
 
 def _load_rows(ledger_path: str) -> List[Dict[str, Any]]:
@@ -86,6 +211,13 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
+def _decimal_text(value: Decimal) -> str:
+    if value == 0:
+        return "0"
+    rendered = format(value, "f")
+    return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
+
+
 def _to_int(value: Any) -> Optional[int]:
     if value is None:
         return None
@@ -108,8 +240,17 @@ def _reset_credits_available(row: Dict[str, Any]) -> Optional[int]:
     return _to_int(reset_credits.get("available_count"))
 
 
-def create_app(atrium_root: str = DEFAULT_ATRIUM_ROOT, ledger: Optional[str] = None) -> Flask:
+def create_app(
+    atrium_root: str = DEFAULT_ATRIUM_ROOT,
+    ledger: Optional[str] = None,
+    unified_usage_ledger: Optional[str] = None,
+    quota_ledger: Optional[str] = None,
+    billing_ledger: Optional[str] = None,
+) -> Flask:
     resolved_ledger_path = _resolve_ledger_path(atrium_root, ledger)
+    resolved_unified_usage = unified_usage_ledger or os.environ.get("UNIFIED_USAGE_LEDGER_PATH")
+    resolved_quota_ledger = quota_ledger or os.environ.get("QUOTA_LEDGER_PATH")
+    resolved_billing_ledger = billing_ledger or os.environ.get("BILLING_LEDGER_PATH")
     app = Flask(__name__)
 
     def _load_ledger_rows() -> List[Dict[str, Any]]:
@@ -253,7 +394,12 @@ def create_app(atrium_root: str = DEFAULT_ATRIUM_ROOT, ledger: Optional[str] = N
 
     @app.route("/api/budget-state")
     def api_budget_state():
-        return jsonify(latest_budget_state(read_provider_spend_rows(atrium_root)))
+        # Keep the budget view coherent with the dashboard's latest Codex
+        # snapshot. On a healthy deployment that snapshot is hourly; when it is
+        # stale, the response's week bounds make the historical anchor visible.
+        latest = _latest_row(_load_ledger_rows())
+        as_of = _fact_datetime(latest.get("fetched_at")) if latest else None
+        return jsonify(latest_budget_state(read_provider_spend_rows(atrium_root), as_of=as_of))
 
     @app.route("/api/capability-matrix")
     def api_capability_matrix():
@@ -262,6 +408,182 @@ def create_app(atrium_root: str = DEFAULT_ATRIUM_ROOT, ledger: Optional[str] = N
     @app.route("/api/provider-spend")
     def api_provider_spend():
         return jsonify(summarize_provider_spend(read_provider_spend_rows(atrium_root)))
+
+    @app.route("/api/unified-usage")
+    def api_unified_usage():
+        if not resolved_unified_usage:
+            return jsonify({"error": "unified usage ledger is not configured"}), 404
+        cutoff, days_error = _days_argument()
+        if days_error is not None:
+            return days_error
+        typed_filters = {
+            field: requested
+            for field in ("provider", "harness", "purpose")
+            if (requested := request.args.get(field)) is not None
+        }
+        try:
+            rows = _private_facts(
+                resolved_unified_usage,
+                fact_type="usage_event_v1",
+                filters=typed_filters,
+                cutoff=cutoff,
+            )
+        except UnsupportedLedgerSuffix:
+            return jsonify({"error": "unsupported ledger suffix"}), 400
+        except PrivateLedgerQueryTooLarge:
+            return jsonify({"error": "ledger query exceeds private API row limit"}), 413
+        except (MalformedLedgerError, ValidationError, IdentityConflictError):
+            return jsonify({"error": "configured private ledger is unavailable"}), 503
+        # The SQLite ``model`` extraction prefers model_reported, so retain the
+        # endpoint's exact model_requested semantics on canonical payloads.
+        requested_model = request.args.get("model_requested")
+        if requested_model is not None:
+            rows = [row for row in rows if row.get("model_requested") == requested_model]
+
+        token_fields = ("input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens")
+        cost_fields = ("estimated_cost_usd", "actual_cost_usd")
+        totals: Dict[str, Any] = {field: sum(int(row.get(field) or 0) for row in rows) for field in token_fields}
+        for field in cost_fields:
+            totals[field] = str(sum((Decimal(str(row.get(field))) for row in rows if row.get(field) is not None), Decimal("0")))
+        # Canonical output includes reasoning when a harness reports both, so do
+        # not count the diagnostic reasoning bucket a second time.
+        totals["total_tokens"] = sum(totals[field] for field in token_fields if field != "reasoning_tokens")
+        grouped: Dict[tuple[str, str], Dict[str, Any]] = {}
+        for row in rows:
+            key = (str(row.get("provider") or "unknown"), str(row.get("model_requested") or "unknown"))
+            bucket = grouped.setdefault(
+                key,
+                {
+                    "provider": key[0],
+                    "model": key[1],
+                    "events": 0,
+                    **{field: 0 for field in token_fields},
+                    **{field: "0" for field in cost_fields},
+                },
+            )
+            bucket["events"] += 1
+            for field in token_fields:
+                bucket[field] += int(row.get(field) or 0)
+            for field in cost_fields:
+                if row.get(field) is not None:
+                    bucket[field] = str(Decimal(bucket[field]) + Decimal(str(row[field])))
+        for bucket in grouped.values():
+            bucket["total_tokens"] = sum(bucket[field] for field in token_fields if field != "reasoning_tokens")
+        coverage = {
+            "exact_events": sum(row.get("measurement_confidence") == "exact" for row in rows),
+            "reconstructed_events": sum(row.get("measurement_confidence") == "reconstructed" for row in rows),
+            "reconstructed_calls": sum(int(row.get("reconstructed_call_count") or 0) for row in rows),
+        }
+        return jsonify(
+            {
+                "totals": totals,
+                "coverage": coverage,
+                "by_provider_model": sorted(grouped.values(), key=lambda item: (item["provider"], item["model"])),
+            }
+        )
+
+    @app.route("/api/subscriptions")
+    def api_subscriptions():
+        if not resolved_quota_ledger:
+            return jsonify({"error": "quota ledger is not configured"}), 404
+        typed_filters = {
+            field: requested
+            for field in ("provider", "harness", "quota_name")
+            if (requested := request.args.get(field)) is not None
+        }
+        try:
+            rows = _private_facts(
+                resolved_quota_ledger,
+                fact_type="quota_observation_v1",
+                filters=typed_filters,
+                order="desc",
+            )
+        except UnsupportedLedgerSuffix:
+            return jsonify({"error": "unsupported ledger suffix"}), 400
+        except PrivateLedgerQueryTooLarge:
+            return jsonify({"error": "ledger query exceeds private API row limit"}), 413
+        except (MalformedLedgerError, ValidationError, IdentityConflictError):
+            return jsonify({"error": "configured private ledger is unavailable"}), 503
+        latest: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        for row in rows:
+            identity = (
+                str(row.get("provider") or "unknown"),
+                str(row.get("harness") or "unknown"),
+                str(row.get("quota_name") or "unknown"),
+                str(row.get("account_ref") or "default"),
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            latest.append(row)
+        def project(row: dict[str, Any]) -> dict[str, Any]:
+            return {field: row.get(field) for field in QUOTA_RESPONSE_FIELDS}
+
+        return jsonify(
+            {
+                "latest": [project(row) for row in latest],
+                "observations": [project(row) for row in rows],
+            }
+        )
+
+    @app.route("/api/billing")
+    def api_billing():
+        if not resolved_billing_ledger:
+            return jsonify({"error": "billing ledger is not configured"}), 404
+        cutoff, days_error = _days_argument()
+        if days_error is not None:
+            return days_error
+        typed_filters = {
+            field: requested
+            for field in ("provider", "transaction_kind", "status")
+            if (requested := request.args.get(field)) is not None
+        }
+        try:
+            rows = _private_facts(
+                resolved_billing_ledger,
+                fact_type="billing_fact_v1",
+                filters=typed_filters,
+                cutoff=cutoff,
+                order="desc",
+            )
+        except UnsupportedLedgerSuffix:
+            return jsonify({"error": "unsupported ledger suffix"}), 400
+        except PrivateLedgerQueryTooLarge:
+            return jsonify({"error": "ledger query exceeds private API row limit"}), 413
+        except (MalformedLedgerError, ValidationError, IdentityConflictError):
+            return jsonify({"error": "configured private ledger is unavailable"}), 503
+        # Currency is canonical payload data but is intentionally not a SQLite
+        # typed query column in schema v1, so preserve exact filtering here.
+        requested_currency = request.args.get("currency")
+        if requested_currency is not None:
+            rows = [row for row in rows if row.get("currency") == requested_currency]
+
+        currency_totals: dict[str, Decimal] = {}
+        kind_totals: dict[tuple[str, str], Decimal] = {}
+        for row in rows:
+            currency = str(row["currency"])
+            kind = str(row["transaction_kind"])
+            amount = Decimal(str(row["amount"]))
+            currency_totals[currency] = currency_totals.get(currency, Decimal("0")) + amount
+            key = (currency, kind)
+            kind_totals[key] = kind_totals.get(key, Decimal("0")) + amount
+        return jsonify(
+            {
+                "totals_by_currency": [
+                    {"currency": currency, "amount": _decimal_text(amount)}
+                    for currency, amount in sorted(currency_totals.items())
+                ],
+                "totals_by_currency_and_transaction_kind": [
+                    {"currency": currency, "transaction_kind": kind, "amount": _decimal_text(amount)}
+                    for (currency, kind), amount in sorted(kind_totals.items())
+                ],
+                "transactions": [
+                    {field: row.get(field) for field in BILLING_RESPONSE_FIELDS}
+                    for row in rows
+                ],
+            }
+        )
 
     @app.route("/api/routing-decisions")
     def api_routing_decisions():

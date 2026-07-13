@@ -57,11 +57,22 @@ def _week_bounds(now: Optional[datetime] = None) -> tuple[datetime, datetime]:
     current = now or datetime.now(timezone.utc)
     current = current.astimezone(timezone.utc)
     start = current.replace(hour=0, minute=0, second=0, microsecond=0)
-    start = start.replace(day=start.day)  # keep mypy/linters calm; weekday arithmetic below owns actual start
-    start = current.replace(hour=0, minute=0, second=0, microsecond=0)
     start = start.fromtimestamp(start.timestamp() - start.weekday() * 86400, timezone.utc)
     end = start.fromtimestamp(start.timestamp() + 7 * 86400, timezone.utc)
     return start, end
+
+
+def _spend_timestamp(row: Dict[str, Any]) -> Optional[datetime]:
+    for raw in (row.get("occurred_at"), row.get("started_at")):
+        if not isinstance(raw, str):
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(timezone.utc)
+    return None
 
 
 def latest_budget_state(
@@ -70,9 +81,15 @@ def latest_budget_state(
     budget_cap_usd: float = DEFAULT_WEEKLY_BUDGET_CAP_USD,
     codex_subscription_allocated_usd: float = DEFAULT_CODEX_SUBSCRIPTION_WEEKLY_USD,
     emergency_buffer_usd: float = DEFAULT_EMERGENCY_BUFFER_USD,
+    as_of: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    week_start, week_end = _week_bounds()
-    direct_spend = round(sum(_to_float(row.get("billed_usd")) for row in spend_rows), 6)
+    week_start, week_end = _week_bounds(as_of)
+    current_rows = []
+    for row in spend_rows:
+        occurred = _spend_timestamp(row)
+        if occurred is not None and week_start <= occurred < week_end:
+            current_rows.append(row)
+    direct_spend = round(sum(_to_float(row.get("billed_usd")) for row in current_rows), 6)
     experiment_spend = 0.0
     projected_total = round(codex_subscription_allocated_usd + direct_spend + experiment_spend, 6)
     remaining = round(budget_cap_usd - projected_total, 6)
