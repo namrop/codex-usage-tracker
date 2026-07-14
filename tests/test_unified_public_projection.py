@@ -4,6 +4,7 @@ import json
 import os
 import stat
 from datetime import datetime, timedelta, timezone
+from decimal import localcontext
 
 import pytest
 
@@ -209,6 +210,28 @@ def test_provider_rows_use_explicit_mapping_grouping_sorting_and_bounded_other(t
     } for row in rows)
     assert sum(row["total_tokens"] for row in rows) == sum(tokens for _, tokens in providers)
     assert "private-provider" not in json.dumps(rows)
+
+
+def test_projection_percentages_use_exact_rational_half_even_rounding(tmp_path):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage(
+            "large", "2026-07-13T03:10:00Z", provider="openai-codex",
+            model_requested="gpt-5.6", input_tokens=1951,
+        ),
+        _usage(
+            "small", "2026-07-13T03:20:00Z", provider="openai",
+            model_requested="gpt-5.5", cache_read_tokens=49,
+        ),
+    ], fact_type="usage_event_v1")
+
+    with localcontext() as context:
+        context.prec = 2
+        payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+
+    assert payload["rows"][0]["cache_hit_pct"] == 2.4
+    assert [row["share_pct"] for row in payload["provider_rows"]] == [97.6, 2.4]
+    assert [row["share_pct"] for row in payload["model_rows"]] == [97.6, 2.4]
 
 
 def test_model_rows_prefer_reported_sanitize_public_families_and_merge_bounded_other(tmp_path):

@@ -245,13 +245,25 @@ def _empty_comparison_group() -> dict[str, Any]:
 def _share_pct(total_tokens: int, projection_total: int) -> float:
     if projection_total <= 0 or total_tokens <= 0:
         return 0.0
-    return round(min(100.0, total_tokens * 100 / projection_total), 1)
+    return _ratio_percentage(total_tokens, projection_total)
 
 
 def _cache_hit_pct(cache_read_tokens: int, prompt_tokens: int) -> float | None:
     if cache_read_tokens < 0 or prompt_tokens <= 0:
         return None
-    return round(min(100.0, cache_read_tokens * 100 / prompt_tokens), 1)
+    return _ratio_percentage(cache_read_tokens, prompt_tokens)
+
+
+def _ratio_percentage(numerator: int, denominator: int) -> float:
+    if numerator <= 0 or denominator <= 0:
+        return 0.0
+    if numerator >= denominator:
+        return 100.0
+    rounded, remainder = divmod(numerator * 1000, denominator)
+    twice_remainder = remainder * 2
+    if twice_remainder > denominator or (twice_remainder == denominator and rounded % 2 == 1):
+        rounded += 1
+    return rounded / 10
 
 
 def _bounded_groups(
