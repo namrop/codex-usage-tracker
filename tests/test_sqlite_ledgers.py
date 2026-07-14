@@ -637,6 +637,43 @@ def test_bounded_sqlite_query_filters_orders_and_validates_only_returned_rows(tm
     assert calls == 2
 
 
+def test_bounded_sqlite_query_supports_exclusive_upper_timestamp_bound(tmp_path):
+    database = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(database, [
+        usage("before", occurred_at="2026-07-13T03:59:59.9Z"),
+        usage("at-bound", occurred_at="2026-07-13T04:00:00Z"),
+        usage("after", occurred_at="2026-07-13T05:00:00Z"),
+    ])
+
+    rows = query_sqlite_facts(
+        database,
+        fact_type="usage_event_v1",
+        occurred_or_observed_at_lt="2026-07-13T04:00:00Z",
+    )
+
+    assert [row["source_event_id"] for row in rows] == ["before"]
+
+
+def test_sqlite_timestamp_bounds_order_fractional_instants_chronologically(tmp_path):
+    database = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(database, [
+        usage("before-lower", occurred_at="2026-07-13T02:59:59.9Z"),
+        usage("after-lower", occurred_at="2026-07-13T03:00:00.1Z"),
+        usage("before-upper", occurred_at="2026-07-13T03:59:59.9Z"),
+        usage("at-upper", occurred_at="2026-07-13T04:00:00Z"),
+        usage("after-upper", occurred_at="2026-07-13T04:00:00.1Z"),
+    ])
+
+    rows = query_sqlite_facts(
+        database,
+        fact_type="usage_event_v1",
+        occurred_or_observed_at_gte="2026-07-13T03:00:00Z",
+        occurred_or_observed_at_lt="2026-07-13T04:00:00Z",
+    )
+
+    assert [row["source_event_id"] for row in rows] == ["after-lower", "before-upper"]
+
+
 @pytest.mark.parametrize("kwargs", [
     {"filters": {"not_a_column": "x"}},
     {"filters": {"provider": 1}},
@@ -645,6 +682,7 @@ def test_bounded_sqlite_query_filters_orders_and_validates_only_returned_rows(tm
     {"limit": 100_002},
     {"offset": -1},
     {"occurred_or_observed_at_gte": "not-a-time"},
+    {"occurred_or_observed_at_lt": "not-a-time"},
 ])
 def test_sqlite_query_rejects_unbounded_or_malformed_arguments(tmp_path, kwargs):
     database = tmp_path / "usage.sqlite3"
@@ -696,6 +734,114 @@ def test_sqlite_timestamp_lower_bound_uses_timestamp_index(tmp_path, monkeypatch
         occurred_or_observed_at_gte="2026-07-01T00:00:00Z",
     )
     assert any("SEARCH" in detail and "facts_timestamp_idx" in detail for detail in plans), plans
+
+
+def test_sqlite_timestamp_upper_bound_uses_timestamp_index(tmp_path, monkeypatch):
+    database = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(database, [usage()])
+    plans = []
+    original = ledger._execute_bounded_facts_query
+
+    def capture(connection, sql, parameters):
+        plans.extend(row[3] for row in connection.execute(f"EXPLAIN QUERY PLAN {sql}", parameters))
+        return original(connection, sql, parameters)
+
+    monkeypatch.setattr(ledger, "_execute_bounded_facts_query", capture)
+    assert query_sqlite_facts(
+        database,
+        fact_type="usage_event_v1",
+        occurred_or_observed_at_lt="2026-08-01T00:00:00Z",
+    )
+    assert any("SEARCH" in detail and "facts_timestamp_idx" in detail for detail in plans), plans
+
+
+def test_writable_open_migrates_only_exact_legacy_timestamp_index_idempotently(tmp_path):
+    database = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(database, [usage()])
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        "DROP INDEX facts_timestamp_idx; "
+        "CREATE INDEX facts_timestamp_idx ON facts(occurred_or_observed_at);"
+    )
+    connection.close()
+
+    append_sqlite_facts(database, [usage("after-migration")])
+    append_sqlite_facts(database, [usage("after-migration")])
+
+    connection = sqlite3.connect(database)
+    index_sql = connection.execute(
+        "SELECT sql FROM sqlite_schema WHERE type='index' AND name='facts_timestamp_idx'"
+    ).fetchone()[0]
+    connection.close()
+    assert index_sql == "CREATE INDEX facts_timestamp_idx ON facts(rtrim(occurred_or_observed_at, 'Z'))"
+
+
+def test_legacy_timestamp_migration_audits_other_schema_before_ddl(tmp_path):
+    database = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(database, [usage()])
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        "DROP INDEX facts_timestamp_idx; "
+        "CREATE INDEX facts_timestamp_idx ON facts(occurred_or_observed_at); "
+        "DROP INDEX facts_provider_idx; "
+        "CREATE INDEX facts_provider_idx ON facts(harness);"
+    )
+    connection.close()
+
+    with pytest.raises(MalformedLedgerError, match="index"):
+        append_sqlite_facts(database, [usage("must-not-append")])
+
+    connection = sqlite3.connect(database)
+    assert connection.execute(
+        "SELECT sql FROM sqlite_schema WHERE type='index' AND name='facts_timestamp_idx'"
+    ).fetchone()[0] == "CREATE INDEX facts_timestamp_idx ON facts(occurred_or_observed_at)"
+    connection.close()
+
+
+def test_writable_open_does_not_repair_unrecognized_timestamp_index_sql(tmp_path):
+    database = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(database, [usage()])
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        "DROP INDEX facts_timestamp_idx; "
+        "CREATE INDEX facts_timestamp_idx ON facts(rtrim(occurred_or_observed_at, 'z'));"
+    )
+    wrong_sql = connection.execute(
+        "SELECT sql FROM sqlite_schema WHERE type='index' AND name='facts_timestamp_idx'"
+    ).fetchone()[0]
+    connection.close()
+
+    with pytest.raises(MalformedLedgerError, match="index"):
+        append_sqlite_facts(database, [usage("must-not-append")])
+
+    connection = sqlite3.connect(database)
+    assert connection.execute(
+        "SELECT sql FROM sqlite_schema WHERE type='index' AND name='facts_timestamp_idx'"
+    ).fetchone()[0] == wrong_sql
+    connection.close()
+
+
+def test_read_only_open_rejects_legacy_timestamp_index_without_migrating(tmp_path):
+    database = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(database, [usage()])
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        "DROP INDEX facts_timestamp_idx; "
+        "CREATE INDEX facts_timestamp_idx ON facts(occurred_or_observed_at);"
+    )
+    legacy_sql = connection.execute(
+        "SELECT sql FROM sqlite_schema WHERE type='index' AND name='facts_timestamp_idx'"
+    ).fetchone()[0]
+    connection.close()
+
+    with pytest.raises(MalformedLedgerError, match="index"):
+        query_sqlite_facts(database, fact_type="usage_event_v1")
+
+    connection = sqlite3.connect(database)
+    assert connection.execute(
+        "SELECT sql FROM sqlite_schema WHERE type='index' AND name='facts_timestamp_idx'"
+    ).fetchone()[0] == legacy_sql
+    connection.close()
 
 
 def test_sqlite_query_detects_returned_row_hash_or_typed_column_tampering(tmp_path):

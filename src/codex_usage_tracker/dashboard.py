@@ -449,6 +449,7 @@ def create_app(
         # not count the diagnostic reasoning bucket a second time.
         totals["total_tokens"] = sum(totals[field] for field in token_fields if field != "reasoning_tokens")
         grouped: Dict[tuple[str, str], Dict[str, Any]] = {}
+        by_harness: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             key = (str(row.get("provider") or "unknown"), str(row.get("model_requested") or "unknown"))
             bucket = grouped.setdefault(
@@ -467,7 +468,27 @@ def create_app(
             for field in cost_fields:
                 if row.get(field) is not None:
                     bucket[field] = str(Decimal(bucket[field]) + Decimal(str(row[field])))
+            harness = str(row.get("harness") or "unknown")
+            harness_bucket = by_harness.setdefault(
+                harness,
+                {
+                    "harness": harness,
+                    "events": 0,
+                    **{field: 0 for field in token_fields},
+                    **{field: "0" for field in cost_fields},
+                },
+            )
+            harness_bucket["events"] += 1
+            for field in token_fields:
+                harness_bucket[field] += int(row.get(field) or 0)
+            for field in cost_fields:
+                if row.get(field) is not None:
+                    harness_bucket[field] = str(
+                        Decimal(harness_bucket[field]) + Decimal(str(row[field]))
+                    )
         for bucket in grouped.values():
+            bucket["total_tokens"] = sum(bucket[field] for field in token_fields if field != "reasoning_tokens")
+        for bucket in by_harness.values():
             bucket["total_tokens"] = sum(bucket[field] for field in token_fields if field != "reasoning_tokens")
         coverage = {
             "exact_events": sum(row.get("measurement_confidence") == "exact" for row in rows),
@@ -478,6 +499,13 @@ def create_app(
             {
                 "totals": totals,
                 "coverage": coverage,
+                "window": {
+                    "first_occurred_at": rows[0].get("occurred_at") if rows else None,
+                    "last_occurred_at": rows[-1].get("occurred_at") if rows else None,
+                    "event_count": len(rows),
+                    "days": int(request.args["days"]) if "days" in request.args else None,
+                },
+                "by_harness": sorted(by_harness.values(), key=lambda item: item["harness"]),
                 "by_provider_model": sorted(grouped.values(), key=lambda item: (item["provider"], item["model"])),
             }
         )
@@ -486,6 +514,13 @@ def create_app(
     def api_subscriptions():
         if not resolved_quota_ledger:
             return jsonify({"error": "quota ledger is not configured"}), 404
+        cutoff, days_error = _days_argument()
+        if days_error is not None:
+            return days_error
+        history_text = request.args.get("history")
+        if history_text not in (None, "0", "1"):
+            return jsonify({"error": "history must be 0 or 1"}), 400
+        include_history = history_text != "0"
         typed_filters = {
             field: requested
             for field in ("provider", "harness", "quota_name")
@@ -496,6 +531,7 @@ def create_app(
                 resolved_quota_ledger,
                 fact_type="quota_observation_v1",
                 filters=typed_filters,
+                cutoff=cutoff,
                 order="desc",
             )
         except UnsupportedLedgerSuffix:
@@ -523,7 +559,7 @@ def create_app(
         return jsonify(
             {
                 "latest": [project(row) for row in latest],
-                "observations": [project(row) for row in rows],
+                "observations": [project(row) for row in rows] if include_history else [],
             }
         )
 
@@ -612,7 +648,21 @@ def create_app(
     return app
 
 
-def run_dashboard(atrium_root: str, ledger: Optional[str], host: str, port: int) -> None:
-    app = create_app(atrium_root=atrium_root, ledger=ledger)
+def run_dashboard(
+    atrium_root: str,
+    ledger: Optional[str],
+    host: str,
+    port: int,
+    unified_usage_ledger: Optional[str] = None,
+    quota_ledger: Optional[str] = None,
+    billing_ledger: Optional[str] = None,
+) -> None:
+    app = create_app(
+        atrium_root=atrium_root,
+        ledger=ledger,
+        unified_usage_ledger=unified_usage_ledger,
+        quota_ledger=quota_ledger,
+        billing_ledger=billing_ledger,
+    )
     app.run(host=host, port=port)
 

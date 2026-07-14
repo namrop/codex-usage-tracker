@@ -20,6 +20,7 @@ from .fetcher import fetch_usage
 from .git_autocommit import commit_ledger
 from .ledger import append_row
 from .public_projection import write_public_projection
+from .unified_public_projection import write_unified_public_projection
 
 LOGGER = logging.getLogger(__name__)
 
@@ -161,12 +162,30 @@ def cmd_write_public_projection(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_write_public_usage_projection(args: argparse.Namespace) -> int:
+    try:
+        output_path = write_unified_public_projection(
+            args.usage_ledger,
+            args.public_projection,
+            hours=args.hours,
+            source=args.public_projection_source,
+        )
+    except Exception as exc:
+        print(f"Failed to write public usage projection: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    print(f"public_projection: {output_path}")
+    return 0
+
+
 def cmd_dashboard(args: argparse.Namespace) -> int:
     from .dashboard import run_dashboard
 
     run_dashboard(
         atrium_root=args.atrium_root,
         ledger=args.ledger,
+        unified_usage_ledger=args.unified_usage_ledger,
+        quota_ledger=args.quota_ledger,
+        billing_ledger=args.billing_ledger,
         host=args.host,
         port=args.port,
     )
@@ -389,6 +408,28 @@ def main() -> int:
     )
     public_projection_parser.set_defaults(func=cmd_write_public_projection)
 
+    unified_public_parser = subparsers.add_parser(
+        "write-public-usage-projection",
+        help="Write a public-safe aggregate from the type-bound usage SQLite ledger",
+    )
+    unified_public_parser.add_argument(
+        "--usage-ledger",
+        default=os.environ.get("UNIFIED_USAGE_LEDGER_PATH") or DEFAULT_UNIFIED_USAGE_LEDGER,
+        help="Type-bound usage_event_v1 SQLite ledger",
+    )
+    unified_public_parser.add_argument(
+        "--public-projection", required=True, help="Destination public JSON artifact"
+    )
+    unified_public_parser.add_argument(
+        "--public-projection-source",
+        default="unified-usage-public-projection",
+        help="Public source marker embedded in the projection",
+    )
+    unified_public_parser.add_argument(
+        "--hours", type=int, default=168, help="Complete UTC hourly buckets (1-168; default: 168)"
+    )
+    unified_public_parser.set_defaults(func=cmd_write_public_usage_projection)
+
     migrate_parser = subparsers.add_parser(
         "migrate-ledger",
         help="Migrate a canonical JSONL ledger to a type-bound SQLite ledger",
@@ -491,6 +532,15 @@ def main() -> int:
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Run the web dashboard")
     dashboard_parser.add_argument("--ledger", dest="ledger", default=None, help="Path to ledger JSONL file")
+    dashboard_parser.add_argument(
+        "--unified-usage-ledger", default=None, help="Private canonical usage SQLite/JSONL ledger"
+    )
+    dashboard_parser.add_argument(
+        "--quota-ledger", default=None, help="Private canonical quota SQLite/JSONL ledger"
+    )
+    dashboard_parser.add_argument(
+        "--billing-ledger", default=None, help="Private canonical billing SQLite/JSONL ledger"
+    )
     dashboard_parser.add_argument(
         "--atrium-root",
         dest="atrium_root",

@@ -15,12 +15,13 @@ explicit interchange format.
   OpenCode Go windows.
 - Maintains separate `usage_event_v1`, `quota_observation_v1`, and
   `billing_fact_v1` SQLite ledgers.
-- Provides ten CLI subcommands:
+- Provides eleven CLI subcommands:
   - `fetch`
   - `daemon`
   - `dump-raw`
   - `commit-ledger`
   - `write-public-projection`
+  - `write-public-usage-projection`
   - `collect-all`
   - `migrate-ledger`
   - `export-ledger`
@@ -141,15 +142,30 @@ rsync -az --chmod=F644 /tmp/namrop-public/codex-token-chart.json \
 ```bash
 cd /Users/luisramirez/Code/codex-usage-tracker
 python -m codex_usage_tracker dashboard
-python -m codex_usage_tracker dashboard --ledger /tmp/test_ledger.jsonl --port 5174 --host 127.0.0.1
+python -m codex_usage_tracker dashboard \
+  --ledger /tmp/codex_usage_ledger.jsonl \
+  --unified-usage-ledger ~/.local/state/codex-usage-tracker/usage_events.sqlite3 \
+  --quota-ledger ~/.local/state/codex-usage-tracker/quota_observations.sqlite3 \
+  --billing-ledger ~/.local/state/codex-usage-tracker/billing_facts.sqlite3 \
+  --port 5174 --host 127.0.0.1
 ```
 
 Optional args:
 
-- `--ledger PATH` (optional)
+- `--ledger PATH` (optional legacy Codex JSONL)
+- `--unified-usage-ledger PATH` (private canonical usage SQLite/JSONL)
+- `--quota-ledger PATH` (private canonical subscription/quota SQLite/JSONL)
+- `--billing-ledger PATH` (private canonical billing SQLite/JSONL)
 - `--atrium-root PATH` (default `/Users/luisramirez/Digital_Workspace`)
 - `--host HOST` (default `127.0.0.1`)
 - `--port PORT` (default `5174`)
+
+The top-level **AI Usage** view loads unified usage, subscriptions, and billing
+independently, so one absent or unavailable private ledger does not hide the
+other panels. Request-cost estimates remain separate from posted billing facts.
+The existing Codex charts and tables remain available under **Codex detail** as
+a compatibility view; `--ledger` still means the legacy Codex JSONL ledger and
+is not repurposed for canonical usage.
 
 Dashboard routes:
 
@@ -261,8 +277,9 @@ The dashboard exposes private aggregates when configured with
 the corresponding `create_app` arguments):
 
 - `GET /api/unified-usage` supports `provider`, `harness`, `purpose`,
-  `model_requested`, and `days`; it returns token/request-cost totals,
-  provider/model groups, and exact/reconstructed coverage;
+  `model_requested`, and `days`; it returns token/request-cost totals, selected
+  window metadata, harness and provider/model groups, and exact/reconstructed
+  coverage;
 - `GET /api/subscriptions` supports `provider`, `harness`, and `quota_name`; it
   returns the latest observation per subscription window and normalized
   observation history;
@@ -273,8 +290,38 @@ the corresponding `create_app` arguments):
 Billing totals are never combined with `usage_event_v1` estimated or actual
 request costs. Private API reads are schema-bound, indexed for typed filters,
 and capped per request. These endpoints and all three canonical ledgers are
-private. Do not publish them to a DMZ; continue using `write-public-projection`
-for public-safe Codex charts.
+private. Do not publish those APIs or ledgers to a DMZ.
+
+### Unified public usage projection
+
+To publish a provider-neutral usage chart, derive a separate allowlisted JSON
+artifact from the type-bound `usage_event_v1` SQLite ledger on the trusted host:
+
+```bash
+codex-usage-tracker write-public-usage-projection \
+  --usage-ledger ~/.local/state/codex-usage-tracker/usage_events.sqlite3 \
+  --public-projection /tmp/namrop-public/ai-usage.json \
+  --public-projection-source sol-unified-usage
+```
+
+By default the artifact contains exactly 168 complete UTC hourly buckets. Empty
+hours are represented by zero rows. It publishes only bucket boundaries, token
+buckets, derived prompt/total tokens and cache-hit percentage, aggregate request
+attempt counts, coarse measurement confidence, and a compact summary. Reasoning
+tokens remain diagnostic because canonical output already includes reasoning;
+they are not added to totals twice. An `api_attempt` counts as one request and a
+`historical_aggregate` contributes its `reconstructed_call_count`.
+
+The writer accepts only a `usage_event_v1` SQLite input, validates the exact v1
+allowlist, and atomically replaces the destination. It excludes harness,
+provider, model, purpose, account/source identity, costs, prompts, transcripts,
+extension payloads, credentials, and local paths. **Do not publish** the source
+SQLite ledger or the private dashboard APIs.
+
+The older `write-public-projection` command remains a compatibility boundary for
+the legacy Codex snapshot/token-correlation chart. It is additive and is not
+replaced by `write-public-usage-projection`; choose the artifact contract your
+consumer expects.
 
 ## Design notes
 

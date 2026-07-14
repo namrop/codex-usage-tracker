@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -160,6 +161,18 @@ def test_unified_private_aggregate_endpoints_and_filters(tmp_path):
     assert data["totals"]["input_tokens"]==10 and data["totals"]["total_tokens"]==19
     assert data["totals"]["estimated_cost_usd"] == "0"
     assert data["coverage"]=={"exact_events":1,"reconstructed_events":0,"reconstructed_calls":0}
+    assert data["window"] == {
+        "first_occurred_at": "2026-07-12T12:00:00Z",
+        "last_occurred_at": "2026-07-12T12:00:00Z",
+        "event_count": 1,
+        "days": 30,
+    }
+    assert data["by_harness"] == [{
+        "harness": "hermes", "events": 1,
+        "input_tokens": 10, "cache_read_tokens": 5, "cache_write_tokens": 0,
+        "output_tokens": 4, "reasoning_tokens": 2, "total_tokens": 19,
+        "estimated_cost_usd": "0", "actual_cost_usd": "0",
+    }]
     assert list(data["by_provider_model"])[0]["provider"]=="anthropic"
     subscriptions=client.get("/api/subscriptions").get_json()
     assert subscriptions["observations"][0]["used_value"]=="21"
@@ -238,6 +251,49 @@ def test_private_sqlite_endpoints_match_jsonl_and_unknown_suffix_fails_closed(tm
     response = bad.get("/api/unified-usage")
     assert response.status_code == 400
     assert response.get_json() == {"error": "unsupported ledger suffix"}
+
+
+def test_subscriptions_bounded_latest_only_option_filters_sqlite_and_jsonl_history(
+    tmp_path, monkeypatch
+):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    base = {
+        "fact_type": "quota_observation_v1", "schema_version": 1,
+        "source_namespace": "quota", "harness": "test", "provider": "example",
+        "quota_scope": "account", "window_kind": "rolling", "unit": "percent",
+        "measurement_confidence": "exact", "limit_value": "100", "remaining_value": "80",
+        "used_value": "20",
+    }
+    rows = [
+        dict(base, source_observation_id="old", quota_name="old_only", observed_at="2026-07-01T12:00:00Z"),
+        dict(base, source_observation_id="recent", quota_name="weekly", observed_at="2026-07-13T12:00:00Z"),
+    ]
+    jsonl = tmp_path / "quota.jsonl"
+    sqlite = tmp_path / "quota.sqlite3"
+    jsonl.write_text("\n".join(canonical_json(row) for row in rows) + "\n", encoding="utf-8")
+    append_sqlite_facts(sqlite, rows, fact_type="quota_observation_v1")
+
+    clients = [create_app(quota_ledger=str(path)).test_client() for path in (jsonl, sqlite)]
+    assert all(len(client.get("/api/subscriptions").get_json()["observations"]) == 2 for client in clients)
+    bounded = [client.get("/api/subscriptions?days=2&history=0") for client in clients]
+
+    assert all(response.status_code == 200 for response in bounded)
+    assert bounded[0].get_json() == bounded[1].get_json()
+    assert bounded[0].get_json()["observations"] == []
+    assert [row["quota_name"] for row in bounded[0].get_json()["latest"]] == ["weekly"]
+
+
+@pytest.mark.parametrize("query", ["days=nope&history=0", "days=-1&history=0", "days=2&history=nope"])
+def test_subscriptions_rejects_malformed_bounded_options(tmp_path, query):
+    quota = tmp_path / "quota.jsonl"
+    quota.write_text("", encoding="utf-8")
+    response = create_app(quota_ledger=str(quota)).test_client().get("/api/subscriptions?" + query)
+    assert response.status_code == 400
 
 
 def test_billing_api_signed_totals_safe_allowlist_filters_and_separate_costs(tmp_path):
@@ -367,6 +423,63 @@ def test_collect_all_cli_uses_real_sol_defaults(monkeypatch, capsys):
         "~/.local/share/opencode/opencode-local.db",
     ]
     assert json.loads(capsys.readouterr().out) == {"ok": True}
+
+
+def test_dashboard_cli_threads_private_ledgers_without_repurposing_legacy_ledger(monkeypatch):
+    captured = {}
+
+    def fake_run_dashboard(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("codex_usage_tracker.dashboard.run_dashboard", fake_run_dashboard)
+    monkeypatch.setattr("sys.argv", [
+        "tracker", "dashboard", "--ledger", "/private/codex.jsonl",
+        "--unified-usage-ledger", "/private/usage.sqlite3",
+        "--quota-ledger", "/private/quota.sqlite3",
+        "--billing-ledger", "/private/billing.sqlite3",
+    ])
+    assert main() == 0
+    assert captured == {
+        "atrium_root": "/Users/luisramirez/Digital_Workspace",
+        "ledger": "/private/codex.jsonl",
+        "unified_usage_ledger": "/private/usage.sqlite3",
+        "quota_ledger": "/private/quota.sqlite3",
+        "billing_ledger": "/private/billing.sqlite3",
+        "host": "127.0.0.1",
+        "port": 5174,
+    }
+
+
+def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independently(tmp_path):
+    page = create_app(ledger=str(tmp_path / "codex.jsonl")).test_client().get("/").get_data(as_text=True)
+    assert "<title>AI Usage</title>" in page
+    assert "Codex detail" in page
+    assert 'fetch("/api/unified-usage?days=7")' in page
+    assert 'fetch("/api/subscriptions?days=30&history=0")' in page
+    assert 'fetch("/api/billing?days=30")' in page
+    optional_script = page[page.index('fetch("/api/unified-usage?days=7")'):]
+    assert "Promise.all([" not in optional_script
+    assert "Unified usage unavailable" in page
+    assert "No unified usage events" in page
+    assert "Subscription data unavailable" in page
+    assert "No subscription observations" in page
+    assert "Billing data unavailable" in page
+    assert "No billing transactions" in page
+    assert "Request estimates" in page
+    assert "Billing ledger" in page
+    assert "textContent" in page
+    assert "if (hydrateInFlight) return" in page
+    assert "hydrateInFlight = false" in page
+
+
+def test_readme_documents_private_ai_dashboard_and_new_projection_compatibility_boundary():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "write-public-usage-projection" in readme
+    assert "--unified-usage-ledger" in readme
+    assert "AI Usage" in readme
+    assert "Do not publish" in readme
+    assert "write-public-projection" in readme
+    assert "compatibility" in readme.casefold()
 
 
 def test_collect_all_cli_reports_sanitized_failure(monkeypatch, capsys):

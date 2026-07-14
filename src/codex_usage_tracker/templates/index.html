@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Codex Usage Monitor</title>
+    <title>AI Usage</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@500;600;700;800&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -413,6 +413,23 @@
         white-space: nowrap;
       }
 
+      .panel-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .empty-state {
+        color: var(--muted);
+        padding: 12px 0;
+      }
+
+      .section-label {
+        margin-top: 14px;
+        padding-top: 18px;
+        border-top: 2px solid var(--weekly);
+      }
+
       .color-session { color: var(--session); }
       .color-weekly { color: var(--weekly); }
       .color-spark-session { color: var(--spark-session); }
@@ -425,7 +442,8 @@
       @media (max-width: 1100px) {
         .hero,
         .detail-grid,
-        .detail-grid.token-grid {
+        .detail-grid.token-grid,
+        .panel-grid {
           grid-template-columns: 1fr;
         }
 
@@ -476,6 +494,54 @@
   </head>
   <body>
     <main class="shell">
+      <section class="title-panel" aria-labelledby="aiUsageTitle">
+        <p class="eyebrow">Private provider-neutral accounting</p>
+        <h1 id="aiUsageTitle">AI Usage</h1>
+        <p class="subtitle">Seven-day canonical usage, subscription windows, and posted billing facts across configured AI harnesses and providers.</p>
+      </section>
+
+      <section class="card" aria-labelledby="unifiedUsageTitle">
+        <div class="card-header">
+          <div class="card-title">
+            <h2 id="unifiedUsageTitle">Unified usage · 7 days</h2>
+            <p class="caption">Canonical token totals and request estimates. Reasoning is diagnostic and is not counted twice.</p>
+          </div>
+        </div>
+        <div id="unifiedUsageState" class="empty-state">Loading unified usage…</div>
+        <div id="unifiedUsageContent" hidden>
+          <div class="panel-grid">
+            <div class="metric"><div class="label">Total tokens</div><div class="value color-token" id="unifiedTotalTokens">—</div><div class="hint" id="unifiedWindow">—</div></div>
+            <div class="metric"><div class="label">Events</div><div class="value" id="unifiedEvents">—</div><div class="hint" id="unifiedCoverage">—</div></div>
+            <div class="metric"><div class="label">Request estimates</div><div class="value" id="unifiedEstimatedCost">—</div><div class="hint" id="unifiedActualCost">Actual request cost: —</div></div>
+          </div>
+          <h3>By harness</h3>
+          <div class="table-wrap"><table><thead><tr><th>Harness</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>Estimated USD</th><th>Actual USD</th></tr></thead><tbody id="harnessUsageBody"></tbody></table></div>
+          <h3>By provider and model</h3>
+          <div class="table-wrap"><table><thead><tr><th>Provider</th><th>Model</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>Estimated USD</th><th>Actual USD</th></tr></thead><tbody id="providerModelUsageBody"></tbody></table></div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="subscriptionsTitle">
+        <div class="card-header"><div class="card-title"><h2 id="subscriptionsTitle">Subscriptions</h2><p class="caption">Latest private quota windows and provider reset times.</p></div></div>
+        <div id="subscriptionsState" class="empty-state">Loading subscription observations…</div>
+        <div id="subscriptionsContent" class="table-wrap" hidden><table><thead><tr><th>Provider</th><th>Harness</th><th>Quota</th><th>Window</th><th>Used</th><th>Remaining</th><th>Limit</th><th>Unit</th><th>Starts</th><th>Ends</th><th>Resets</th></tr></thead><tbody id="subscriptionsBody"></tbody></table></div>
+      </section>
+
+      <section class="card" aria-labelledby="billingTitle">
+        <div class="card-header"><div class="card-title"><h2 id="billingTitle">Billing ledger · 30 days</h2><p class="caption">Posted and pending billing facts. This section is explicitly separate from request estimates above.</p></div></div>
+        <div id="billingState" class="empty-state">Loading billing facts…</div>
+        <div id="billingContent" hidden>
+          <div id="billingTotals" class="series-key"></div>
+          <div class="table-wrap"><table><thead><tr><th>Provider</th><th>Occurred</th><th>Kind</th><th>Status</th><th>Amount</th><th>Currency</th><th>Period start</th><th>Period end</th><th>Description</th></tr></thead><tbody id="billingBody"></tbody></table></div>
+        </div>
+      </section>
+
+      <header class="section-label">
+        <p class="eyebrow">Compatibility views</p>
+        <h2>Codex detail</h2>
+        <p class="caption">Legacy Codex JSONL quota and token-correlation views retained for compatibility.</p>
+      </header>
+
       <section class="hero" aria-label="Codex usage summary">
         <div class="title-panel">
           <p class="eyebrow">Codex usage monitor</p>
@@ -769,6 +835,7 @@
         sortBy: "fetched_at",
         sortDir: "desc",
       };
+      let hydrateInFlight = false;
 
       const els = {
         globalStatus: document.getElementById("globalStatus"),
@@ -1398,41 +1465,34 @@
 
       function renderTable() {
         const rows = state.table.slice(0, 24);
-        els.tableBody.innerHTML = "";
-        rows.forEach((row) => {
-          const tr = document.createElement("tr");
-          tr.innerHTML = `
-            <td>${formatTimestamp(row.fetched_at)}</td>
-            <td>${percent(row.session_used_pct)}</td>
-            <td>${percent(row.weekly_used_pct)}</td>
-            <td>${percent(row.spark_session_used_pct)}</td>
-            <td>${percent(row.spark_weekly_used_pct)}</td>
-            <td>${intFormat(row.rate_limit_reset_credits_available)}</td>
-          `;
-          els.tableBody.appendChild(tr);
-        });
+        els.tableBody.textContent = "";
+        rows.forEach((row) => appendTextRow(els.tableBody, [
+          formatTimestamp(row.fetched_at), percent(row.session_used_pct), percent(row.weekly_used_pct),
+          percent(row.spark_session_used_pct), percent(row.spark_weekly_used_pct),
+          intFormat(row.rate_limit_reset_credits_available),
+        ]));
       }
 
       function renderTokenLedger() {
         const rows = state.tokenLedger.slice(0, 24);
-        els.tokenLedgerBody.innerHTML = "";
+        els.tokenLedgerBody.textContent = "";
         rows.forEach((row) => {
           const tr = document.createElement("tr");
-          const title = Array.isArray(row.models) && row.models.length ? ` title="${row.models.join(", " )}"` : "";
-          tr.innerHTML = `
-            <td>${formatTimestamp(row.window_start, { compact: true })} → ${formatTimestamp(row.window_end, { compact: true })}</td>
-            <td class="${deltaClass(row.session_delta_pct)}">${signedPercent(row.session_delta_pct)}</td>
-            <td class="${deltaClass(row.weekly_delta_pct)}">${signedPercent(row.weekly_delta_pct)}</td>
-            <td${title}>${intFormat(row.api_calls)}</td>
-            <td>${intFormat(row.input_tokens)}</td>
-            <td>${intFormat(row.cache_read_tokens)}</td>
-            <td>${intFormat(row.output_tokens)}</td>
-            <td>${intFormat(row.reasoning_tokens)}</td>
-            <td>${intFormat(row.total_tokens)}</td>
-            <td>${percent(row.cache_hit_pct)}</td>
-            <td>${ratioFormat(row.tokens_per_session_pct)}</td>
-            <td>${ratioFormat(row.tokens_per_weekly_pct)}</td>
-          `;
+          const values = [
+            `${formatTimestamp(row.window_start, { compact: true })} → ${formatTimestamp(row.window_end, { compact: true })}`,
+            signedPercent(row.session_delta_pct), signedPercent(row.weekly_delta_pct), intFormat(row.api_calls),
+            intFormat(row.input_tokens), intFormat(row.cache_read_tokens), intFormat(row.output_tokens),
+            intFormat(row.reasoning_tokens), intFormat(row.total_tokens), percent(row.cache_hit_pct),
+            ratioFormat(row.tokens_per_session_pct), ratioFormat(row.tokens_per_weekly_pct),
+          ];
+          values.forEach((value, index) => {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            if (index === 1) cell.className = deltaClass(row.session_delta_pct);
+            if (index === 2) cell.className = deltaClass(row.weekly_delta_pct);
+            if (index === 3 && Array.isArray(row.models)) cell.title = row.models.join(", ");
+            tr.appendChild(cell);
+          });
           els.tokenLedgerBody.appendChild(tr);
         });
       }
@@ -1472,8 +1532,11 @@
       }
 
       async function hydrate() {
+        if (hydrateInFlight) return;
+        hydrateInFlight = true;
         els.refresh.disabled = true;
         els.refresh.textContent = "Refreshing…";
+        const privatePanelsPromise = loadPrivatePanels();
         try {
           const [summaryRes, trendRes, dataRes, tokenLedgerRes, tokenChartRes] = await Promise.all([
             fetch("/api/summary"),
@@ -1499,9 +1562,127 @@
         } catch (error) {
           els.freshness.textContent = `Refresh failed: ${error.message}`;
         } finally {
+          await privatePanelsPromise;
           els.refresh.disabled = false;
           els.refresh.textContent = "Refresh";
+          hydrateInFlight = false;
         }
+      }
+
+      function appendTextRow(body, values) {
+        const row = document.createElement("tr");
+        values.forEach((value) => {
+          const cell = document.createElement("td");
+          cell.textContent = value === null || value === undefined || value === "" ? "—" : String(value);
+          row.appendChild(cell);
+        });
+        body.appendChild(row);
+      }
+
+      function showPanel(stateId, contentId, message) {
+        const status = document.getElementById(stateId);
+        const content = document.getElementById(contentId);
+        status.textContent = message || "";
+        status.hidden = !message;
+        content.hidden = Boolean(message);
+      }
+
+      async function loadUnifiedUsage() {
+        try {
+          const response = await fetch("/api/unified-usage?days=7");
+          if (!response.ok) throw new Error("unavailable");
+          const data = await response.json();
+          const events = Number(data.window && data.window.event_count || 0);
+          if (!events) {
+            showPanel("unifiedUsageState", "unifiedUsageContent", "No unified usage events in the last 7 days.");
+            return;
+          }
+          document.getElementById("unifiedTotalTokens").textContent = intFormat(data.totals && data.totals.total_tokens);
+          document.getElementById("unifiedEvents").textContent = intFormat(events);
+          document.getElementById("unifiedWindow").textContent = `${formatTimestamp(data.window.first_occurred_at)} → ${formatTimestamp(data.window.last_occurred_at)}`;
+          const coverage = data.coverage || {};
+          document.getElementById("unifiedCoverage").textContent = `${intFormat(coverage.exact_events)} exact · ${intFormat(coverage.reconstructed_events)} reconstructed · ${intFormat(coverage.reconstructed_calls)} reconstructed calls`;
+          document.getElementById("unifiedEstimatedCost").textContent = `$${data.totals.estimated_cost_usd || "0"}`;
+          document.getElementById("unifiedActualCost").textContent = `Actual request cost: $${data.totals.actual_cost_usd || "0"}`;
+          const harnessBody = document.getElementById("harnessUsageBody");
+          harnessBody.textContent = "";
+          (data.by_harness || []).forEach((row) => appendTextRow(harnessBody, [
+            row.harness, row.events, row.input_tokens, row.cache_read_tokens, row.cache_write_tokens,
+            row.output_tokens, row.reasoning_tokens, row.total_tokens, row.estimated_cost_usd, row.actual_cost_usd,
+          ]));
+          const providerBody = document.getElementById("providerModelUsageBody");
+          providerBody.textContent = "";
+          (data.by_provider_model || []).forEach((row) => appendTextRow(providerBody, [
+            row.provider, row.model, row.events, row.input_tokens, row.cache_read_tokens,
+            row.cache_write_tokens, row.output_tokens, row.reasoning_tokens, row.total_tokens,
+            row.estimated_cost_usd, row.actual_cost_usd,
+          ]));
+          showPanel("unifiedUsageState", "unifiedUsageContent", "");
+        } catch (error) {
+          showPanel("unifiedUsageState", "unifiedUsageContent", "Unified usage unavailable.");
+        }
+      }
+
+      async function loadSubscriptions() {
+        try {
+          const response = await fetch("/api/subscriptions?days=30&history=0");
+          if (!response.ok) throw new Error("unavailable");
+          const data = await response.json();
+          const rows = Array.isArray(data.latest) ? data.latest : [];
+          if (!rows.length) {
+            showPanel("subscriptionsState", "subscriptionsContent", "No subscription observations.");
+            return;
+          }
+          const body = document.getElementById("subscriptionsBody");
+          body.textContent = "";
+          rows.forEach((row) => appendTextRow(body, [
+            row.provider, row.harness, row.quota_name, row.window_kind, row.used_value,
+            row.remaining_value, row.limit_value, row.unit, formatTimestamp(row.window_started_at),
+            formatTimestamp(row.window_ends_at), formatTimestamp(row.resets_at),
+          ]));
+          showPanel("subscriptionsState", "subscriptionsContent", "");
+        } catch (error) {
+          showPanel("subscriptionsState", "subscriptionsContent", "Subscription data unavailable.");
+        }
+      }
+
+      async function loadBilling() {
+        try {
+          const response = await fetch("/api/billing?days=30");
+          if (!response.ok) throw new Error("unavailable");
+          const data = await response.json();
+          const rows = Array.isArray(data.transactions) ? data.transactions : [];
+          if (!rows.length) {
+            showPanel("billingState", "billingContent", "No billing transactions in the last 30 days.");
+            return;
+          }
+          const totals = document.getElementById("billingTotals");
+          totals.textContent = "";
+          (data.totals_by_currency || []).forEach((total) => {
+            const item = document.createElement("span");
+            item.className = "key-pill";
+            item.textContent = `${total.currency}: ${total.amount}`;
+            totals.appendChild(item);
+          });
+          const body = document.getElementById("billingBody");
+          body.textContent = "";
+          rows.forEach((row) => appendTextRow(body, [
+            row.provider, formatTimestamp(row.occurred_at), row.transaction_kind, row.status,
+            row.amount, row.currency, formatTimestamp(row.billing_period_start),
+            formatTimestamp(row.billing_period_end), row.description_code,
+          ]));
+          showPanel("billingState", "billingContent", "");
+        } catch (error) {
+          showPanel("billingState", "billingContent", "Billing data unavailable.");
+        }
+      }
+
+      function loadPrivatePanels() {
+        return Promise.allSettled([
+          loadUnifiedUsage(),
+          loadSubscriptions(),
+          loadBilling(),
+        ]);
       }
 
       document.querySelectorAll(".toggle").forEach((btn) => {

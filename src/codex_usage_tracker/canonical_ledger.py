@@ -650,8 +650,15 @@ _SQLITE_FACT_COLUMNS = (
     "purpose", "model", "quota_name", "account_ref", "transaction_kind", "transaction_status",
     "invoice_id", "line_item_id",
 )
+_SQLITE_TIMESTAMP_KEY_SQL = "rtrim(occurred_or_observed_at, 'Z')"
+_SQLITE_TIMESTAMP_INDEX_SQL = (
+    f"CREATE INDEX facts_timestamp_idx ON facts({_SQLITE_TIMESTAMP_KEY_SQL})"
+)
+_SQLITE_LEGACY_TIMESTAMP_INDEX_SQL = (
+    "CREATE INDEX facts_timestamp_idx ON facts(occurred_or_observed_at)"
+)
 _SQLITE_INDEXES = {
-    "facts_timestamp_idx": (False, (("occurred_or_observed_at", False, "BINARY"),)),
+    "facts_timestamp_idx": (False, ((None, False, "BINARY"),)),
     "facts_provider_idx": (False, (("provider", False, "BINARY"),)),
     "facts_harness_idx": (False, (("harness", False, "BINARY"),)),
     "facts_purpose_idx": (False, (("purpose", False, "BINARY"),)),
@@ -826,7 +833,7 @@ def _create_sqlite_schema(connection: sqlite3.Connection, fact_type: str) -> Non
             line_item_id TEXT,
             UNIQUE(source_namespace, source_identity)
         );
-        CREATE INDEX facts_timestamp_idx ON facts(occurred_or_observed_at);
+        CREATE INDEX facts_timestamp_idx ON facts(rtrim(occurred_or_observed_at, 'Z'));
         CREATE INDEX facts_provider_idx ON facts(provider);
         CREATE INDEX facts_harness_idx ON facts(harness);
         CREATE INDEX facts_purpose_idx ON facts(purpose);
@@ -950,6 +957,7 @@ def _validate_sqlite_schema(
     requested: str | None = None,
     *,
     verify_journal_mode: bool = True,
+    timestamp_index_sql: str = _SQLITE_TIMESTAMP_INDEX_SQL,
 ) -> str:
     """Validate fixed-size schema and binding invariants without scanning facts."""
     try:
@@ -984,6 +992,22 @@ def _validate_sqlite_schema(
         raise MalformedLedgerError("SQLite ledger table constraints have drifted")
     if columns != _SQLITE_FACT_COLUMNS:
         raise MalformedLedgerError("unsupported SQLite facts columns")
+    if timestamp_index_sql == _SQLITE_TIMESTAMP_INDEX_SQL:
+        expected_indexes = _SQLITE_INDEXES
+    elif timestamp_index_sql == _SQLITE_LEGACY_TIMESTAMP_INDEX_SQL:
+        expected_indexes = {
+            **_SQLITE_INDEXES,
+            "facts_timestamp_idx": (
+                False,
+                (("occurred_or_observed_at", False, "BINARY"),),
+            ),
+        }
+    else:  # Internal callers may only audit one of the two allowlisted schemas.
+        raise AssertionError("unsupported timestamp index schema")
+    # This exact check is intentional: migration is allowed only from the
+    # byte-for-byte CREATE statement previously emitted by this module.
+    if schema_sql.get(("index", "facts_timestamp_idx")) != timestamp_index_sql:
+        raise MalformedLedgerError("SQLite ledger timestamp index definition has drifted")
     actual_indexes: dict[str, tuple[bool, tuple[tuple[str | None, bool, str], ...]]] = {}
     for _sequence, name, unique, _origin, partial in index_rows:
         if partial:
@@ -993,7 +1017,7 @@ def _validate_sqlite_schema(
             for row in connection.execute(f'PRAGMA index_xinfo("{name}")') if row[5]
         )
         actual_indexes[name] = (bool(unique), key_columns)
-    if actual_indexes != _SQLITE_INDEXES:
+    if actual_indexes != expected_indexes:
         raise MalformedLedgerError("SQLite ledger index definitions have drifted")
     for name, expected_sql in _SQLITE_TRIGGERS.items():
         if _normalized_schema_sql(schema_sql.get(("trigger", name))) != _normalized_schema_sql(expected_sql):
@@ -1021,6 +1045,36 @@ def _audit_sqlite_connection(connection: sqlite3.Connection, requested: str | No
         raise MalformedLedgerError("SQLite integrity check failed")
     _validate_stored_facts(connection, bound_type)
     return bound_type
+
+
+def _migrate_legacy_timestamp_index(connection: sqlite3.Connection, requested: str) -> None:
+    """Replace only the exact previously shipped timestamp index definition.
+
+    The old schema is fully audited before DDL runs. This deliberately leaves
+    unknown index SQL untouched so current-schema validation fails closed rather
+    than blessing or repairing drift.
+    """
+    try:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type = 'index' AND name = 'facts_timestamp_idx'"
+        ).fetchone()
+    except sqlite3.DatabaseError as exc:
+        raise MalformedLedgerError("cannot inspect SQLite timestamp index") from exc
+    index_sql = row[0] if row is not None else None
+    if index_sql == _SQLITE_TIMESTAMP_INDEX_SQL:
+        return
+    if index_sql != _SQLITE_LEGACY_TIMESTAMP_INDEX_SQL:
+        return
+    _validate_sqlite_schema(
+        connection,
+        requested,
+        timestamp_index_sql=_SQLITE_LEGACY_TIMESTAMP_INDEX_SQL,
+    )
+    try:
+        connection.execute("DROP INDEX facts_timestamp_idx")
+        connection.execute(_SQLITE_TIMESTAMP_INDEX_SQL)
+    except sqlite3.DatabaseError as exc:
+        raise MalformedLedgerError("could not migrate SQLite timestamp index") from exc
 
 
 def _read_only_sqlite(path: Path, *, immutable: bool = False) -> sqlite3.Connection:
@@ -1095,6 +1149,7 @@ def query_sqlite_facts(
     fact_type: str,
     filters: dict[str, str] | None = None,
     occurred_or_observed_at_gte: str | None = None,
+    occurred_or_observed_at_lt: str | None = None,
     order: str = "asc",
     limit: int = _SQLITE_QUERY_LIMIT,
     offset: int = 0,
@@ -1135,6 +1190,9 @@ def query_sqlite_facts(
     lower_bound = None
     if occurred_or_observed_at_gte is not None:
         lower_bound = _timestamp(occurred_or_observed_at_gte, "occurred_or_observed_at_gte")
+    upper_bound = None
+    if occurred_or_observed_at_lt is not None:
+        upper_bound = _timestamp(occurred_or_observed_at_lt, "occurred_or_observed_at_lt")
 
     target = Path(path).expanduser()
     if not target.exists():
@@ -1150,8 +1208,14 @@ def query_sqlite_facts(
             clauses.append(f"{_SQLITE_QUERY_FILTER_COLUMNS[name]} = ?")
             parameters.append(value)
         if lower_bound is not None:
-            clauses.append("occurred_or_observed_at >= ?")
-            parameters.append(lower_bound)
+            clauses.append(f"{_SQLITE_TIMESTAMP_KEY_SQL} >= ?")
+            # Canonical timestamps are fixed-width UTC through whole seconds;
+            # removing only the terminal Z makes the exact second a lexical
+            # prefix of every following fractional instant, at any precision.
+            parameters.append(lower_bound[:-1])
+        if upper_bound is not None:
+            clauses.append(f"{_SQLITE_TIMESTAMP_KEY_SQL} < ?")
+            parameters.append(upper_bound[:-1])
 
         # Force a matching allowlisted index so selectivity cannot be discarded
         # merely to satisfy ordering. Without a typed filter, date-bounded reads
@@ -1160,7 +1224,7 @@ def query_sqlite_facts(
         if requested_filters:
             first_filter = next(iter(requested_filters))
             indexed_by = f" INDEXED BY {_SQLITE_QUERY_INDEXES[first_filter]}"
-        elif lower_bound is not None:
+        elif lower_bound is not None or upper_bound is not None:
             indexed_by = " INDEXED BY facts_timestamp_idx"
         direction = normalized_order.upper()
         sql = f"""
@@ -1169,7 +1233,7 @@ def query_sqlite_facts(
                    transaction_kind, transaction_status, invoice_id, line_item_id
             FROM facts{indexed_by}
             WHERE {' AND '.join(clauses)}
-            ORDER BY occurred_or_observed_at {direction}, ingestion_sequence {direction}
+            ORDER BY {_SQLITE_TIMESTAMP_KEY_SQL} {direction}, ingestion_sequence {direction}
             LIMIT ? OFFSET ?
         """
         parameters.extend((limit, offset))
@@ -1295,6 +1359,7 @@ def _append_sqlite_facts_locked(
     completed = False
     try:
         connection.execute("BEGIN IMMEDIATE")
+        _migrate_legacy_timestamp_index(connection, expected)
         _validate_sqlite_schema(connection, expected)
         _secure_sqlite_files(target)
         result, pending = _compare_sqlite_incoming(connection, incoming)
