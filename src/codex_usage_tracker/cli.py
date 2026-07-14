@@ -158,6 +158,7 @@ def cmd_write_public_usage_projection(args: argparse.Namespace) -> int:
         output_path = write_unified_public_projection(
             args.usage_ledger,
             args.public_projection,
+            quota_ledger_path=args.quota_ledger,
             hours=args.hours,
             source=args.public_projection_source,
         )
@@ -407,6 +408,11 @@ def main() -> int:
         "--usage-ledger",
         default=os.environ.get("UNIFIED_USAGE_LEDGER_PATH") or DEFAULT_UNIFIED_USAGE_LEDGER,
         help="Type-bound usage_event_v1 SQLite ledger",
+    )
+    unified_public_parser.add_argument(
+        "--quota-ledger",
+        default=None,
+        help="Optional type-bound quota_observation_v1 SQLite ledger",
     )
     unified_public_parser.add_argument(
         "--public-projection", required=True, help="Destination public JSON artifact"
