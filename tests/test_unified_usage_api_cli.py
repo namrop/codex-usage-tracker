@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -260,6 +261,9 @@ def test_unified_usage_hourly_charts_compare_codex_and_claude_without_double_cou
     models = {(row["provider"], row["model"]): row for row in series["model_series"]}
     assert models[("openai-codex", "reported-codex")]["values"] == [20, 0, 0]
     assert models[("anthropic", "claude-sonnet")]["values"] == [0, 11, 0]
+    aggregate_models = {(row["provider"], row["model"]): row for row in data["by_provider_model"]}
+    assert aggregate_models[("openai-codex", "reported-codex")]["total_tokens"] == 20
+    assert ("openai-codex", "requested-codex") not in aggregate_models
     comparison = {row["key"]: row for row in series["comparison_series"]}
     assert comparison["codex"]["label"] == "OpenAI Codex subscription"
     assert comparison["codex"]["harness"] is None
@@ -575,12 +579,25 @@ def test_dashboard_cli_threads_private_ledgers_without_repurposing_legacy_ledger
 
 
 def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independently(tmp_path):
-    page = create_app(ledger=str(tmp_path / "codex.jsonl")).test_client().get("/").get_data(as_text=True)
+    client = create_app(ledger=str(tmp_path / "codex.jsonl")).test_client()
+    page = client.get("/").get_data(as_text=True)
     assert "<title>AI Usage</title>" in page
+    assert '<script src="/static/vendor/chart.umd.min.js"></script>' in page
+    chart_asset = client.get("/static/vendor/chart.umd.min.js")
+    assert chart_asset.status_code == 200
+    assert b"Chart.js v4.5.1" in chart_asset.data[:100]
+    package_data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["tool"]["setuptools"]["package-data"]
+    assert "static/vendor/*.js" in package_data["codex_usage_tracker"]
     assert "Codex detail" in page
     assert 'fetch("/api/unified-usage?hours=168")' in page
     assert 'id="modelTokenChart"' in page
     assert 'id="codexClaudeChart"' in page
+    assert 'id="providerComparisonBars"' in page
+    assert 'id="modelComparisonBars"' in page
+    assert "Provider comparison" in page
+    assert "Model comparison" in page
+    assert "renderAggregateComparisons(data)" in page
+    assert 'typeof Chart !== "undefined"' in page
     assert 'id="modelTokenLabels"' in page
     assert 'id="codexClaudeLabels"' in page
     assert "Tokens across provider models" in page
@@ -913,10 +930,12 @@ def test_sqlite_private_api_uses_one_stable_query_snapshot(tmp_path, monkeypatch
     )
     original = dashboard_module.query_sqlite_facts
     calls = 0
+    observed_kwargs = None
 
     def observed_query(*args, **kwargs):
-        nonlocal calls
+        nonlocal calls, observed_kwargs
         calls += 1
+        observed_kwargs = kwargs
         rows = original(*args, **kwargs)
         if calls == 1:
             append_sqlite_facts(usage, [_usage_fact("late")], fact_type="usage_event_v1")
@@ -927,4 +946,6 @@ def test_sqlite_private_api_uses_one_stable_query_snapshot(tmp_path, monkeypatch
     response = create_app(unified_usage_ledger=str(usage)).test_client().get("/api/unified-usage")
     assert response.status_code == 200
     assert calls == 1
+    assert observed_kwargs is not None
+    assert observed_kwargs["contract_validation"] is False
     assert sum(bucket["events"] for bucket in response.get_json()["by_provider_model"]) == 3

@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@500;600;700;800&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/vendor/chart.umd.min.js"></script>
     <style>
       :root {
         color-scheme: dark;
@@ -332,6 +332,62 @@
         min-height: 390px;
       }
 
+      .aggregate-comparison-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 28px;
+        margin: 30px 0 12px;
+      }
+
+      .rank-chart {
+        min-width: 0;
+        padding-top: 18px;
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .rank-chart h3 {
+        margin-top: 0;
+      }
+
+      .rank-bars {
+        display: grid;
+        gap: 11px;
+        margin-top: 15px;
+      }
+
+      .rank-row {
+        display: grid;
+        gap: 5px;
+        min-width: 0;
+      }
+
+      .rank-label-line {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .rank-label-line strong {
+        color: var(--text);
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+
+      .rank-track {
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(0, 179, 164, 0.10);
+        overflow: hidden;
+      }
+
+      .rank-fill {
+        height: 100%;
+        border-radius: inherit;
+        background: var(--series-color, var(--token));
+      }
+
       .unified-chart-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -539,6 +595,7 @@
         .detail-grid,
         .detail-grid.token-grid,
         .panel-grid,
+        .aggregate-comparison-grid,
         .unified-chart-grid {
           grid-template-columns: 1fr;
         }
@@ -622,6 +679,18 @@
             <div class="metric"><div class="label">Total tokens</div><div class="value color-token" id="unifiedTotalTokens">—</div><div class="hint" id="unifiedWindow">—</div></div>
             <div class="metric"><div class="label">Events</div><div class="value" id="unifiedEvents">—</div><div class="hint" id="unifiedCoverage">—</div></div>
             <div class="metric"><div class="label">Request estimates</div><div class="value" id="unifiedEstimatedCost">—</div><div class="hint" id="unifiedActualCost">Actual request cost: —</div></div>
+          </div>
+          <div class="aggregate-comparison-grid" aria-label="Provider and model token comparisons">
+            <section class="rank-chart" aria-labelledby="providerComparisonTitle">
+              <h3 id="providerComparisonTitle">Provider comparison</h3>
+              <p class="caption">Accounted token volume by contractual provider over the same complete-hour window.</p>
+              <div id="providerComparisonBars" class="rank-bars" aria-live="polite"></div>
+            </section>
+            <section class="rank-chart" aria-labelledby="modelComparisonTitle">
+              <h3 id="modelComparisonTitle">Model comparison</h3>
+              <p class="caption">Largest reported-or-requested provider/model pairs, ranked by accounted token volume.</p>
+              <div id="modelComparisonBars" class="rank-bars" aria-live="polite"></div>
+            </section>
           </div>
           <div class="unified-chart-grid">
             <section class="usage-chart" aria-labelledby="modelTokenTitle">
@@ -1109,7 +1178,7 @@
         },
       };
 
-      Chart.register(thresholdPlugin);
+      if (typeof Chart !== "undefined") Chart.register(thresholdPlugin);
 
       function getCss(name) {
         return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1513,6 +1582,63 @@
           });
           body.appendChild(tableRow);
         });
+      }
+
+      function renderRankBars(containerId, rows) {
+        const container = document.getElementById(containerId);
+        container.textContent = "";
+        const ranked = [...rows]
+          .filter((row) => Number.isFinite(Number(row.total_tokens)))
+          .sort((a, b) => Number(b.total_tokens) - Number(a.total_tokens) || String(a.label).localeCompare(String(b.label)))
+          .slice(0, 10);
+        if (!ranked.length) {
+          container.textContent = "No accounted token data in this window.";
+          return;
+        }
+        const maximum = Math.max(...ranked.map((row) => Math.max(0, Number(row.total_tokens))), 1);
+        ranked.forEach((row, index) => {
+          const total = Number(row.total_tokens);
+          const item = document.createElement("div");
+          item.className = "rank-row";
+          const labelLine = document.createElement("div");
+          labelLine.className = "rank-label-line";
+          const label = document.createElement("strong");
+          label.textContent = row.label;
+          const value = document.createElement("span");
+          value.textContent = intFormat(total);
+          labelLine.append(label, value);
+          const track = document.createElement("div");
+          track.className = "rank-track";
+          track.setAttribute("role", "img");
+          track.setAttribute("aria-label", `${row.label}: ${intFormat(total)} accounted tokens`);
+          const fill = document.createElement("div");
+          fill.className = "rank-fill";
+          fill.style.width = `${Math.max(0, total) / maximum * 100}%`;
+          fill.style.setProperty("--series-color", UNIFIED_MODEL_COLORS[index % UNIFIED_MODEL_COLORS.length]);
+          track.appendChild(fill);
+          item.append(labelLine, track);
+          container.appendChild(item);
+        });
+      }
+
+      function renderAggregateComparisons(data) {
+        const modelRows = Array.isArray(data.by_provider_model) ? data.by_provider_model : [];
+        const providerTotals = new Map();
+        modelRows.forEach((row) => {
+          const provider = String(row.provider || "unknown");
+          providerTotals.set(provider, (providerTotals.get(provider) || 0) + Number(row.total_tokens || 0));
+        });
+        renderRankBars(
+          "providerComparisonBars",
+          [...providerTotals].map(([label, total_tokens]) => ({ label, total_tokens })),
+        );
+        renderRankBars(
+          "modelComparisonBars",
+          modelRows.map((row) => ({
+            label: `${row.model || "unknown"} · ${row.provider || "unknown"}`,
+            total_tokens: Number(row.total_tokens || 0),
+          })),
+        );
       }
 
       function renderUnifiedCharts(timeSeries) {
@@ -1949,6 +2075,7 @@
             row.estimated_cost_usd, row.actual_cost_usd,
           ]));
           showPanel("unifiedUsageState", "unifiedUsageContent", "");
+          renderAggregateComparisons(data);
           try {
             renderUnifiedCharts(data.time_series);
           } catch (chartError) {

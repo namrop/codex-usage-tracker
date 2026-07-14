@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .ledger import reconcile_snapshot_windows
 from .token_correlation import build_token_correlation_rows, resolve_state_db_path
 
 PUBLIC_PROJECTION_FILENAME = "codex_token_chart_public.json"
@@ -34,7 +35,7 @@ def _read_usage_rows(ledger_path: str) -> List[Dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
             if isinstance(payload, dict):
-                rows.append(payload)
+                rows.append(reconcile_snapshot_windows(payload))
     return rows
 
 

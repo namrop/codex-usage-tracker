@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 
 from .canonical_ledger import ValidationError, canonical_timestamp, decimal_string, normalize_fact
+from .ledger import reconcile_snapshot_windows
 
 OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
@@ -115,7 +116,7 @@ def codex_quota_observations(
                 raise ValueError(f"{path}:{number}: malformed JSON: {exc.msg}") from exc
             if not isinstance(value, dict):
                 raise ValueError(f"{path}:{number}: snapshot must be an object")
-            snapshots.append(value)
+            snapshots.append(reconcile_snapshot_windows(value))
     if not snapshots:
         return []
     snapshot = max(

@@ -47,21 +47,53 @@ def _window_after_fields(reset_at: Optional[int], now_epoch: float, prefix: str)
     }
 
 
+def _classify_rate_limit_windows(rate_limit: Any) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Return five-hour/session and weekly windows using provider durations.
+
+    Older payloads omitted ``limit_window_seconds`` and used primary/secondary
+    positionally. Newer Codex payloads may expose only a 604800-second primary
+    window, so treating primary as five-hour silently mislabels weekly usage.
+    """
+    if not isinstance(rate_limit, dict):
+        return {}, {}
+    windows = []
+    for field in ("primary_window", "secondary_window"):
+        value = rate_limit.get(field)
+        windows.append(value if isinstance(value, dict) else {})
+
+    session: Dict[str, Any] = {}
+    weekly: Dict[str, Any] = {}
+    classified: set[int] = set()
+    for index, window in enumerate(windows):
+        duration = _to_int(window.get("limit_window_seconds"))
+        if duration is None:
+            continue
+        if duration >= 2 * 24 * 3600 and not weekly:
+            weekly = window
+            classified.add(index)
+        elif duration <= 24 * 3600 and not session:
+            session = window
+            classified.add(index)
+
+    # Preserve legacy positional semantics only for windows whose durations did
+    # not identify them. Never reuse a recognized weekly primary as session.
+    if 0 not in classified and windows[0] and not session:
+        session = windows[0]
+    if 1 not in classified and windows[1] and not weekly:
+        weekly = windows[1]
+    return session, weekly
+
+
 def _normalize_rate_limit_entry(limit_name: str, rate_limit: Any) -> Dict[str, Any]:
     if not isinstance(rate_limit, dict):
         rate_limit = {}
-    primary = rate_limit.get("primary_window", {})
-    if not isinstance(primary, dict):
-        primary = {}
-    secondary = rate_limit.get("secondary_window", {})
-    if not isinstance(secondary, dict):
-        secondary = {}
+    session, weekly = _classify_rate_limit_windows(rate_limit)
     return {
         "limit_name": limit_name,
-        "session_used_pct": _to_float(primary.get("used_percent"), None),
-        "weekly_used_pct": _to_float(secondary.get("used_percent"), None),
-        "session_reset_at": _to_int(primary.get("reset_at")),
-        "weekly_reset_at": _to_int(secondary.get("reset_at")),
+        "session_used_pct": _to_float(session.get("used_percent"), None),
+        "weekly_used_pct": _to_float(weekly.get("used_percent"), None),
+        "session_reset_at": _to_int(session.get("reset_at")),
+        "weekly_reset_at": _to_int(weekly.get("reset_at")),
         "allowed": bool(rate_limit.get("allowed", True)),
         "limit_reached": bool(rate_limit.get("limit_reached", False)),
     }
@@ -106,17 +138,68 @@ def _extract_spark_limits(additional_rate_limits: list[Dict[str, Any]]) -> Dict[
     }
 
 
+def reconcile_snapshot_windows(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Reclassify persisted Codex window fields from their retained raw payload.
+
+    This keeps historical rows legible when the provider changes whether a
+    duration-annotated weekly window appears as primary or secondary. The input
+    row is never mutated.
+    """
+    result = dict(row)
+    raw_payload = result.get("raw_payload")
+    if not isinstance(raw_payload, dict):
+        return result
+    rate_limit = raw_payload.get("rate_limit")
+    if not isinstance(rate_limit, dict):
+        return result
+
+    session, weekly = _classify_rate_limit_windows(rate_limit)
+    session_used_pct = _to_float(session.get("used_percent"), None)
+    weekly_used_pct = _to_float(weekly.get("used_percent"), None)
+    result.update(
+        {
+            "session_used_pct": session_used_pct,
+            "weekly_used_pct": weekly_used_pct,
+            "session_reset_at": _to_int(session.get("reset_at")),
+            "weekly_reset_at": _to_int(weekly.get("reset_at")),
+            "unknown_state": session_used_pct is None or weekly_used_pct is None,
+        }
+    )
+    fetched_at = result.get("fetched_at")
+    fetched_epoch: Optional[float] = None
+    if isinstance(fetched_at, str):
+        try:
+            parsed = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            fetched_epoch = parsed.timestamp()
+        except ValueError:
+            fetched_epoch = None
+    if fetched_epoch is None:
+        result.update(
+            {
+                "session_reset_after_seconds": None,
+                "hours_until_session_reset": None,
+                "weekly_reset_after_seconds": None,
+                "hours_until_weekly_reset": None,
+            }
+        )
+    else:
+        result.update(_window_after_fields(result["session_reset_at"], fetched_epoch, "session"))
+        result.update(_window_after_fields(result["weekly_reset_at"], fetched_epoch, "weekly"))
+    additional_rate_limits = _extract_additional_rate_limits(raw_payload)
+    if additional_rate_limits:
+        result["additional_rate_limits_normalized"] = additional_rate_limits
+        result.update(_extract_spark_limits(additional_rate_limits))
+    return result
+
+
 def append_row(data: Dict[str, Any], ledger_path: str) -> Dict[str, Any]:
     rate_limit = data.get("rate_limit", {})
     if not isinstance(rate_limit, dict):
         rate_limit = {}
 
-    primary = rate_limit.get("primary_window", {})
-    if not isinstance(primary, dict):
-        primary = {}
-    secondary = rate_limit.get("secondary_window", {})
-    if not isinstance(secondary, dict):
-        secondary = {}
+    session, weekly = _classify_rate_limit_windows(rate_limit)
 
     credits = data.get("credits", {})
     if not isinstance(credits, dict):
@@ -130,10 +213,10 @@ def append_row(data: Dict[str, Any], ledger_path: str) -> Dict[str, Any]:
 
     fetched_at = datetime.now(timezone.utc)
     now_epoch = fetched_at.timestamp()
-    session_reset_at = _to_int(primary.get("reset_at"))
-    weekly_reset_at = _to_int(secondary.get("reset_at"))
-    session_used_pct = _to_float(primary.get("used_percent"), None)
-    weekly_used_pct = _to_float(secondary.get("used_percent"), None)
+    session_reset_at = _to_int(session.get("reset_at"))
+    weekly_reset_at = _to_int(weekly.get("reset_at"))
+    session_used_pct = _to_float(session.get("used_percent"), None)
+    weekly_used_pct = _to_float(weekly.get("used_percent"), None)
     allowed = bool(rate_limit.get("allowed", True))
     limit_reached = bool(rate_limit.get("limit_reached", False))
     unknown_state = session_used_pct is None or weekly_used_pct is None or not isinstance(data.get("rate_limit"), dict)

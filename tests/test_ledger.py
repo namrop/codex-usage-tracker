@@ -50,6 +50,74 @@ def test_append_row_preserves_unknown_weekly_usage_when_secondary_window_is_null
     assert row["unknown_state"] is True
 
 
+def test_append_row_classifies_duration_annotated_primary_as_weekly(tmp_path):
+    ledger = tmp_path / "usage.jsonl"
+    row = append_row(
+        {
+            "plan_type": "pro",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 15.0,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1784489942,
+                },
+                "secondary_window": None,
+            },
+            "additional_rate_limits": [
+                {
+                    "limit_name": "GPT-5.3-Codex-Spark",
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 3.0,
+                            "limit_window_seconds": 604800,
+                            "reset_at": 1784628001,
+                        },
+                        "secondary_window": None,
+                    },
+                }
+            ],
+        },
+        str(ledger),
+    )
+
+    assert row["session_used_pct"] is None
+    assert row["session_reset_at"] is None
+    assert row["weekly_used_pct"] == 15.0
+    assert row["weekly_reset_at"] == 1784489942
+    assert row["spark_session_used_pct"] is None
+    assert row["spark_weekly_used_pct"] == 3.0
+    assert row["spark_weekly_reset_at"] == 1784628001
+    assert row["unknown_state"] is True
+
+
+def test_append_row_classifies_duration_annotated_five_hour_and_weekly_windows(tmp_path):
+    ledger = tmp_path / "usage.jsonl"
+    row = append_row(
+        {
+            "plan_type": "pro",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 8.0,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1780700000,
+                },
+                "secondary_window": {
+                    "used_percent": 21.0,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1781137839,
+                },
+            },
+        },
+        str(ledger),
+    )
+
+    assert row["session_used_pct"] == 8.0
+    assert row["weekly_used_pct"] == 21.0
+    assert row["session_reset_at"] == 1780700000
+    assert row["weekly_reset_at"] == 1781137839
+    assert row["unknown_state"] is False
+
+
 def test_append_row_preserves_unknown_usage_when_rate_limit_is_null(tmp_path):
     ledger = tmp_path / "usage.jsonl"
 

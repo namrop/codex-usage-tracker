@@ -930,6 +930,35 @@ def _validate_stored_row(stored: tuple[Any, ...], fact_type: str) -> dict[str, A
     return normalized
 
 
+def _integrity_check_stored_row(stored: tuple[Any, ...], fact_type: str) -> dict[str, Any]:
+    """Verify immutable SQLite integrity without repeating contract normalization.
+
+    Facts are contract-normalized before append and protected by immutable
+    triggers. Dashboard projections can therefore validate schema, payload hash,
+    identity, and typed-column agreement without recursively re-running the full
+    contract and secret scanner for every request. Whole-ledger audits retain
+    canonical re-encoding and full contract validation.
+    """
+    payload, digest, stored_type, namespace, identity, *typed = stored
+    if not isinstance(payload, str) or not isinstance(digest, str):
+        raise MalformedLedgerError("SQLite ledger contains invalid canonical payload data")
+    if digest != hashlib.sha256(payload.encode("utf-8")).hexdigest():
+        raise MalformedLedgerError("SQLite ledger canonical hash mismatch")
+    try:
+        raw = json.loads(payload)
+        if not isinstance(raw, dict):
+            raise MalformedLedgerError("SQLite ledger contains an invalid canonical fact")
+        if stored_type != fact_type or raw.get("fact_type") != fact_type:
+            raise MalformedLedgerError("SQLite ledger contains a mixed fact_type")
+        if (namespace, identity) != _identity(raw):
+            raise MalformedLedgerError("SQLite ledger identity columns do not match canonical JSON")
+        if tuple(typed) != _typed_values(raw):
+            raise MalformedLedgerError("SQLite ledger extracted columns do not match canonical JSON")
+    except (json.JSONDecodeError, KeyError, TypeError, ValidationError) as exc:
+        raise MalformedLedgerError("SQLite ledger contains an invalid canonical fact") from exc
+    return raw
+
+
 def _validate_stored_facts(connection: sqlite3.Connection, fact_type: str) -> None:
     query = """
         SELECT canonical_json, canonical_sha256, fact_type, source_namespace, source_identity,
@@ -1153,6 +1182,7 @@ def query_sqlite_facts(
     order: str = "asc",
     limit: int = _SQLITE_QUERY_LIMIT,
     offset: int = 0,
+    contract_validation: bool = True,
 ) -> list[dict[str, Any]]:
     """Run a bounded, indexed private-ledger query and validate selected rows.
 
@@ -1170,6 +1200,8 @@ def query_sqlite_facts(
     """
     if not isinstance(fact_type, str) or fact_type not in SUPPORTED_FACT_TYPES:
         raise ValidationError("a supported fact_type binding is required")
+    if not isinstance(contract_validation, bool):
+        raise ValidationError("contract_validation must be a boolean")
     requested_filters = {} if filters is None else filters
     if not isinstance(requested_filters, dict):
         raise ValidationError("filters must be an object")
@@ -1241,7 +1273,8 @@ def query_sqlite_facts(
             stored_rows = _execute_bounded_facts_query(connection, sql, tuple(parameters))
         except sqlite3.DatabaseError as exc:
             raise MalformedLedgerError("invalid SQLite facts query") from exc
-        return [_validate_stored_row(stored, fact_type) for stored in stored_rows]
+        validator = _validate_stored_row if contract_validation else _integrity_check_stored_row
+        return [validator(stored, fact_type) for stored in stored_rows]
     finally:
         connection.close()
 

@@ -157,6 +157,41 @@ def test_negative_correction_decimal_keeps_leading_zero():
         normalize_fact(event(corrects_source_namespace="n", corrects_source_event_id="e"))
 
 
+def test_codex_quota_reconciles_retained_weekly_only_raw_payload(tmp_path):
+    ledger = tmp_path / "codex.jsonl"
+    ledger.write_text(
+        json.dumps(
+            {
+                "id": "snap",
+                "fetched_at": "2026-07-14T10:00:00Z",
+                "session_used_pct": 15,
+                "weekly_used_pct": None,
+                "session_reset_at": 1784489942,
+                "weekly_reset_at": None,
+                "raw_payload": {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 15,
+                            "limit_window_seconds": 604800,
+                            "reset_at": 1784489942,
+                        },
+                        "secondary_window": None,
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    facts = {fact["quota_name"]: fact for fact in codex_quota_observations(ledger, "ns:codex")}
+    assert facts["five_hour"]["used_value"] is None
+    assert facts["five_hour"]["resets_at"] is None
+    assert facts["week"]["used_value"] == "15"
+    assert facts["week"]["remaining_value"] == "85"
+    assert facts["week"]["resets_at"] == "2026-07-19T19:39:02Z"
+
+
 def test_codex_quota_nulls_and_opencode_partial_coverage(tmp_path):
     ledger=tmp_path/"codex.jsonl"
     ledger.write_text(

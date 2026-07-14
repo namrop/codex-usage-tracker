@@ -18,7 +18,7 @@ from typing import Optional
 from .canonical_ledger import audit_sqlite_ledger, export_sqlite_to_jsonl, migrate_jsonl_to_sqlite
 from .fetcher import fetch_usage
 from .git_autocommit import commit_ledger
-from .ledger import append_row
+from .ledger import append_row, reconcile_snapshot_windows
 from .public_projection import write_public_projection
 from .unified_public_projection import write_unified_public_projection
 
@@ -52,19 +52,10 @@ def _sleep_until_next_hour() -> float:
 
 
 def _print_summary(payload: dict) -> None:
-    rate_limit = payload.get("rate_limit")
-    if not isinstance(rate_limit, dict):
-        rate_limit = {}
-    primary = rate_limit.get("primary_window")
-    if not isinstance(primary, dict):
-        primary = {}
-    secondary = rate_limit.get("secondary_window")
-    if not isinstance(secondary, dict):
-        secondary = {}
-
+    normalized = reconcile_snapshot_windows({"raw_payload": payload})
     print(f"plan_type: {payload.get('plan_type')}")
-    print(f"session_used_pct: {primary.get('used_percent')}")
-    print(f"weekly_used_pct: {secondary.get('used_percent')}")
+    print(f"session_used_pct: {normalized.get('session_used_pct')}")
+    print(f"weekly_used_pct: {normalized.get('weekly_used_pct')}")
     credits = payload.get("credits")
     if isinstance(credits, dict):
         print(f"credits_balance: {credits.get('balance')}")

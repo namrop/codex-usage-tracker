@@ -14,6 +14,7 @@ from flask import Flask, jsonify, render_template, request
 from .capability_matrix import get_capability_matrix
 from .codex_call_accounting import build_codex_accounting_rows
 from .jsonl_store import newest_first, read_jsonl
+from .ledger import reconcile_snapshot_windows
 from .policy_state import build_burn_projection_rows, latest_policy_state
 from .provider_spend import (
     DIRECT_PROVIDER_SPEND_LEDGER,
@@ -158,6 +159,7 @@ def _private_facts(
             occurred_or_observed_at_lt=upper_bound,
             order=order,
             limit=_PRIVATE_API_MAX_ROWS + 1,
+            contract_validation=fact_type != "usage_event_v1",
         )
         if len(rows) > _PRIVATE_API_MAX_ROWS:
             raise PrivateLedgerQueryTooLarge("ledger query exceeds private API row limit")
@@ -323,6 +325,7 @@ def _load_rows(ledger_path: str) -> List[Dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
             if isinstance(payload, dict):
+                payload = reconcile_snapshot_windows(payload)
                 if "rate_limit_reset_credits_available" not in payload:
                     payload["rate_limit_reset_credits_available"] = _reset_credits_available(payload)
                 rows.append(payload)
@@ -597,7 +600,10 @@ def create_app(
         grouped: Dict[tuple[str, str], Dict[str, Any]] = {}
         by_harness: Dict[str, Dict[str, Any]] = {}
         for row in rows:
-            key = (str(row.get("provider") or "unknown"), str(row.get("model_requested") or "unknown"))
+            key = (
+                str(row.get("provider") or "unknown"),
+                str(row.get("model_reported") or row.get("model_requested") or "unknown"),
+            )
             bucket = grouped.setdefault(
                 key,
                 {

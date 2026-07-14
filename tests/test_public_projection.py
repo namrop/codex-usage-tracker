@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime
 
 from codex_usage_tracker.public_projection import (
+    _read_usage_rows,
     build_public_projection,
     default_public_projection_path,
     suppress_gap_spikes,
@@ -57,6 +58,38 @@ def _make_state_db(path):
 
 def _write_usage_ledger(path, rows):
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+
+def test_public_projection_reader_reconciles_retained_weekly_only_payloads(tmp_path):
+    ledger = tmp_path / "codex_usage_ledger.jsonl"
+    _write_usage_ledger(
+        ledger,
+        [
+            {
+                "fetched_at": "2026-07-14T10:00:00Z",
+                "session_used_pct": 15,
+                "weekly_used_pct": None,
+                "session_reset_at": 1784489942,
+                "weekly_reset_at": None,
+                "raw_payload": {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 15,
+                            "limit_window_seconds": 604800,
+                            "reset_at": 1784489942,
+                        },
+                        "secondary_window": None,
+                    }
+                },
+            }
+        ],
+    )
+
+    row = _read_usage_rows(str(ledger))[0]
+    assert row["session_used_pct"] is None
+    assert row["session_reset_at"] is None
+    assert row["weekly_used_pct"] == 15.0
+    assert row["weekly_reset_at"] == 1784489942
 
 
 def test_build_public_projection_exposes_only_derived_chart_payload(tmp_path):

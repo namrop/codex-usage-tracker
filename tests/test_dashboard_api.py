@@ -68,6 +68,53 @@ def test_dashboard_exposes_policy_budget_capability_and_scaffold_routes(tmp_path
     assert client.get("/api/backtests/latest").status_code == 200
 
 
+def test_dashboard_reconciles_new_codex_weekly_only_payloads(tmp_path, monkeypatch):
+    ledger = tmp_path / "usage.jsonl"
+    _write_usage_ledger(
+        ledger,
+        [
+            {
+                "fetched_at": "2026-07-14T10:00:01+00:00",
+                "weekly_used_pct": None,
+                "session_used_pct": 15.0,
+                "weekly_reset_at": None,
+                "session_reset_at": 1784489942,
+                "session_reset_after_seconds": 466741,
+                "weekly_reset_after_seconds": 18000,
+                "hours_until_session_reset": 129.65,
+                "hours_until_weekly_reset": 5.0,
+                "allowed": True,
+                "limit_reached": False,
+                "raw_payload": {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 15,
+                            "limit_window_seconds": 604800,
+                            "reset_at": 1784489942,
+                        },
+                        "secondary_window": None,
+                    }
+                },
+            }
+        ],
+    )
+    monkeypatch.setenv("HERMES_STATE_DB_PATH", str(tmp_path / "missing.db"))
+    client = create_app(atrium_root=str(tmp_path / "atrium"), ledger=str(ledger)).test_client()
+
+    summary = client.get("/api/summary").get_json()
+    assert summary["current_session_used_pct"] is None
+    assert summary["session_reset_at"] is None
+    assert summary["current_weekly_used_pct"] == 15.0
+    assert summary["weekly_reset_at"] == 1784489942
+    data_row = client.get("/api/data").get_json()[0]
+    assert data_row["hours_until_session_reset"] is None
+    assert data_row["session_reset_after_seconds"] is None
+    assert data_row["hours_until_weekly_reset"] == 129.65
+    assert data_row["weekly_reset_after_seconds"] == 466741
+    policy = client.get("/api/policy-state").get_json()
+    assert policy["hours_until_weekly_reset"] == 129.65
+
+
 def test_dashboard_summary_exposes_banked_reset_credits(tmp_path, monkeypatch):
     ledger = tmp_path / "usage.jsonl"
     _write_usage_ledger(

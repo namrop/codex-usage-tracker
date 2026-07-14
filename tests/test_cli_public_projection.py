@@ -183,6 +183,30 @@ def test_cmd_fetch_renders_unknown_weekly_usage_when_secondary_window_is_null(tm
     assert "weekly_used_pct: None" in capsys.readouterr().out
 
 
+def test_cmd_fetch_renders_duration_annotated_primary_as_weekly(tmp_path, monkeypatch, capsys):
+    ledger = tmp_path / "usage.jsonl"
+    monkeypatch.setattr(
+        cli,
+        "fetch_usage",
+        lambda: {
+            "plan_type": "pro",
+            "rate_limit": {
+                "primary_window": {"used_percent": 15.0, "limit_window_seconds": 604800},
+                "secondary_window": None,
+            },
+        },
+    )
+
+    assert cli.cmd_fetch(_fetch_args(tmp_path, ledger)) == 0
+
+    row = json.loads(ledger.read_text(encoding="utf-8"))
+    assert row["session_used_pct"] is None
+    assert row["weekly_used_pct"] == 15.0
+    output = capsys.readouterr().out
+    assert "session_used_pct: None" in output
+    assert "weekly_used_pct: 15.0" in output
+
+
 def test_cmd_fetch_renders_unknown_usage_when_rate_limit_is_null(tmp_path, monkeypatch, capsys):
     ledger = tmp_path / "usage.jsonl"
     monkeypatch.setattr(cli, "fetch_usage", lambda: {"plan_type": "pro", "rate_limit": None})

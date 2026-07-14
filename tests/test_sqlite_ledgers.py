@@ -637,6 +637,28 @@ def test_bounded_sqlite_query_filters_orders_and_validates_only_returned_rows(tm
     assert calls == 2
 
 
+def test_bounded_sqlite_query_integrity_mode_skips_contract_renormalization(tmp_path, monkeypatch):
+    database = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(database, [usage("one"), usage("two")])
+    calls = 0
+    original = ledger.normalize_fact
+
+    def counted(fact):
+        nonlocal calls
+        calls += 1
+        return original(fact)
+
+    monkeypatch.setattr(ledger, "normalize_fact", counted)
+    rows = query_sqlite_facts(
+        database,
+        fact_type="usage_event_v1",
+        contract_validation=False,
+    )
+
+    assert [row["source_event_id"] for row in rows] == ["one", "two"]
+    assert calls == 0
+
+
 def test_bounded_sqlite_query_supports_exclusive_upper_timestamp_bound(tmp_path):
     database = tmp_path / "usage.sqlite3"
     append_sqlite_facts(database, [
@@ -683,6 +705,7 @@ def test_sqlite_timestamp_bounds_order_fractional_instants_chronologically(tmp_p
     {"offset": -1},
     {"occurred_or_observed_at_gte": "not-a-time"},
     {"occurred_or_observed_at_lt": "not-a-time"},
+    {"contract_validation": "no"},
 ])
 def test_sqlite_query_rejects_unbounded_or_malformed_arguments(tmp_path, kwargs):
     database = tmp_path / "usage.sqlite3"
