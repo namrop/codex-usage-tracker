@@ -20,7 +20,7 @@ DEFAULT_PUBLIC_PROJECTION_SOURCE = "unified-usage-public-projection"
 DEFAULT_PUBLIC_PROJECTION_HOURS = 168
 MAX_PUBLIC_PROJECTION_HOURS = 168
 _MAX_INPUT_EVENTS = 100_000
-_MAX_QUOTA_OBSERVATIONS_PER_NAME = 1_000
+_MAX_QUOTA_OBSERVATIONS_PER_NAME = 256
 _MAX_PUBLIC_PROJECTION_BYTES = 1024 * 1024
 _SQLITE_SUFFIXES = frozenset({".sqlite3", ".sqlite", ".db"})
 _TOKEN_FIELDS = (
@@ -75,45 +75,67 @@ _PUBLIC_PROVIDER_MAP = {
     "harness-acubens": "Local models",
     "llmgateway": "LLM Gateway",
 }
-_PUBLIC_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", re.ASCII)
-_PUBLIC_MODEL_PATTERNS = (
-    ("gpt", "GPT", re.compile(
-        r"^gpt-(?:\d+(?:[._-]\d+)*(?:-(?:codex|chat|mini|nano|pro|turbo|preview|instruct|spark))*|oss-\d+b)$",
-        re.IGNORECASE | re.ASCII,
-    )),
-    ("claude", "Claude", re.compile(
-        r"^claude-(?:(?:opus|sonnet|haiku|fable)-\d+(?:-\d+)*(?:-\d{8})?|\d+(?:-\d+)?-(?:opus|sonnet|haiku)(?:-\d{8})?)$",
-        re.IGNORECASE | re.ASCII,
-    )),
-    ("deepseek", "DeepSeek", re.compile(
-        r"^deepseek-(?:(?:v?\d+(?:[._-]\d+)*)(?:-(?:pro|flash|chat|coder|reasoner|lite))*|(?:chat|coder|reasoner)(?:-v?\d+(?:[._-]\d+)*)?)$",
-        re.IGNORECASE | re.ASCII,
-    )),
-    ("glm", "GLM", re.compile(
-        r"^glm-\d+(?:[._-]\d+)*(?:-(?:air|flash|plus|turbo))*$",
-        re.IGNORECASE | re.ASCII,
-    )),
-    ("qwen", "Qwen", re.compile(
-        r"^qwen-?\d+(?:[._-]\d+)*(?:-(?:coder|vl|plus|turbo|max|instruct|thinking))*$",
-        re.IGNORECASE | re.ASCII,
-    )),
-    ("gemma", "Gemma", re.compile(
-        r"^gemma-\d+(?:[._-]\d+)*(?:-(?:it|pt|pro))*$",
-        re.IGNORECASE | re.ASCII,
-    )),
-    ("grok", "Grok", re.compile(
-        r"^grok-(?:\d+(?:[._-]\d+)*(?:-(?:mini|fast|beta))*|code-fast-\d+)$",
-        re.IGNORECASE | re.ASCII,
-    )),
-    ("aion", "Aion", re.compile(
-        r"^aion-\d+(?:[._-]\d+)*(?:-(?:mini|fast|beta))*$",
-        re.IGNORECASE | re.ASCII,
-    )),
+_PUBLIC_MODEL_MAP = {
+    # OpenAI / Codex
+    "gpt-5.6": "GPT-5.6",
+    "gpt-5.5": "GPT-5.5",
+    "gpt-5.5-fast": "GPT-5.5 Fast",
+    "gpt-5.3-codex": "GPT-5.3 Codex",
+    "gpt-5.2-codex": "GPT-5.2 Codex",
+    # Anthropic
+    "claude-sonnet-5": "Claude Sonnet 5",
+    "claude-fable-5": "Claude Fable 5",
+    "claude-opus-4-8": "Claude Opus 4.8",
+    "claude-opus-4.8": "Claude Opus 4.8",
+    "claude-opus-4-7": "Claude Opus 4.7",
+    "claude-opus-4.7": "Claude Opus 4.7",
+    "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
+    "claude-sonnet-4": "Claude Sonnet 4",
+    # Hosted public model families currently represented in the ledger.
+    "deepseek-v4-pro": "DeepSeek V4 Pro",
+    "deepseek-v4-flash": "DeepSeek V4 Flash",
+    "deepseek-chat": "DeepSeek Chat",
+    "deepseek-reasoner": "DeepSeek Reasoner",
+    "deepseek-v3.2": "DeepSeek V3.2",
+    "glm-5.2": "GLM 5.2",
+    "glm-5.1": "GLM 5.1",
+    "glm-5": "GLM 5",
+    "glm-4.7": "GLM 4.7",
+    "glm-4.6": "GLM 4.6",
+    "qwen3.7-plus": "Qwen 3.7 Plus",
+    "qwen3.7-max": "Qwen 3.7 Max",
+    "qwen3.6-plus": "Qwen 3.6 Plus",
+    "qwen3.6-27b": "Qwen 3.6 27B",
+    "qwen3.6-35b-a3b": "Qwen 3.6 35B A3B",
+    "qwen3.5-35b-a3b": "Qwen 3.5 35B A3B",
+    "qwen3.5-9b": "Qwen 3.5 9B",
+    "qwen3:30b": "Qwen 3 30B",
+    "qwen3-coder-next": "Qwen 3 Coder Next",
+    "gemma-4-31b-it": "Gemma 4 31B IT",
+    "gemma-4-26b-a4b-it": "Gemma 4 26B A4B IT",
+    "gemma-4-26b-a4b-it-mxfp4": "Gemma 4 26B A4B IT",
+    "gemma-3-27b-it": "Gemma 3 27B IT",
+    "grok-4.20-reasoning": "Grok 4.20 Reasoning",
+    "grok-4.1": "Grok 4.1",
+    "grok-4-1-fast-reasoning": "Grok 4.1 Fast Reasoning",
+    "grok-code-fast-1": "Grok Code Fast 1",
+    "aion-2.0": "Aion 2.0",
+    "aion-1.0": "Aion 1.0",
+    "aion-1.0-mini": "Aion 1.0 Mini",
+}
+_PUBLIC_MODEL_LABELS = frozenset(_PUBLIC_MODEL_MAP.values())
+_PUBLIC_MODEL_LABEL_MAP = {label.casefold(): label for label in _PUBLIC_MODEL_LABELS}
+_QUOTA_IDENTITIES = (
+    *(("codex", provider, quota_name)
+      for provider in ("openai", "openai-codex")
+      for quota_name in ("five_hour", "week", "spark_five_hour", "spark_week")),
+    *(("claude_code", "anthropic", quota_name)
+      for quota_name in ("five_hour", "seven_day", "seven_day_fable")),
+    *((harness, "opencode-go", quota_name)
+      for harness in ("opencode", "opencode-go")
+      for quota_name in ("five_hour", "week", "month")),
 )
-_QUOTA_NAMES = (
-    "five_hour", "week", "spark_five_hour", "spark_week", "seven_day",
-    "seven_day_fable", "month",
-)
+_QUOTA_NAMES = tuple(sorted({identity[2] for identity in _QUOTA_IDENTITIES}))
 _SUBSCRIPTION_ORDER = {
     ("Codex", "5-hour"): 0,
     ("Codex", "Weekly"): 1,
@@ -189,16 +211,13 @@ def _public_provider_label(value: Any) -> str:
 def _public_model_label(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    # Provider-qualified public model IDs are common. Only the final path segment
-    # is considered, so no namespace, hostname, or filesystem prefix can escape.
+    # Accept only a finite set after stripping a provider namespace and the
+    # internal execution suffix. This cannot turn a family-shaped private ID
+    # into public output unless its basename is explicitly allowlisted.
     segment = value.rsplit("/", 1)[-1]
     segment = re.sub(r"(?:-sol)+$", "", segment, flags=re.IGNORECASE)
-    if _PUBLIC_MODEL_RE.fullmatch(segment) is None:
-        return None
-    for prefix, public_prefix, pattern in _PUBLIC_MODEL_PATTERNS:
-        if pattern.fullmatch(segment) is not None:
-            return public_prefix + segment[len(prefix):]
-    return None
+    normalized = segment.casefold()
+    return _PUBLIC_MODEL_MAP.get(normalized) or _PUBLIC_MODEL_LABEL_MAP.get(normalized)
 
 
 def _fact_total_tokens(row: dict[str, Any]) -> int:
@@ -238,9 +257,10 @@ def _cache_hit_pct(cache_read_tokens: int, prompt_tokens: int) -> float | None:
 def _bounded_groups(
     groups: dict[Any, dict[str, Any]], *, other_key: Any, maximum: int
 ) -> list[tuple[Any, dict[str, Any]]]:
-    other = groups.get(other_key)
+    positive = {key: value for key, value in groups.items() if value["total_tokens"] > 0}
+    other = positive.get(other_key)
     named = sorted(
-        ((key, value) for key, value in groups.items() if key != other_key),
+        ((key, value) for key, value in positive.items() if key != other_key),
         key=lambda item: (-item[1]["total_tokens"], item[0]),
     )
     needs_other = other is not None or len(named) > maximum
@@ -253,28 +273,57 @@ def _bounded_groups(
             _merge_comparison_groups(merged, other)
         for _key, group in dropped:
             _merge_comparison_groups(merged, group)
-        kept.append((other_key, merged))
+        if merged["total_tokens"] > 0:
+            kept.append((other_key, merged))
     return sorted(kept, key=lambda item: (-item[1]["total_tokens"], item[0]))
 
 
-def _build_provider_rows(facts: list[dict[str, Any]], projection_total: int) -> list[dict[str, Any]]:
+def _ranking_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Attribute corrections only through their canonical target identity."""
+    by_identity = {
+        (fact.get("source_namespace"), fact.get("source_event_id")): fact
+        for fact in facts
+    }
+    attributed: list[dict[str, Any]] = []
+    for fact in facts:
+        if fact.get("record_kind") != "correction":
+            attributed.append(fact)
+            continue
+        target = by_identity.get((
+            fact.get("corrects_source_namespace"),
+            fact.get("corrects_source_event_id"),
+        ))
+        if target is None:
+            continue
+        attributed.append({
+            **fact,
+            "provider": target.get("provider"),
+            "model_requested": target.get("model_requested"),
+            "model_reported": target.get("model_reported"),
+        })
+    return attributed
+
+
+def _build_provider_rows(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[str, dict[str, Any]] = {}
     for fact in facts:
         label = _public_provider_label(fact.get("provider"))
         _add_comparison_fact(groups.setdefault(label, _empty_comparison_group()), fact)
+    bounded = _bounded_groups(groups, other_key="Other", maximum=8)
+    ranking_total = sum(group["total_tokens"] for _label, group in bounded)
     return [
         {
             "label": label,
             "total_tokens": group["total_tokens"],
             "request_attempts": group["request_attempts"],
-            "share_pct": _share_pct(group["total_tokens"], projection_total),
+            "share_pct": _share_pct(group["total_tokens"], ranking_total),
             "measurement_confidence": _bucket_confidence(group["confidences"]),
         }
-        for label, group in _bounded_groups(groups, other_key="Other", maximum=8)
+        for label, group in bounded
     ]
 
 
-def _build_model_rows(facts: list[dict[str, Any]], projection_total: int) -> list[dict[str, Any]]:
+def _build_model_rows(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     other_key = ("Other", "Other")
     groups: dict[tuple[str, str], dict[str, Any]] = {}
     for fact in facts:
@@ -282,16 +331,18 @@ def _build_model_rows(facts: list[dict[str, Any]], projection_total: int) -> lis
         model = _public_model_label(fact.get("model_reported") or fact.get("model_requested"))
         key = (provider, model) if provider != "Other" and model is not None else other_key
         _add_comparison_fact(groups.setdefault(key, _empty_comparison_group()), fact)
+    bounded = _bounded_groups(groups, other_key=other_key, maximum=12)
+    ranking_total = sum(group["total_tokens"] for _key, group in bounded)
     return [
         {
             "provider_label": key[0],
             "model_label": key[1],
             "total_tokens": group["total_tokens"],
             "request_attempts": group["request_attempts"],
-            "share_pct": _share_pct(group["total_tokens"], projection_total),
+            "share_pct": _share_pct(group["total_tokens"], ranking_total),
             "measurement_confidence": _bucket_confidence(group["confidences"]),
         }
-        for key, group in _bounded_groups(groups, other_key=other_key, maximum=12)
+        for key, group in bounded
     ]
 
 
@@ -365,23 +416,23 @@ def _build_subscription_rows(
 
     latest: dict[tuple[str, str], dict[str, Any]] = {}
     for quota_name in _QUOTA_NAMES:
+        # The canonical query orders equal timestamps by ingestion sequence, so
+        # scanning one bounded result across all aliases preserves that tie-break.
+        # An older valid fact can fall outside this bound after enough unrelated
+        # or invalid facts, but the latest valid observation normally appears first.
         observations = query_sqlite_facts(
             target,
             fact_type="quota_observation_v1",
             filters={"quota_name": quota_name},
             occurred_or_observed_at_lt=_utc_text(generated),
             order="desc",
-            limit=_MAX_QUOTA_OBSERVATIONS_PER_NAME + 1,
+            limit=_MAX_QUOTA_OBSERVATIONS_PER_NAME,
         )
-        if len(observations) > _MAX_QUOTA_OBSERVATIONS_PER_NAME:
-            raise ValueError("quota query exceeds the bounded public projection observation limit")
         for observation in observations:
             identity = _subscription_identity(observation)
             if identity is None:
                 continue
-            prior = latest.get(identity)
-            if prior is None or _event_datetime(observation["observed_at"]) > _event_datetime(prior["observed_at"]):
-                latest[identity] = observation
+            latest.setdefault(identity, observation)
 
     rows: list[dict[str, Any]] = []
     for identity in sorted(latest, key=_SUBSCRIPTION_ORDER.__getitem__):
@@ -504,6 +555,7 @@ def build_unified_public_projection(
         "latest_total_tokens": latest["total_tokens"],
         "latest_cache_hit_pct": latest["cache_hit_pct"],
     }
+    ranking_facts = _ranking_facts(facts)
     payload = {
         "kind": PUBLIC_PROJECTION_KIND,
         "schema_version": 2,
@@ -511,8 +563,8 @@ def build_unified_public_projection(
         "generated_at": generated_at,
         "bucket_minutes": 60,
         "rows": buckets,
-        "provider_rows": _build_provider_rows(facts, summary["total_tokens"]),
-        "model_rows": _build_model_rows(facts, summary["total_tokens"]),
+        "provider_rows": _build_provider_rows(ranking_facts),
+        "model_rows": _build_model_rows(ranking_facts),
         "subscription_rows": _build_subscription_rows(quota_ledger_path, generated),
         "summary": summary,
     }
@@ -555,6 +607,13 @@ def _require_utc_timestamp(value: Any, location: str) -> datetime:
     if normalized != value or not value.endswith("Z"):
         raise ValueError(f"{location} must be a canonical UTC timestamp")
     return _event_datetime(value)
+
+
+def _serialize_public_projection(payload: dict[str, Any]) -> bytes:
+    """Serialize exactly as the atomic writer does, including final newline."""
+    return (
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
 
 
 def validate_unified_public_projection(payload: Any) -> None:
@@ -611,6 +670,8 @@ def validate_unified_public_projection(payload: Any) -> None:
         if row["label"] not in _PUBLIC_PROVIDER_LABELS:
             raise ValueError(f"provider_rows[{index}].label is invalid")
         _require_safe_int(row["total_tokens"], f"provider_rows[{index}].total_tokens")
+        if row["total_tokens"] <= 0:
+            raise ValueError(f"provider_rows[{index}].total_tokens must be positive")
         _require_safe_int(
             row["request_attempts"], f"provider_rows[{index}].request_attempts", nonnegative=True
         )
@@ -636,6 +697,8 @@ def validate_unified_public_projection(payload: Any) -> None:
         elif _public_model_label(model_label) != model_label:
             raise ValueError(f"model_rows[{index}].model_label is invalid")
         _require_safe_int(row["total_tokens"], f"model_rows[{index}].total_tokens")
+        if row["total_tokens"] <= 0:
+            raise ValueError(f"model_rows[{index}].total_tokens must be positive")
         _require_safe_int(
             row["request_attempts"], f"model_rows[{index}].request_attempts", nonnegative=True
         )
@@ -671,10 +734,19 @@ def validate_unified_public_projection(payload: Any) -> None:
             raise ValueError(f"subscription_rows[{index}].measurement_confidence is invalid")
         if row["status"] not in _SUBSCRIPTION_STATUS_VALUES:
             raise ValueError(f"subscription_rows[{index}].status is invalid")
-        if row["status"] == "unavailable" and row["used_pct"] is not None:
-            raise ValueError("unavailable subscription rows must have null used_pct")
-        if row["status"] != "unavailable" and row["used_pct"] is None:
-            raise ValueError("available subscription rows must have used_pct")
+        if row["status"] == "unavailable":
+            if row["used_pct"] is not None or row["remaining_pct"] is not None:
+                raise ValueError("unavailable subscription rows must have null percentages")
+        elif row["used_pct"] is None or row["remaining_pct"] is None:
+            raise ValueError("available subscription rows must have both percentages")
+        if (
+            row["used_pct"] is not None
+            and row["remaining_pct"] is not None
+            and not math.isclose(
+                row["used_pct"] + row["remaining_pct"], 100.0, rel_tol=0.0, abs_tol=1e-9
+            )
+        ):
+            raise ValueError("subscription used_pct and remaining_pct must sum to 100")
     if len(set(subscription_identities)) != len(subscription_identities):
         raise ValueError("subscription_rows identities must be unique")
     if subscription_identities != sorted(subscription_identities, key=_SUBSCRIPTION_ORDER.__getitem__):
@@ -705,17 +777,13 @@ def validate_unified_public_projection(payload: Any) -> None:
         ("provider_rows", provider_rows),
         ("model_rows", model_rows),
     ):
-        if sum(row["total_tokens"] for row in comparison_rows) != summary["total_tokens"]:
-            raise ValueError(f"{location} total_tokens do not match summary")
-        if sum(row["request_attempts"] for row in comparison_rows) != summary["request_attempts"]:
-            raise ValueError(f"{location} request_attempts do not match summary")
+        ranking_total = sum(row["total_tokens"] for row in comparison_rows)
         for index, row in enumerate(comparison_rows):
-            expected_share = _share_pct(row["total_tokens"], summary["total_tokens"])
+            expected_share = _share_pct(row["total_tokens"], ranking_total)
             if row["share_pct"] != expected_share:
                 raise ValueError(f"{location}[{index}].share_pct does not match total_tokens")
 
-    compact = json.dumps(top, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    if len(compact) >= _MAX_PUBLIC_PROJECTION_BYTES:
+    if len(_serialize_public_projection(top)) >= _MAX_PUBLIC_PROJECTION_BYTES:
         raise ValueError("public projection must remain smaller than 1 MiB")
 
 
@@ -750,14 +818,14 @@ def write_unified_public_projection(
         now=now,
     )
     validate_unified_public_projection(payload)
-    serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    serialized = _serialize_public_projection(payload)
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
     )
     temporary = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+        with os.fdopen(descriptor, "wb") as stream:
             descriptor = -1
             stream.write(serialized)
             stream.flush()

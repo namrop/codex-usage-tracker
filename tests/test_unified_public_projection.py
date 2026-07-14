@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -232,12 +232,18 @@ def test_model_rows_prefer_reported_sanitize_public_families_and_merge_bounded_o
             model_requested="gpt-hermes-internal", input_tokens=70,
         ),
     ]
+    public_models = [
+        "gpt-5.6", "gpt-5.5", "gpt-5.5-fast", "gpt-5.3-codex",
+        "claude-sonnet-5", "claude-fable-5", "claude-opus-4-8",
+        "claude-opus-4-7", "claude-haiku-4-5-20251001", "deepseek-v4-pro",
+        "deepseek-chat", "glm-5.2", "qwen3.6-plus",
+    ]
     facts.extend(
         _usage(
-            f"gpt-{index}", "2026-07-13T03:10:00Z", provider="openai",
-            model_requested=f"gpt-5-{index}", input_tokens=20 - index,
+            f"public-{index}", "2026-07-13T03:10:00Z", provider="openai",
+            model_requested=model, input_tokens=20 - index,
         )
-        for index in range(13)
+        for index, model in enumerate(public_models)
     )
     append_sqlite_facts(ledger, facts, fact_type="usage_event_v1")
 
@@ -249,11 +255,11 @@ def test_model_rows_prefer_reported_sanitize_public_families_and_merge_bounded_o
         fact["input_tokens"] for fact in facts
     )
     assert {
-        "provider_label": "OpenAI", "model_label": "GPT-5.2-codex", "total_tokens": 100,
+        "provider_label": "OpenAI", "model_label": "GPT-5.2 Codex", "total_tokens": 100,
         "request_attempts": 1, "share_pct": 19.2, "measurement_confidence": "exact",
     } in rows
     assert any(
-        row["provider_label"] == "Claude Code" and row["model_label"] == "Claude-sonnet-4"
+        row["provider_label"] == "Claude Code" and row["model_label"] == "Claude Sonnet 4"
         for row in rows
     )
     assert sum(row["model_label"] == "Other" for row in rows) == 1
@@ -583,3 +589,261 @@ def test_write_public_usage_projection_cli_uses_separate_command(tmp_path, monke
         "quota_ledger_path": "/private/quota.sqlite3", "hours": 24, "source": "namrop-test",
     }
     assert capsys.readouterr().out.strip() == f"public_projection: {tmp_path / 'public.json'}"
+
+
+@pytest.mark.parametrize(("private_name", "public_label"), [
+    ("gpt-5.6", "GPT-5.6"),
+    ("PRIVATE.HOST/GPT-5.5-SOL", "GPT-5.5"),
+    ("gpt-5.5-fast", "GPT-5.5 Fast"),
+    ("gpt-5.3-codex", "GPT-5.3 Codex"),
+    ("claude-sonnet-5", "Claude Sonnet 5"),
+    ("claude-fable-5", "Claude Fable 5"),
+    ("claude-opus-4-8", "Claude Opus 4.8"),
+    ("claude-opus-4.8", "Claude Opus 4.8"),
+    ("claude-opus-4-7", "Claude Opus 4.7"),
+    ("claude-opus-4.7", "Claude Opus 4.7"),
+    ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
+    ("deepseek-v4-pro", "DeepSeek V4 Pro"),
+    ("deepseek-chat", "DeepSeek Chat"),
+    ("glm-5.2", "GLM 5.2"),
+    ("glm-5.1", "GLM 5.1"),
+    ("qwen/qwen3.6-plus", "Qwen 3.6 Plus"),
+    ("gemma-4-31b-it", "Gemma 4 31B IT"),
+    ("grok-4.20-reasoning", "Grok 4.20 Reasoning"),
+    ("aion-2.0", "Aion 2.0"),
+])
+def test_model_sanitizer_uses_only_finite_exact_normalized_mappings(private_name, public_label):
+    assert projection_module._public_model_label(private_name) == public_label
+    assert projection_module._public_model_label(public_label) == public_label
+
+
+@pytest.mark.parametrize("private_name", [
+    "private.host/gpt-5-8675309",
+    "gpt-5-8675309",
+    "private.host/claude-opus-4-8675309",
+    "qwen-8675309",
+])
+def test_model_sanitizer_maps_malicious_numeric_family_names_to_other(tmp_path, private_name):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage(
+            "malicious", "2026-07-13T03:01:00Z", provider="openai",
+            model_requested=private_name, input_tokens=50,
+        ),
+    ], fact_type="usage_event_v1")
+
+    assert build_unified_public_projection(ledger, hours=1, now=NOW)["model_rows"] == [{
+        "provider_label": "Other", "model_label": "Other", "total_tokens": 50,
+        "request_attempts": 1, "share_pct": 100.0, "measurement_confidence": "exact",
+    }]
+
+
+def test_subscription_selection_handles_more_than_1000_historical_observations(tmp_path):
+    usage = tmp_path / "usage.sqlite3"
+    quota = tmp_path / "quota.sqlite3"
+    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    observations = [
+        _quota(
+            f"history-{index}",
+            observed_at=(start + timedelta(minutes=index)).isoformat().replace("+00:00", "Z"),
+            used_value=str(index % 70),
+        )
+        for index in range(1001)
+    ]
+    observations.append(_quota("latest", used_value="75", remaining_value="25"))
+    append_sqlite_facts(quota, observations, fact_type="quota_observation_v1")
+
+    rows = build_unified_public_projection(
+        usage, quota_ledger_path=quota, hours=1, now=NOW
+    )["subscription_rows"]
+
+    assert len(rows) == 1
+    assert (rows[0]["service"], rows[0]["window"], rows[0]["used_pct"]) == (
+        "Codex", "Weekly", 75.0,
+    )
+
+
+def test_correction_rankings_use_corrected_event_dimensions_not_correction_dimensions(tmp_path):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage(
+            "openai-original", "2026-07-13T03:10:00Z", provider="openai",
+            model_requested="gpt-5.6", input_tokens=100,
+        ),
+        _usage(
+            "anthropic-original", "2026-07-13T03:11:00Z", provider="anthropic",
+            model_requested="claude-sonnet-5", input_tokens=80,
+        ),
+        _usage(
+            "mismatched-correction", "2026-07-13T03:12:00Z", provider="anthropic",
+            model_requested="claude-sonnet-5", record_kind="correction", input_tokens=-40,
+            corrects_source_namespace="private:source",
+            corrects_source_event_id="openai-original",
+        ),
+    ], fact_type="usage_event_v1")
+
+    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+
+    assert [(row["label"], row["total_tokens"], row["share_pct"]) for row in payload["provider_rows"]] == [
+        ("Claude Code", 80, 57.1), ("OpenAI", 60, 42.9),
+    ]
+    assert [
+        (row["provider_label"], row["model_label"], row["total_tokens"])
+        for row in payload["model_rows"]
+    ] == [
+        ("Claude Code", "Claude Sonnet 5", 80),
+        ("OpenAI", "GPT-5.6", 60),
+    ]
+
+
+def test_unresolved_corrections_apply_hourly_but_are_excluded_from_rankings(tmp_path):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage(
+            "known", "2026-07-13T03:10:00Z", provider="openai",
+            model_requested="gpt-5.6", input_tokens=50,
+        ),
+        _usage(
+            "missing-attribution", "2026-07-13T03:12:00Z", provider="private-provider",
+            model_requested="private.host/gpt-5-8675309", record_kind="correction",
+            input_tokens=-100, corrects_source_namespace="private:missing",
+            corrects_source_event_id="not-queried",
+        ),
+    ], fact_type="usage_event_v1")
+
+    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+
+    assert payload["summary"]["total_tokens"] == -50
+    assert payload["provider_rows"] == [{
+        "label": "OpenAI", "total_tokens": 50, "request_attempts": 1,
+        "share_pct": 100.0, "measurement_confidence": "exact",
+    }]
+    assert payload["model_rows"] == [{
+        "provider_label": "OpenAI", "model_label": "GPT-5.6", "total_tokens": 50,
+        "request_attempts": 1, "share_pct": 100.0, "measurement_confidence": "exact",
+    }]
+
+
+def test_rankings_omit_nonpositive_groups_and_use_positive_ranking_denominator(tmp_path):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage(
+            "overcorrected", "2026-07-13T03:10:00Z", provider="openai",
+            model_requested="gpt-5.6", input_tokens=50,
+        ),
+        _usage(
+            "positive", "2026-07-13T03:11:00Z", provider="anthropic",
+            model_requested="claude-sonnet-5", input_tokens=100,
+        ),
+        _usage(
+            "overcorrection", "2026-07-13T03:12:00Z", provider="private-provider",
+            model_requested="private.host/gpt-5-8675309", record_kind="correction",
+            input_tokens=-80, corrects_source_namespace="private:source",
+            corrects_source_event_id="overcorrected",
+        ),
+    ], fact_type="usage_event_v1")
+
+    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+
+    assert payload["summary"]["total_tokens"] == 70
+    assert [(row["label"], row["total_tokens"], row["share_pct"]) for row in payload["provider_rows"]] == [
+        ("Claude Code", 100, 100.0),
+    ]
+    assert [(row["model_label"], row["total_tokens"], row["share_pct"]) for row in payload["model_rows"]] == [
+        ("Claude Sonnet 5", 100, 100.0),
+    ]
+
+
+def test_validator_rejects_noncomplementary_or_partly_unavailable_subscription_percentages(tmp_path):
+    usage = tmp_path / "usage.sqlite3"
+    quota = tmp_path / "quota.sqlite3"
+    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
+    append_sqlite_facts(quota, [
+        _quota("available", used_value="30", remaining_value="70"),
+        _quota("unavailable", quota_name="spark_week", used_value=None, remaining_value=None),
+    ], fact_type="quota_observation_v1")
+    payload = build_unified_public_projection(
+        usage, quota_ledger_path=quota, hours=1, now=NOW
+    )
+    available, unavailable = payload["subscription_rows"]
+
+    bad_available = json.loads(json.dumps(payload))
+    bad_available["subscription_rows"][0] = {**available, "remaining_pct": 69.7}
+    with pytest.raises(ValueError, match="sum to 100"):
+        validate_unified_public_projection(bad_available)
+
+    bad_unavailable = json.loads(json.dumps(payload))
+    bad_unavailable["subscription_rows"][1] = {**unavailable, "remaining_pct": 100.0}
+    with pytest.raises(ValueError, match="null percentages"):
+        validate_unified_public_projection(bad_unavailable)
+
+
+def test_validator_rejects_subscription_percentages_outside_tiny_complement_tolerance(tmp_path):
+    usage = tmp_path / "usage.sqlite3"
+    quota = tmp_path / "quota.sqlite3"
+    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
+    append_sqlite_facts(quota, [_quota("available")], fact_type="quota_observation_v1")
+    payload = build_unified_public_projection(
+        usage, quota_ledger_path=quota, hours=1, now=NOW
+    )
+    payload["subscription_rows"][0].update(used_pct=30.0, remaining_pct=70.09)
+
+    with pytest.raises(ValueError, match="sum to 100"):
+        validate_unified_public_projection(payload)
+
+
+def test_subscription_alias_tie_uses_later_ingestion_sequence(tmp_path):
+    usage = tmp_path / "usage.sqlite3"
+    quota = tmp_path / "quota.sqlite3"
+    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
+    append_sqlite_facts(quota, [
+        _quota("openai-first", provider="openai", used_value="20", remaining_value="80"),
+        _quota(
+            "codex-alias-later", provider="openai-codex",
+            used_value="75", remaining_value="25",
+        ),
+    ], fact_type="quota_observation_v1")
+
+    rows = build_unified_public_projection(
+        usage, quota_ledger_path=quota, hours=1, now=NOW
+    )["subscription_rows"]
+
+    assert len(rows) == 1
+    assert rows[0]["used_pct"] == 75.0
+
+
+def test_subscription_identity_matching_preserves_casefold_behavior(tmp_path):
+    usage = tmp_path / "usage.sqlite3"
+    quota = tmp_path / "quota.sqlite3"
+    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
+    append_sqlite_facts(quota, [
+        _quota(
+            "uppercase-identity", harness="CODEX", provider="OPENAI",
+            used_value="65", remaining_value="35",
+        ),
+    ], fact_type="quota_observation_v1")
+
+    rows = build_unified_public_projection(
+        usage, quota_ledger_path=quota, hours=1, now=NOW
+    )["subscription_rows"]
+
+    assert len(rows) == 1
+    assert (rows[0]["service"], rows[0]["window"], rows[0]["used_pct"]) == (
+        "Codex", "Weekly", 65.0,
+    )
+
+
+def test_size_guard_measures_pretty_serialization_actually_written(tmp_path, monkeypatch):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [], fact_type="usage_event_v1")
+    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+    compact_size = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    pretty_size = len(
+        (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    )
+    assert compact_size < pretty_size
+    monkeypatch.setattr(projection_module, "_MAX_PUBLIC_PROJECTION_BYTES", compact_size + 1)
+
+    with pytest.raises(ValueError, match="smaller than 1 MiB"):
+        validate_unified_public_projection(payload)
