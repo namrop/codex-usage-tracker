@@ -68,6 +68,11 @@ _PRIVATE_API_SQLITE_LIMIT = 10_000
 _PRIVATE_API_MAX_ROWS = 100_000
 _PRIVATE_API_MAX_JSONL_BYTES = 128 * 1024 * 1024
 _MAX_PRIVATE_API_DAYS = 36_500
+_MAX_UNIFIED_SERIES_HOURS = 168
+_UNIFIED_MODEL_SERIES_LIMIT = 5
+_ADDITIVE_TOKEN_FIELDS = (
+    "input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens",
+)
 
 
 class UnsupportedLedgerSuffix(ValueError):
@@ -115,6 +120,7 @@ def _private_facts(
     fact_type: str,
     filters: dict[str, str],
     cutoff: datetime | None = None,
+    before: datetime | None = None,
     order: str = "asc",
 ) -> list[dict[str, Any]]:
     """Dispatch canonical private reads by explicit suffix and preserve JSONL."""
@@ -129,6 +135,8 @@ def _private_facts(
         timestamp_field = "observed_at" if fact_type == "quota_observation_v1" else "occurred_at"
         if cutoff is not None:
             rows = [row for row in rows if _fact_datetime(row.get(timestamp_field)) >= cutoff]
+        if before is not None:
+            rows = [row for row in rows if _fact_datetime(row.get(timestamp_field)) < before]
         if len(rows) > _PRIVATE_API_MAX_ROWS:
             raise PrivateLedgerQueryTooLarge("ledger query exceeds private API row limit")
         rows.sort(
@@ -138,6 +146,7 @@ def _private_facts(
         return rows
     if suffix in _SQLITE_LEDGER_SUFFIXES:
         lower_bound = cutoff.isoformat() if cutoff is not None else None
+        upper_bound = before.isoformat() if before is not None else None
         # One SELECT/fetchall call observes one SQLite read snapshot. Reopening
         # connections between OFFSET pages would permit concurrent appends to
         # duplicate or omit facts in an aggregate response.
@@ -146,6 +155,7 @@ def _private_facts(
             fact_type=fact_type,
             filters=filters,
             occurred_or_observed_at_gte=lower_bound,
+            occurred_or_observed_at_lt=upper_bound,
             order=order,
             limit=_PRIVATE_API_MAX_ROWS + 1,
         )
@@ -172,6 +182,129 @@ def _days_argument() -> tuple[datetime | None, tuple[Any, int] | None]:
     except OverflowError:
         return None, (jsonify({"error": "days is outside the supported range"}), 400)
     return cutoff, None
+
+
+def _hours_argument() -> tuple[int | None, tuple[Any, int] | None]:
+    hours_text = request.args.get("hours")
+    if hours_text is None:
+        return None, None
+    if request.args.get("days") is not None:
+        return None, (jsonify({"error": "days and hours are mutually exclusive"}), 400)
+    try:
+        hours = int(hours_text)
+    except ValueError:
+        return None, (jsonify({"error": "hours must be an integer"}), 400)
+    if not 1 <= hours <= _MAX_UNIFIED_SERIES_HOURS:
+        return None, (
+            jsonify({"error": f"hours must be between 1 and {_MAX_UNIFIED_SERIES_HOURS}"}),
+            400,
+        )
+    return hours, None
+
+
+def _iso_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _accounted_tokens(row: dict[str, Any]) -> int:
+    return sum(int(row.get(field) or 0) for field in _ADDITIVE_TOKEN_FIELDS)
+
+
+def _build_unified_time_series(
+    rows: list[dict[str, Any]],
+    *,
+    window_start: datetime,
+    window_end: datetime,
+    generated_at: datetime,
+) -> dict[str, Any]:
+    bucket_count = int((window_end - window_start).total_seconds() // 3600)
+    bucket_starts = [window_start + timedelta(hours=index) for index in range(bucket_count)]
+    model_buckets: dict[tuple[str, str], list[int]] = {}
+    comparison = {
+        "codex": [0] * bucket_count,
+        "claude_code": [0] * bucket_count,
+    }
+    excluded_tokens = 0
+
+    for row in rows:
+        occurred_at = _fact_datetime(row.get("occurred_at"))
+        bucket_index = int((occurred_at - window_start).total_seconds() // 3600)
+        if bucket_index < 0 or bucket_index >= bucket_count:
+            continue
+        total = _accounted_tokens(row)
+        provider = str(row.get("provider") or "unknown")
+        model = str(row.get("model_reported") or row.get("model_requested") or "unknown")
+        values = model_buckets.setdefault((provider, model), [0] * bucket_count)
+        values[bucket_index] += total
+
+        is_codex = provider == "openai-codex"
+        is_claude_code = row.get("harness") == "claude_code"
+        if is_codex:
+            comparison["codex"][bucket_index] += total
+        if is_claude_code:
+            comparison["claude_code"][bucket_index] += total
+        if not is_codex and not is_claude_code:
+            excluded_tokens += total
+
+    ranked_models = sorted(
+        model_buckets.items(),
+        key=lambda item: (-sum(item[1]), item[0][0], item[0][1]),
+    )
+    named_models = ranked_models[:_UNIFIED_MODEL_SERIES_LIMIT]
+    remaining_models = ranked_models[_UNIFIED_MODEL_SERIES_LIMIT:]
+    model_series = [
+        {
+            "provider": provider,
+            "model": model,
+            "label": f"{model} · {provider}",
+            "total_tokens": sum(values),
+            "values": values,
+        }
+        for (provider, model), values in named_models
+    ]
+    other_model_series = None
+    if remaining_models:
+        other_values = [
+            sum(values[index] for _key, values in remaining_models)
+            for index in range(bucket_count)
+        ]
+        other_model_series = {
+            "label": "Other models",
+            "member_count": len(remaining_models),
+            "total_tokens": sum(other_values),
+            "values": other_values,
+        }
+
+    comparison_series = [
+        {
+            "key": "codex",
+            "label": "OpenAI Codex subscription",
+            "harness": None,
+            "provider": "openai-codex",
+            "total_tokens": sum(comparison["codex"]),
+            "values": comparison["codex"],
+        },
+        {
+            "key": "claude_code",
+            "label": "Claude Code",
+            "harness": "claude_code",
+            "provider": None,
+            "total_tokens": sum(comparison["claude_code"]),
+            "values": comparison["claude_code"],
+        },
+    ]
+    return {
+        "generated_at": _iso_z(generated_at),
+        "bucket_minutes": 60,
+        "bucket_count": bucket_count,
+        "window_start": _iso_z(window_start),
+        "window_end": _iso_z(window_end),
+        "bucket_starts": [_iso_z(value) for value in bucket_starts],
+        "model_series": model_series,
+        "other_model_series": other_model_series,
+        "comparison_series": comparison_series,
+        "comparison_excluded_tokens": excluded_tokens,
+    }
 
 
 def _load_rows(ledger_path: str) -> List[Dict[str, Any]]:
@@ -413,7 +546,19 @@ def create_app(
     def api_unified_usage():
         if not resolved_unified_usage:
             return jsonify({"error": "unified usage ledger is not configured"}), 404
-        cutoff, days_error = _days_argument()
+        hours, hours_error = _hours_argument()
+        if hours_error is not None:
+            return hours_error
+        generated_at = datetime.now(timezone.utc)
+        series_start = None
+        series_end = None
+        if hours is not None:
+            series_end = generated_at.replace(minute=0, second=0, microsecond=0)
+            series_start = series_end - timedelta(hours=hours)
+            cutoff = series_start
+            days_error = None
+        else:
+            cutoff, days_error = _days_argument()
         if days_error is not None:
             return days_error
         typed_filters = {
@@ -427,6 +572,7 @@ def create_app(
                 fact_type="usage_event_v1",
                 filters=typed_filters,
                 cutoff=cutoff,
+                before=series_end,
             )
         except UnsupportedLedgerSuffix:
             return jsonify({"error": "unsupported ledger suffix"}), 400
@@ -495,20 +641,29 @@ def create_app(
             "reconstructed_events": sum(row.get("measurement_confidence") == "reconstructed" for row in rows),
             "reconstructed_calls": sum(int(row.get("reconstructed_call_count") or 0) for row in rows),
         }
-        return jsonify(
-            {
-                "totals": totals,
-                "coverage": coverage,
-                "window": {
-                    "first_occurred_at": rows[0].get("occurred_at") if rows else None,
-                    "last_occurred_at": rows[-1].get("occurred_at") if rows else None,
-                    "event_count": len(rows),
-                    "days": int(request.args["days"]) if "days" in request.args else None,
-                },
-                "by_harness": sorted(by_harness.values(), key=lambda item: item["harness"]),
-                "by_provider_model": sorted(grouped.values(), key=lambda item: (item["provider"], item["model"])),
-            }
-        )
+        window_payload: dict[str, Any] = {
+            "first_occurred_at": rows[0].get("occurred_at") if rows else None,
+            "last_occurred_at": rows[-1].get("occurred_at") if rows else None,
+            "event_count": len(rows),
+            "days": int(request.args["days"]) if "days" in request.args else None,
+        }
+        if hours is not None:
+            window_payload["hours"] = hours
+        payload: dict[str, Any] = {
+            "totals": totals,
+            "coverage": coverage,
+            "window": window_payload,
+            "by_harness": sorted(by_harness.values(), key=lambda item: item["harness"]),
+            "by_provider_model": sorted(grouped.values(), key=lambda item: (item["provider"], item["model"])),
+        }
+        if series_start is not None and series_end is not None:
+            payload["time_series"] = _build_unified_time_series(
+                rows,
+                window_start=series_start,
+                window_end=series_end,
+                generated_at=generated_at,
+            )
+        return jsonify(payload)
 
     @app.route("/api/subscriptions")
     def api_subscriptions():

@@ -279,7 +279,12 @@ the corresponding `create_app` arguments):
 - `GET /api/unified-usage` supports `provider`, `harness`, `purpose`,
   `model_requested`, and `days`; it returns token/request-cost totals, selected
   window metadata, harness and provider/model groups, and exact/reconstructed
-  coverage;
+  coverage. Supplying `hours=1..168` instead of `days` aligns the response to
+  complete UTC hours and adds zero-filled chart series. The model chart uses
+  reported model when available (requested model otherwise), keeps the five
+  largest provider/model pairs, and rolls the rest into `Other models`. The
+  comparison chart defines OpenAI Codex subscription traffic by
+  `provider=openai-codex` and Claude Code traffic by `harness=claude_code`;
 - `GET /api/subscriptions` supports `provider`, `harness`, and `quota_name`; it
   returns the latest observation per subscription window and normalized
   observation history;

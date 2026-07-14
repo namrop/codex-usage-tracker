@@ -43,6 +43,8 @@
       body {
         margin: 0;
         min-height: 100vh;
+        max-width: 100%;
+        overflow-x: hidden;
       }
 
       body {
@@ -60,6 +62,21 @@
         margin: 0 auto;
         display: grid;
         gap: 16px;
+      }
+
+      .shell,
+      .title-panel,
+      .card,
+      .card-title,
+      .usage-chart-layout,
+      .chart-wrap {
+        min-width: 0;
+        max-width: 100%;
+      }
+
+      canvas {
+        display: block;
+        max-width: 100%;
       }
 
       .hero {
@@ -260,6 +277,13 @@
         font-size: 0.94rem;
       }
 
+      .subtitle,
+      .caption,
+      .chart-summary {
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+
       .toolbar {
         display: flex;
         gap: 8px;
@@ -306,6 +330,77 @@
 
       .chart-wrap.token-wide {
         min-height: 390px;
+      }
+
+      .unified-chart-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 28px;
+        margin: 30px 0 26px;
+      }
+
+      .usage-chart {
+        min-width: 0;
+        padding-top: 18px;
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .usage-chart h3 {
+        margin-top: 0;
+      }
+
+      .usage-chart-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 210px;
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .chart-wrap.unified {
+        min-height: 310px;
+      }
+
+      .direct-labels {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .direct-label {
+        display: grid;
+        grid-template-columns: 20px minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .direct-label strong {
+        color: var(--text);
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+
+      .chart-summary {
+        min-height: 1.25em;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .chart-data {
+        margin-top: 12px;
+      }
+
+      .chart-data summary {
+        padding: 8px 0;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .chart-data table {
+        min-width: 620px;
       }
 
       .detail-grid.token-grid {
@@ -443,7 +538,8 @@
         .hero,
         .detail-grid,
         .detail-grid.token-grid,
-        .panel-grid {
+        .panel-grid,
+        .unified-chart-grid {
           grid-template-columns: 1fr;
         }
 
@@ -474,6 +570,19 @@
 
         .toolbar {
           justify-content: flex-start;
+        }
+
+        .usage-chart-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .chart-wrap.unified {
+          min-height: 280px;
+        }
+
+        .direct-labels {
+          display: grid;
+          grid-template-columns: 1fr;
         }
 
         .chart-wrap.week {
@@ -513,6 +622,38 @@
             <div class="metric"><div class="label">Total tokens</div><div class="value color-token" id="unifiedTotalTokens">—</div><div class="hint" id="unifiedWindow">—</div></div>
             <div class="metric"><div class="label">Events</div><div class="value" id="unifiedEvents">—</div><div class="hint" id="unifiedCoverage">—</div></div>
             <div class="metric"><div class="label">Request estimates</div><div class="value" id="unifiedEstimatedCost">—</div><div class="hint" id="unifiedActualCost">Actual request cost: —</div></div>
+          </div>
+          <div class="unified-chart-grid">
+            <section class="usage-chart" aria-labelledby="modelTokenTitle">
+              <h3 id="modelTokenTitle">Tokens across provider models</h3>
+              <p class="caption">Hourly accounted tokens by reported model when available, otherwise requested model. The five largest series remain visible; the rest roll into Other.</p>
+              <p id="modelTokenSummary" class="chart-summary" aria-live="polite">Loading model token series…</p>
+              <div class="usage-chart-layout">
+                <div class="chart-wrap unified">
+                  <canvas id="modelTokenChart" aria-label="Stacked hourly token usage across provider and model pairs"></canvas>
+                </div>
+                <div id="modelTokenLabels" class="direct-labels" aria-label="Model series totals"></div>
+              </div>
+              <details class="chart-data">
+                <summary>Hourly model data</summary>
+                <div class="table-wrap"><table><caption>Accounted tokens per complete UTC hour by provider and model</caption><thead><tr id="modelTokenTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="modelTokenTableBody"></tbody></table></div>
+              </details>
+            </section>
+            <section class="usage-chart" aria-labelledby="codexClaudeTitle">
+              <h3 id="codexClaudeTitle">OpenAI Codex subscription vs Claude Code</h3>
+              <p class="caption">Codex is canonical traffic billed through <span class="mono">openai-codex</span>. Claude Code is canonical <span class="mono">claude_code</span> harness traffic.</p>
+              <p id="codexClaudeSummary" class="chart-summary" aria-live="polite">Loading harness comparison…</p>
+              <div class="usage-chart-layout">
+                <div class="chart-wrap unified">
+                  <canvas id="codexClaudeChart" aria-label="Hourly accounted token comparison for OpenAI Codex subscription and Claude Code"></canvas>
+                </div>
+                <div id="codexClaudeLabels" class="direct-labels" aria-label="Codex and Claude Code totals"></div>
+              </div>
+              <details class="chart-data">
+                <summary>Hourly comparison data</summary>
+                <div class="table-wrap"><table><caption>Accounted tokens per complete UTC hour for OpenAI Codex subscription and Claude Code</caption><thead><tr id="codexClaudeTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="codexClaudeTableBody"></tbody></table></div>
+              </details>
+            </section>
           </div>
           <h3>By harness</h3>
           <div class="table-wrap"><table><thead><tr><th>Harness</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>Estimated USD</th><th>Actual USD</th></tr></thead><tbody id="harnessUsageBody"></tbody></table></div>
@@ -826,6 +967,16 @@
         reasoning: getCss("--spark-weekly"),
       };
 
+      const UNIFIED_MODEL_COLORS = [
+        SERIES.token,
+        SERIES.sparkSession,
+        SERIES.weekly,
+        SERIES.session,
+        SERIES.input,
+        SERIES.cacheWrite,
+      ];
+      const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
       const state = {
         window: 168,
         trend: [],
@@ -865,6 +1016,8 @@
       };
 
       const canvases = {
+        modelToken: document.getElementById("modelTokenChart"),
+        codexClaude: document.getElementById("codexClaudeChart"),
         week: document.getElementById("weekChart"),
         session: document.getElementById("sessionChart"),
         weekly: document.getElementById("weeklyChart"),
@@ -876,6 +1029,8 @@
         cacheHit: document.getElementById("cacheHitChart"),
       };
 
+      let modelTokenChart;
+      let codexClaudeChart;
       let weekChart;
       let sessionChart;
       let weeklyChart;
@@ -970,6 +1125,29 @@
           hour: "2-digit",
           minute: "2-digit",
         });
+      }
+
+      function formatUtcHour(ts, compact = false) {
+        if (!ts) return "—";
+        const dt = new Date(ts);
+        if (!Number.isFinite(dt.getTime())) return "—";
+        if (compact) {
+          return `${dt.toLocaleString([], {
+            timeZone: "UTC",
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            hour12: false,
+          }).replace(",", " ·")}h`;
+        }
+        return `${dt.toLocaleString([], {
+          timeZone: "UTC",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        })} UTC`;
       }
 
       function resetTimestamp(value) {
@@ -1238,6 +1416,159 @@
             },
           },
         };
+      }
+
+      function unifiedTokenChartOptions({ stacked = false } = {}) {
+        return {
+          maintainAspectRatio: false,
+          responsive: true,
+          interaction: { mode: "index", intersect: false },
+          animation: REDUCED_MOTION ? false : { duration: 260 },
+          elements: { line: { borderWidth: 2.4 }, point: { radius: 0, hitRadius: 10, hoverRadius: 3 } },
+          scales: {
+            y: {
+              beginAtZero: true,
+              stacked,
+              border: { color: SERIES.line },
+              ticks: { color: SERIES.muted, maxTicksLimit: 5, callback: (value) => compactIntFormat(value) },
+              grid: { color: "rgba(0, 179, 164, 0.08)" },
+            },
+            x: {
+              stacked,
+              border: { color: SERIES.line },
+              ticks: {
+                color: SERIES.muted,
+                autoSkip: true,
+                maxRotation: 0,
+                minRotation: 0,
+                align: "inner",
+                maxTicksLimit: window.innerWidth <= 640 ? 4 : 7,
+              },
+              grid: { display: false },
+            },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              displayColors: false,
+              backgroundColor: "rgba(11, 15, 26, 0.96)",
+              borderColor: SERIES.line,
+              borderWidth: 1,
+              padding: 10,
+              callbacks: {
+                label: (context) => `${context.dataset.label}: ${intFormat(context.parsed.y)} tokens`,
+              },
+            },
+          },
+        };
+      }
+
+      function renderDirectLabels(containerId, rows, colors, styles = []) {
+        const container = document.getElementById(containerId);
+        container.textContent = "";
+        rows.forEach((row, index) => {
+          const item = document.createElement("div");
+          item.className = "direct-label";
+          const swatch = document.createElement("span");
+          swatch.className = "swatch";
+          swatch.style.setProperty("--series-color", colors[index]);
+          if (styles[index] === "dashed") {
+            swatch.style.background = "transparent";
+            swatch.style.borderTop = `2px dashed ${colors[index]}`;
+          }
+          const label = document.createElement("strong");
+          label.textContent = `${row.label}${styles[index] ? ` (${styles[index]})` : ""}`;
+          const total = document.createElement("span");
+          total.textContent = compactIntFormat(row.total_tokens);
+          item.append(swatch, label, total);
+          container.appendChild(item);
+        });
+      }
+
+      function renderSeriesTable(headId, bodyId, bucketStarts, rows) {
+        const head = document.getElementById(headId);
+        const body = document.getElementById(bodyId);
+        head.textContent = "";
+        const hourHead = document.createElement("th");
+        hourHead.scope = "col";
+        hourHead.textContent = "UTC hour";
+        head.appendChild(hourHead);
+        rows.forEach((row) => {
+          const cell = document.createElement("th");
+          cell.scope = "col";
+          cell.textContent = row.label;
+          head.appendChild(cell);
+        });
+        body.textContent = "";
+        bucketStarts.forEach((startedAt, index) => {
+          const tableRow = document.createElement("tr");
+          const rowHead = document.createElement("th");
+          rowHead.scope = "row";
+          rowHead.textContent = startedAt;
+          tableRow.appendChild(rowHead);
+          rows.forEach((row) => {
+            const cell = document.createElement("td");
+            cell.textContent = intFormat(Array.isArray(row.values) ? row.values[index] : 0);
+            tableRow.appendChild(cell);
+          });
+          body.appendChild(tableRow);
+        });
+      }
+
+      function renderUnifiedCharts(timeSeries) {
+        if (!timeSeries || !Array.isArray(timeSeries.bucket_starts)) throw new Error("time series unavailable");
+        const labels = timeSeries.bucket_starts.map((value) => formatUtcHour(value, window.innerWidth <= 640));
+        const models = Array.isArray(timeSeries.model_series) ? [...timeSeries.model_series] : [];
+        if (timeSeries.other_model_series) models.push(timeSeries.other_model_series);
+        const modelColors = models.map((_row, index) => UNIFIED_MODEL_COLORS[index % UNIFIED_MODEL_COLORS.length]);
+        const modelDatasets = models.map((row, index) => barDataset(
+          row.label,
+          row.values,
+          modelColors[index],
+          { stack: "models", borderRadius: 1 },
+        ));
+        const modelOptions = unifiedTokenChartOptions({ stacked: true });
+        if (!modelTokenChart) {
+          modelTokenChart = new Chart(canvases.modelToken, {
+            type: "bar",
+            data: { labels, datasets: modelDatasets },
+            options: modelOptions,
+          });
+        } else {
+          replaceChartData(modelTokenChart, labels, modelDatasets, modelOptions);
+        }
+        renderDirectLabels("modelTokenLabels", models, modelColors);
+        renderSeriesTable("modelTokenTableHead", "modelTokenTableBody", timeSeries.bucket_starts, models);
+        const modelTotal = models.reduce((sum, row) => sum + Number(row.total_tokens || 0), 0);
+        document.getElementById("modelTokenSummary").textContent = `${compactIntFormat(modelTotal)} accounted tokens across ${models.length} displayed series in complete UTC hours.`;
+
+        const comparisons = Array.isArray(timeSeries.comparison_series) ? timeSeries.comparison_series : [];
+        const comparisonColors = [SERIES.token, SERIES.sparkSession];
+        const comparisonDatasets = comparisons.map((row, index) => lineDataset(
+          row.label,
+          row.values,
+          comparisonColors[index],
+          {
+            tension: 0,
+            spanGaps: false,
+            borderDash: index === 1 ? [7, 5] : [],
+          },
+        ));
+        const comparisonOptions = unifiedTokenChartOptions();
+        if (!codexClaudeChart) {
+          codexClaudeChart = new Chart(canvases.codexClaude, {
+            type: "line",
+            data: { labels, datasets: comparisonDatasets },
+            options: comparisonOptions,
+          });
+        } else {
+          replaceChartData(codexClaudeChart, labels, comparisonDatasets, comparisonOptions);
+        }
+        renderDirectLabels("codexClaudeLabels", comparisons, comparisonColors, ["solid", "dashed"]);
+        renderSeriesTable("codexClaudeTableHead", "codexClaudeTableBody", timeSeries.bucket_starts, comparisons);
+        const comparedTotal = comparisons.reduce((sum, row) => sum + Number(row.total_tokens || 0), 0);
+        const excluded = Number(timeSeries.comparison_excluded_tokens || 0);
+        document.getElementById("codexClaudeSummary").textContent = `${compactIntFormat(comparedTotal)} compared tokens; ${compactIntFormat(excluded)} tokens from other harnesses and providers remain outside this two-series view.`;
       }
 
       function renderHeader(summary) {
@@ -1589,12 +1920,12 @@
 
       async function loadUnifiedUsage() {
         try {
-          const response = await fetch("/api/unified-usage?days=7");
+          const response = await fetch("/api/unified-usage?hours=168");
           if (!response.ok) throw new Error("unavailable");
           const data = await response.json();
           const events = Number(data.window && data.window.event_count || 0);
           if (!events) {
-            showPanel("unifiedUsageState", "unifiedUsageContent", "No unified usage events in the last 7 days.");
+            showPanel("unifiedUsageState", "unifiedUsageContent", "No unified usage events in the last 168 complete hours.");
             return;
           }
           document.getElementById("unifiedTotalTokens").textContent = intFormat(data.totals && data.totals.total_tokens);
@@ -1618,6 +1949,12 @@
             row.estimated_cost_usd, row.actual_cost_usd,
           ]));
           showPanel("unifiedUsageState", "unifiedUsageContent", "");
+          try {
+            renderUnifiedCharts(data.time_series);
+          } catch (chartError) {
+            document.getElementById("modelTokenSummary").textContent = "Model chart unavailable; aggregate tables remain current.";
+            document.getElementById("codexClaudeSummary").textContent = "Harness comparison unavailable; aggregate tables remain current.";
+          }
         } catch (error) {
           showPanel("unifiedUsageState", "unifiedUsageContent", "Unified usage unavailable.");
         }

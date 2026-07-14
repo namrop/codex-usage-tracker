@@ -184,6 +184,130 @@ def test_unified_private_aggregate_endpoints_and_filters(tmp_path):
     assert client.get("/api/unified-usage?days=-1").status_code == 400
 
 
+def _chart_fact(source_id, occurred_at, *, harness, provider, model_requested, model_reported=None, **tokens):
+    row = dict(
+        _usage_fact(source_id),
+        occurred_at=occurred_at,
+        recorded_at=occurred_at,
+        harness=harness,
+        provider=provider,
+        model_requested=model_requested,
+        model_reported=model_reported,
+        input_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        output_tokens=0,
+        reasoning_tokens=0,
+    )
+    row.update(tokens)
+    return row
+
+
+def test_unified_usage_hourly_charts_compare_codex_and_claude_without_double_counting_reasoning(
+    tmp_path, monkeypatch
+):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, 34, 56, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    rows = [
+        _chart_fact(
+            "codex", "2026-07-14T09:00:00Z", harness="hermes", provider="openai-codex",
+            model_requested="requested-codex", model_reported="reported-codex",
+            input_tokens=10, cache_read_tokens=5, cache_write_tokens=2, output_tokens=3,
+            reasoning_tokens=2,
+        ),
+        _chart_fact(
+            "claude", "2026-07-14T10:30:00Z", harness="claude_code", provider="anthropic",
+            model_requested="claude-sonnet", model_reported="claude-sonnet",
+            input_tokens=7, output_tokens=4,
+        ),
+        _chart_fact(
+            "other-hermes", "2026-07-14T11:00:00Z", harness="hermes", provider="anthropic",
+            model_requested="direct-anthropic", input_tokens=2, output_tokens=1,
+        ),
+        _chart_fact(
+            "overlap", "2026-07-14T11:30:00Z", harness="claude_code", provider="openai-codex",
+            model_requested="overlap-model", input_tokens=5,
+        ),
+        _chart_fact(
+            "too-old", "2026-07-14T08:59:59Z", harness="claude_code", provider="anthropic",
+            model_requested="old", input_tokens=900,
+        ),
+        _chart_fact(
+            "partial-hour", "2026-07-14T12:00:00Z", harness="hermes", provider="openai-codex",
+            model_requested="future", input_tokens=800,
+        ),
+    ]
+    ledger = tmp_path / "usage.jsonl"
+    ledger.write_text("\n".join(canonical_json(row) for row in rows) + "\n", encoding="utf-8")
+    client = create_app(unified_usage_ledger=str(ledger)).test_client()
+
+    response = client.get("/api/unified-usage?hours=3")
+    assert response.status_code == 200
+    data = response.get_json()
+    series = data["time_series"]
+    assert series["bucket_starts"] == [
+        "2026-07-14T09:00:00Z", "2026-07-14T10:00:00Z", "2026-07-14T11:00:00Z",
+    ]
+    assert series["window_start"] == "2026-07-14T09:00:00Z"
+    assert series["window_end"] == "2026-07-14T12:00:00Z"
+    assert series["bucket_minutes"] == 60 and series["bucket_count"] == 3
+    assert data["totals"]["total_tokens"] == 39
+    assert data["totals"]["reasoning_tokens"] == 2
+    models = {(row["provider"], row["model"]): row for row in series["model_series"]}
+    assert models[("openai-codex", "reported-codex")]["values"] == [20, 0, 0]
+    assert models[("anthropic", "claude-sonnet")]["values"] == [0, 11, 0]
+    comparison = {row["key"]: row for row in series["comparison_series"]}
+    assert comparison["codex"]["label"] == "OpenAI Codex subscription"
+    assert comparison["codex"]["harness"] is None
+    assert comparison["codex"]["values"] == [20, 0, 5]
+    assert comparison["claude_code"]["label"] == "Claude Code"
+    assert comparison["claude_code"]["values"] == [0, 11, 5]
+    assert series["comparison_excluded_tokens"] == 3
+    assert "source_namespace" not in json.dumps(series)
+
+
+def test_unified_usage_hourly_chart_collapses_models_deterministically(tmp_path, monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, 15, 0, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    rows = [
+        _chart_fact(
+            f"m{index}", "2026-07-14T11:00:00Z", harness="opencode", provider=f"p{index}",
+            model_requested=f"m{index}", input_tokens=10 - index,
+        )
+        for index in range(7)
+    ]
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, rows, fact_type="usage_event_v1")
+    data = create_app(unified_usage_ledger=str(ledger)).test_client().get(
+        "/api/unified-usage?hours=1"
+    ).get_json()["time_series"]
+
+    assert [(row["provider"], row["model"]) for row in data["model_series"]] == [
+        ("p0", "m0"), ("p1", "m1"), ("p2", "m2"), ("p3", "m3"), ("p4", "m4"),
+    ]
+    assert data["other_model_series"] == {
+        "label": "Other models", "member_count": 2, "total_tokens": 9, "values": [9]
+    }
+
+
+@pytest.mark.parametrize("query", ["hours=0", "hours=169", "hours=nope", "hours=1.5", "hours=3&days=1"])
+def test_unified_usage_rejects_invalid_hourly_chart_windows(tmp_path, query):
+    ledger = tmp_path / "usage.jsonl"
+    ledger.write_text("", encoding="utf-8")
+    response = create_app(unified_usage_ledger=str(ledger)).test_client().get(
+        "/api/unified-usage?" + query
+    )
+    assert response.status_code == 400
+
+
 def test_private_aggregate_endpoints_require_explicit_configuration(tmp_path, monkeypatch):
     monkeypatch.delenv("UNIFIED_USAGE_LEDGER_PATH", raising=False)
     monkeypatch.delenv("QUOTA_LEDGER_PATH", raising=False)
@@ -454,10 +578,25 @@ def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independent
     page = create_app(ledger=str(tmp_path / "codex.jsonl")).test_client().get("/").get_data(as_text=True)
     assert "<title>AI Usage</title>" in page
     assert "Codex detail" in page
-    assert 'fetch("/api/unified-usage?days=7")' in page
+    assert 'fetch("/api/unified-usage?hours=168")' in page
+    assert 'id="modelTokenChart"' in page
+    assert 'id="codexClaudeChart"' in page
+    assert 'id="modelTokenLabels"' in page
+    assert 'id="codexClaudeLabels"' in page
+    assert "Tokens across provider models" in page
+    assert "OpenAI Codex subscription vs Claude Code" in page
+    assert "stacked: true" in page
+    assert "borderDash: index === 1 ? [7, 5] : []" in page
+    assert "legend: { display: false" in page
+    assert "prefers-reduced-motion" in page
+    assert 'timeZone: "UTC"' in page
+    assert 'rowHead.scope = "row"' in page
+    assert "overflow-x: hidden" in page
+    assert "overflow-wrap: anywhere" in page
+    assert 'align: "inner"' in page
     assert 'fetch("/api/subscriptions?days=30&history=0")' in page
     assert 'fetch("/api/billing?days=30")' in page
-    optional_script = page[page.index('fetch("/api/unified-usage?days=7")'):]
+    optional_script = page[page.index('fetch("/api/unified-usage?hours=168")'):]
     assert "Promise.all([" not in optional_script
     assert "Unified usage unavailable" in page
     assert "No unified usage events" in page
@@ -477,6 +616,9 @@ def test_readme_documents_private_ai_dashboard_and_new_projection_compatibility_
     assert "write-public-usage-projection" in readme
     assert "--unified-usage-ledger" in readme
     assert "AI Usage" in readme
+    assert "hours=1..168" in readme
+    assert "provider=openai-codex" in readme
+    assert "harness=claude_code" in readme
     assert "Do not publish" in readme
     assert "write-public-projection" in readme
     assert "compatibility" in readme.casefold()
