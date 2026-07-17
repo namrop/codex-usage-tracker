@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import localcontext
 
 import pytest
@@ -109,6 +109,28 @@ def test_unified_projection_has_exact_allowlisted_schema_hourly_zeros_and_token_
     serialized = json.dumps(payload)
     for forbidden in ("private-provider", "private-model", "private:source", "never publish", "harness"):
         assert forbidden not in serialized
+
+
+def test_unified_projection_never_publishes_subscription_usage_percentages(tmp_path):
+    usage = tmp_path / "usage.sqlite3"
+    quota = tmp_path / "quota.sqlite3"
+    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
+    append_sqlite_facts(quota, [
+        _quota("private-cap", used_value="63", remaining_value="37"),
+    ], fact_type="quota_observation_v1")
+
+    payload = build_unified_public_projection(
+        usage,
+        quota_ledger_path=quota,
+        hours=1,
+        now=NOW,
+    )
+    serialized = json.dumps(payload)
+
+    assert payload["subscription_rows"] == []
+    assert "used_pct" not in serialized
+    assert "remaining_pct" not in serialized
+    assert "private-account" not in serialized
 
 
 def test_unified_projection_rejects_non_sqlite_wrong_binding_and_bounds(tmp_path):
@@ -320,125 +342,6 @@ def test_model_rows_do_not_pass_through_private_family_shaped_names(tmp_path):
     assert "secret-hostname" not in json.dumps(rows).casefold()
 
 
-def test_subscription_rows_allowlist_latest_normalize_coarsen_and_exclude_private_fields(tmp_path):
-    usage = tmp_path / "usage.sqlite3"
-    quota = tmp_path / "quota.sqlite3"
-    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
-    append_sqlite_facts(quota, [
-        _quota("codex-old", observed_at="2026-07-13T02:00:00Z", used_value="10", remaining_value="90"),
-        _quota(
-            "codex-new", used_value="25", remaining_value="75",
-            resets_at="2026-07-19T20:00:00Z",
-        ),
-        _quota(
-            "codex-future", observed_at="2026-07-13T05:00:00Z",
-            used_value="99", remaining_value="1", resets_at="2026-07-20T20:00:00Z",
-        ),
-        _quota(
-            "codex-stale", quota_name="five_hour", observed_at="2026-07-12T20:00:00Z",
-            used_value="50", remaining_value="50", resets_at="2026-07-13T02:00:00Z",
-        ),
-        _quota(
-            "spark", quota_name="spark_week", used_value=None, remaining_value=None,
-        ),
-        _quota(
-            "fable", harness="claude_code", provider="anthropic", quota_name="seven_day_fable",
-            used_value="40", remaining_value="60",
-        ),
-        _quota(
-            "go", harness="opencode", provider="opencode-go", quota_name="month",
-            unit="usd", limit_value="60", used_value="15", remaining_value="45",
-            measurement_confidence="estimated", resets_at=None,
-        ),
-        _quota(
-            "not-go", harness="opencode", provider="opencode", quota_name="five_hour",
-            used_value="88", remaining_value="12",
-        ),
-        _quota(
-            "balance", harness="provider_api", provider="deepseek", quota_name="account_balance",
-            unit="usd", limit_value=None, used_value=None, remaining_value="9999",
-        ),
-    ], fact_type="quota_observation_v1")
-
-    payload = build_unified_public_projection(usage, quota_ledger_path=quota, hours=1, now=NOW)
-    rows = payload["subscription_rows"]
-
-    assert all(set(row) == {
-        "service", "window", "used_pct", "remaining_pct", "reset_hours",
-        "measurement_confidence", "status",
-    } for row in rows)
-    assert {(row["service"], row["window"]) for row in rows} == {
-        ("Codex", "Weekly"), ("Codex", "5-hour"), ("Codex Spark", "Weekly"),
-        ("Claude Code · Fable", "Weekly"), ("OpenCode Go", "Monthly"),
-    }
-    weekly = next(row for row in rows if row["service"] == "Codex" and row["window"] == "Weekly")
-    assert weekly == {
-        "service": "Codex", "window": "Weekly", "used_pct": 25.0,
-        "remaining_pct": 75.0, "reset_hours": 160,
-        "measurement_confidence": "exact", "status": "current",
-    }
-    stale = next(row for row in rows if row["service"] == "Codex" and row["window"] == "5-hour")
-    assert stale["status"] == "stale" and stale["reset_hours"] == 0
-    spark = next(row for row in rows if row["service"] == "Codex Spark")
-    assert spark["status"] == "unavailable" and spark["used_pct"] is None
-    go = next(row for row in rows if row["service"] == "OpenCode Go")
-    assert (go["used_pct"], go["remaining_pct"], go["status"]) == (25.0, 75.0, "estimated")
-    serialized = json.dumps(payload)
-    for private in (
-        "private-account", "/private/quota/payload", "9999", "account_ref", "observed_at",
-        "limit_value", "used_value", "remaining_value", "provider_payload_ref", "x_arbitrary",
-        "deepseek", "account_balance",
-    ):
-        assert private not in serialized
-
-
-def test_subscription_percentages_are_clamped_rounded_and_complementary(tmp_path):
-    usage = tmp_path / "usage.sqlite3"
-    quota = tmp_path / "quota.sqlite3"
-    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
-    append_sqlite_facts(quota, [
-        _quota("conflict", used_value="30.04", remaining_value="90.04"),
-        _quota(
-            "overflow", quota_name="five_hour", used_value="120", remaining_value="0",
-        ),
-    ], fact_type="quota_observation_v1")
-
-    rows = build_unified_public_projection(
-        usage, quota_ledger_path=quota, hours=1, now=NOW
-    )["subscription_rows"]
-
-    weekly = next(row for row in rows if row["window"] == "Weekly")
-    five_hour = next(row for row in rows if row["window"] == "5-hour")
-    assert (weekly["used_pct"], weekly["remaining_pct"]) == (30.0, 70.0)
-    assert (five_hour["used_pct"], five_hour["remaining_pct"]) == (100.0, 0.0)
-
-
-def test_subscription_selection_handles_fractional_generation_boundaries(tmp_path):
-    usage = tmp_path / "usage.sqlite3"
-    quota = tmp_path / "quota.sqlite3"
-    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
-    append_sqlite_facts(quota, [
-        _quota(
-            "before", observed_at="2026-07-13T04:37:12.1Z",
-            used_value="35", remaining_value="65",
-        ),
-        _quota(
-            "after", observed_at="2026-07-13T04:37:12.2Z",
-            used_value="90", remaining_value="10",
-        ),
-    ], fact_type="quota_observation_v1")
-
-    rows = build_unified_public_projection(
-        usage,
-        quota_ledger_path=quota,
-        hours=1,
-        now=datetime(2026, 7, 13, 4, 37, 12, 120_000, tzinfo=timezone.utc),
-    )["subscription_rows"]
-
-    assert len(rows) == 1
-    assert rows[0]["used_pct"] == 35.0
-
-
 def test_signed_corrections_preserve_canonical_totals_and_do_not_add_attempts(tmp_path):
     ledger = tmp_path / "usage.sqlite3"
     append_sqlite_facts(ledger, [
@@ -465,15 +368,36 @@ def test_signed_corrections_preserve_canonical_totals_and_do_not_add_attempts(tm
     assert payload["model_rows"][0]["total_tokens"] == 50
 
 
-def test_v2_without_quota_ledger_is_empty_and_supplied_ledger_must_be_quota_sqlite(tmp_path):
+def test_quota_ledger_input_is_ignored_at_the_public_projection_boundary(tmp_path):
     usage = tmp_path / "usage.sqlite3"
-    wrong = tmp_path / "wrong.sqlite3"
+    quota = tmp_path / "quota.sqlite3"
     append_sqlite_facts(usage, [], fact_type="usage_event_v1")
-    append_sqlite_facts(wrong, [], fact_type="usage_event_v1")
+    append_sqlite_facts(quota, [_quota("private-cap")], fact_type="quota_observation_v1")
 
-    assert build_unified_public_projection(usage, hours=1, now=NOW)["subscription_rows"] == []
-    with pytest.raises(ValueError, match="fact_type"):
-        build_unified_public_projection(usage, quota_ledger_path=wrong, hours=1, now=NOW)
+    payload = build_unified_public_projection(
+        usage, quota_ledger_path=quota, hours=1, now=NOW
+    )
+
+    assert payload["subscription_rows"] == []
+    assert "used_pct" not in json.dumps(payload)
+
+
+def test_validator_rejects_nonempty_subscription_rows(tmp_path):
+    usage = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
+    payload = build_unified_public_projection(usage, hours=1, now=NOW)
+    payload["subscription_rows"] = [{
+        "service": "Codex",
+        "window": "Weekly",
+        "used_pct": 63.0,
+        "remaining_pct": 37.0,
+        "reset_hours": 18,
+        "measurement_confidence": "exact",
+        "status": "current",
+    }]
+
+    with pytest.raises(ValueError, match="subscription_rows must be empty"):
+        validate_unified_public_projection(payload)
 
 
 def test_unified_projection_canonicalizes_trailing_zero_generated_at_fraction(tmp_path):
@@ -661,32 +585,6 @@ def test_model_sanitizer_maps_malicious_numeric_family_names_to_other(tmp_path, 
     }]
 
 
-def test_subscription_selection_handles_more_than_1000_historical_observations(tmp_path):
-    usage = tmp_path / "usage.sqlite3"
-    quota = tmp_path / "quota.sqlite3"
-    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
-    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
-    observations = [
-        _quota(
-            f"history-{index}",
-            observed_at=(start + timedelta(minutes=index)).isoformat().replace("+00:00", "Z"),
-            used_value=str(index % 70),
-        )
-        for index in range(1001)
-    ]
-    observations.append(_quota("latest", used_value="75", remaining_value="25"))
-    append_sqlite_facts(quota, observations, fact_type="quota_observation_v1")
-
-    rows = build_unified_public_projection(
-        usage, quota_ledger_path=quota, hours=1, now=NOW
-    )["subscription_rows"]
-
-    assert len(rows) == 1
-    assert (rows[0]["service"], rows[0]["window"], rows[0]["used_pct"]) == (
-        "Codex", "Weekly", 75.0,
-    )
-
-
 def test_correction_rankings_use_corrected_event_dimensions_not_correction_dimensions(tmp_path):
     ledger = tmp_path / "usage.sqlite3"
     append_sqlite_facts(ledger, [
@@ -776,85 +674,6 @@ def test_rankings_omit_nonpositive_groups_and_use_positive_ranking_denominator(t
     assert [(row["model_label"], row["total_tokens"], row["share_pct"]) for row in payload["model_rows"]] == [
         ("Claude Sonnet 5", 100, 100.0),
     ]
-
-
-def test_validator_rejects_noncomplementary_or_partly_unavailable_subscription_percentages(tmp_path):
-    usage = tmp_path / "usage.sqlite3"
-    quota = tmp_path / "quota.sqlite3"
-    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
-    append_sqlite_facts(quota, [
-        _quota("available", used_value="30", remaining_value="70"),
-        _quota("unavailable", quota_name="spark_week", used_value=None, remaining_value=None),
-    ], fact_type="quota_observation_v1")
-    payload = build_unified_public_projection(
-        usage, quota_ledger_path=quota, hours=1, now=NOW
-    )
-    available, unavailable = payload["subscription_rows"]
-
-    bad_available = json.loads(json.dumps(payload))
-    bad_available["subscription_rows"][0] = {**available, "remaining_pct": 69.7}
-    with pytest.raises(ValueError, match="sum to 100"):
-        validate_unified_public_projection(bad_available)
-
-    bad_unavailable = json.loads(json.dumps(payload))
-    bad_unavailable["subscription_rows"][1] = {**unavailable, "remaining_pct": 100.0}
-    with pytest.raises(ValueError, match="null percentages"):
-        validate_unified_public_projection(bad_unavailable)
-
-
-def test_validator_rejects_subscription_percentages_outside_tiny_complement_tolerance(tmp_path):
-    usage = tmp_path / "usage.sqlite3"
-    quota = tmp_path / "quota.sqlite3"
-    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
-    append_sqlite_facts(quota, [_quota("available")], fact_type="quota_observation_v1")
-    payload = build_unified_public_projection(
-        usage, quota_ledger_path=quota, hours=1, now=NOW
-    )
-    payload["subscription_rows"][0].update(used_pct=30.0, remaining_pct=70.09)
-
-    with pytest.raises(ValueError, match="sum to 100"):
-        validate_unified_public_projection(payload)
-
-
-def test_subscription_alias_tie_uses_later_ingestion_sequence(tmp_path):
-    usage = tmp_path / "usage.sqlite3"
-    quota = tmp_path / "quota.sqlite3"
-    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
-    append_sqlite_facts(quota, [
-        _quota("openai-first", provider="openai", used_value="20", remaining_value="80"),
-        _quota(
-            "codex-alias-later", provider="openai-codex",
-            used_value="75", remaining_value="25",
-        ),
-    ], fact_type="quota_observation_v1")
-
-    rows = build_unified_public_projection(
-        usage, quota_ledger_path=quota, hours=1, now=NOW
-    )["subscription_rows"]
-
-    assert len(rows) == 1
-    assert rows[0]["used_pct"] == 75.0
-
-
-def test_subscription_identity_matching_preserves_casefold_behavior(tmp_path):
-    usage = tmp_path / "usage.sqlite3"
-    quota = tmp_path / "quota.sqlite3"
-    append_sqlite_facts(usage, [], fact_type="usage_event_v1")
-    append_sqlite_facts(quota, [
-        _quota(
-            "uppercase-identity", harness="CODEX", provider="OPENAI",
-            used_value="65", remaining_value="35",
-        ),
-    ], fact_type="quota_observation_v1")
-
-    rows = build_unified_public_projection(
-        usage, quota_ledger_path=quota, hours=1, now=NOW
-    )["subscription_rows"]
-
-    assert len(rows) == 1
-    assert (rows[0]["service"], rows[0]["window"], rows[0]["used_pct"]) == (
-        "Codex", "Weekly", 65.0,
-    )
 
 
 def test_size_guard_measures_pretty_serialization_actually_written(tmp_path, monkeypatch):

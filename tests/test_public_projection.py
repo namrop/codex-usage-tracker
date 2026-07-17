@@ -131,6 +131,9 @@ def test_build_public_projection_exposes_only_derived_chart_payload(tmp_path):
     assert payload["rows"][0]["window_start"] == "2026-06-04T01:00:00+00:00"
     assert payload["rows"][0]["api_calls"] == 1
     assert payload["rows"][0]["total_tokens"] == 1050
+    assert payload["rows"][0]["noncached_prompt_pct"] == 10.0
+    assert payload["rows"][0]["usage_source"] == "provider_reported"
+    assert payload["rows"][0]["measurement_confidence"] == "exact"
     assert payload["summary"] == {
         "updated_at": "2026-06-04T03:00:00+00:00",
         "window_count": 2,
@@ -143,6 +146,11 @@ def test_build_public_projection_exposes_only_derived_chart_payload(tmp_path):
     assert "raw_payload" not in serialized
     assert "private-wallet-ish" not in serialized
     assert "do-not-project" not in serialized
+    for forbidden in (
+        "session_used_pct", "weekly_used_pct", "session_window", "weekly_window",
+        "tokens_per_session_pct", "tokens_per_weekly_pct", "reset_or_drop",
+    ):
+        assert forbidden not in serialized
 
 
 def test_write_public_projection_writes_pretty_json_next_to_ledger_by_default(tmp_path):

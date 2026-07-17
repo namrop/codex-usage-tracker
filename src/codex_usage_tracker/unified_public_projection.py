@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
 import json
 import math
 import os
@@ -20,7 +19,6 @@ DEFAULT_PUBLIC_PROJECTION_SOURCE = "unified-usage-public-projection"
 DEFAULT_PUBLIC_PROJECTION_HOURS = 168
 MAX_PUBLIC_PROJECTION_HOURS = 168
 _MAX_INPUT_EVENTS = 100_000
-_MAX_QUOTA_OBSERVATIONS_PER_NAME = 256
 _MAX_PUBLIC_PROJECTION_BYTES = 1024 * 1024
 _SQLITE_SUFFIXES = frozenset({".sqlite3", ".sqlite", ".db"})
 _TOKEN_FIELDS = (
@@ -50,13 +48,7 @@ _MODEL_ROW_KEYS = frozenset({
     "provider_label", "model_label", "total_tokens", "request_attempts", "share_pct",
     "measurement_confidence",
 })
-_SUBSCRIPTION_ROW_KEYS = frozenset({
-    "service", "window", "used_pct", "remaining_pct", "reset_hours",
-    "measurement_confidence", "status",
-})
 _CONFIDENCE_VALUES = frozenset({"exact", "reconstructed", "mixed", "unknown"})
-_QUOTA_CONFIDENCE_VALUES = frozenset({"exact", "estimated", "unknown"})
-_SUBSCRIPTION_STATUS_VALUES = frozenset({"current", "estimated", "unavailable", "stale"})
 _PUBLIC_SOURCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _PUBLIC_PROVIDER_LABELS = frozenset({
     "Codex", "Claude Code", "OpenAI", "OpenCode Go", "OpenCode", "OpenRouter",
@@ -125,32 +117,6 @@ _PUBLIC_MODEL_MAP = {
 }
 _PUBLIC_MODEL_LABELS = frozenset(_PUBLIC_MODEL_MAP.values())
 _PUBLIC_MODEL_LABEL_MAP = {label.casefold(): label for label in _PUBLIC_MODEL_LABELS}
-_QUOTA_IDENTITIES = (
-    *(("codex", provider, quota_name)
-      for provider in ("openai", "openai-codex")
-      for quota_name in ("five_hour", "week", "spark_five_hour", "spark_week")),
-    *(("claude_code", "anthropic", quota_name)
-      for quota_name in ("five_hour", "seven_day", "seven_day_fable")),
-    *((harness, "opencode-go", quota_name)
-      for harness in ("opencode", "opencode-go")
-      for quota_name in ("five_hour", "week", "month")),
-)
-_QUOTA_NAMES = tuple(sorted({identity[2] for identity in _QUOTA_IDENTITIES}))
-_SUBSCRIPTION_ORDER = {
-    ("Codex", "5-hour"): 0,
-    ("Codex", "Weekly"): 1,
-    ("Codex Spark", "5-hour"): 2,
-    ("Codex Spark", "Weekly"): 3,
-    ("Claude Code", "5-hour"): 4,
-    ("Claude Code", "Weekly"): 5,
-    ("Claude Code · Fable", "Weekly"): 6,
-    ("OpenCode Go", "5-hour"): 7,
-    ("OpenCode Go", "Weekly"): 8,
-    ("OpenCode Go", "Monthly"): 9,
-}
-_WINDOW_STALE_AFTER = {"5-hour": 5, "Weekly": 7 * 24, "Monthly": 31 * 24}
-
-
 def _utc_text(value: datetime) -> str:
     """Render a timezone-aware datetime using the canonical ledger timestamp form."""
     return canonical_timestamp(value.astimezone(timezone.utc).isoformat())
@@ -358,129 +324,6 @@ def _build_model_rows(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _subscription_identity(row: dict[str, Any]) -> tuple[str, str] | None:
-    harness = str(row.get("harness") or "").casefold()
-    provider = str(row.get("provider") or "").casefold()
-    quota_name = row.get("quota_name")
-    codex = harness == "codex" and provider in {"openai", "openai-codex"}
-    claude = harness == "claude_code" and provider == "anthropic"
-    opencode_go = harness in {"opencode", "opencode-go"} and provider == "opencode-go"
-    if codex and quota_name in {"week", "five_hour", "spark_week", "spark_five_hour"}:
-        service = "Codex Spark" if str(quota_name).startswith("spark_") else "Codex"
-        window = "Weekly" if str(quota_name).endswith("week") else "5-hour"
-        return service, window
-    if claude and quota_name in {"seven_day", "seven_day_fable", "five_hour"}:
-        service = "Claude Code · Fable" if quota_name == "seven_day_fable" else "Claude Code"
-        return service, "5-hour" if quota_name == "five_hour" else "Weekly"
-    if opencode_go and quota_name in {"month", "week", "five_hour"}:
-        return "OpenCode Go", {"month": "Monthly", "week": "Weekly", "five_hour": "5-hour"}[quota_name]
-    return None
-
-
-def _decimal_value(value: Any) -> Decimal | None:
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        return None
-
-
-def _public_percentage(value: Decimal | None) -> float | None:
-    if value is None:
-        return None
-    bounded = min(Decimal("100"), max(Decimal("0"), value))
-    return round(float(bounded), 1)
-
-
-def _quota_percentages(row: dict[str, Any]) -> tuple[float | None, float | None]:
-    unit = row.get("unit")
-    used = _decimal_value(row.get("used_value"))
-    remaining = _decimal_value(row.get("remaining_value"))
-    if unit == "percent":
-        used_pct = _public_percentage(used)
-        if used_pct is not None:
-            return used_pct, round(100.0 - used_pct, 1)
-        remaining_pct = _public_percentage(remaining)
-        return (
-            None if remaining_pct is None else round(100.0 - remaining_pct, 1),
-            remaining_pct,
-        )
-    if unit in {"usd", "provider_unit"}:
-        limit = _decimal_value(row.get("limit_value"))
-        if used is None or limit is None or limit <= 0:
-            return None, None
-        used_pct = _public_percentage(used * Decimal("100") / limit)
-        return used_pct, None if used_pct is None else round(100.0 - used_pct, 1)
-    return None, None
-
-
-def _build_subscription_rows(
-    quota_ledger_path: str | Path | None, generated: datetime
-) -> list[dict[str, Any]]:
-    if quota_ledger_path is None:
-        return []
-    target = Path(quota_ledger_path).expanduser()
-    if target.suffix.casefold() not in _SQLITE_SUFFIXES:
-        raise ValueError("public subscription input must be SQLite")
-    if not target.exists() or not target.is_file():
-        raise ValueError("public subscription input must be an existing SQLite ledger")
-
-    latest: dict[tuple[str, str], dict[str, Any]] = {}
-    for quota_name in _QUOTA_NAMES:
-        # The canonical query orders equal timestamps by ingestion sequence, so
-        # scanning one bounded result across all aliases preserves that tie-break.
-        # An older valid fact can fall outside this bound after enough unrelated
-        # or invalid facts, but the latest valid observation normally appears first.
-        observations = query_sqlite_facts(
-            target,
-            fact_type="quota_observation_v1",
-            filters={"quota_name": quota_name},
-            occurred_or_observed_at_lt=_utc_text(generated),
-            order="desc",
-            limit=_MAX_QUOTA_OBSERVATIONS_PER_NAME,
-        )
-        for observation in observations:
-            identity = _subscription_identity(observation)
-            if identity is None:
-                continue
-            latest.setdefault(identity, observation)
-
-    rows: list[dict[str, Any]] = []
-    for identity in sorted(latest, key=_SUBSCRIPTION_ORDER.__getitem__):
-        observation = latest[identity]
-        used_pct, remaining_pct = _quota_percentages(observation)
-        reset = observation.get("resets_at")
-        reset_dt = _event_datetime(reset) if reset is not None else None
-        reset_hours = None if reset_dt is None else max(
-            0, math.ceil((reset_dt - generated).total_seconds() / 3600)
-        )
-        observed = _event_datetime(observation["observed_at"])
-        stale = (
-            (reset_dt is not None and reset_dt <= generated)
-            or (generated - observed).total_seconds() > _WINDOW_STALE_AFTER[identity[1]] * 3600
-        )
-        confidence = str(observation.get("measurement_confidence") or "unknown")
-        if used_pct is None:
-            status = "unavailable"
-        elif stale:
-            status = "stale"
-        elif confidence != "exact":
-            status = "estimated"
-        else:
-            status = "current"
-        rows.append({
-            "service": identity[0],
-            "window": identity[1],
-            "used_pct": used_pct,
-            "remaining_pct": remaining_pct,
-            "reset_hours": reset_hours,
-            "measurement_confidence": confidence,
-            "status": status,
-        })
-    return rows
-
-
 def build_unified_public_projection(
     ledger_path: str | Path,
     *,
@@ -577,7 +420,9 @@ def build_unified_public_projection(
         "rows": buckets,
         "provider_rows": _build_provider_rows(ranking_facts),
         "model_rows": _build_model_rows(ranking_facts),
-        "subscription_rows": _build_subscription_rows(quota_ledger_path, generated),
+        # Quota observations remain private. Publishing utilization percentages
+        # makes the shape of subscription caps publicly legible.
+        "subscription_rows": [],
         "summary": summary,
     }
     validate_unified_public_projection(payload)
@@ -727,42 +572,8 @@ def validate_unified_public_projection(payload: Any) -> None:
         raise ValueError("model_rows must be sorted descending")
 
     subscription_rows = top["subscription_rows"]
-    if not isinstance(subscription_rows, list) or len(subscription_rows) > len(_SUBSCRIPTION_ORDER):
-        raise ValueError("subscription_rows must be a bounded array")
-    subscription_identities: list[tuple[str, str]] = []
-    for index, candidate in enumerate(subscription_rows):
-        row = _require_exact_keys(candidate, _SUBSCRIPTION_ROW_KEYS, f"subscription_rows[{index}]")
-        identity = (row["service"], row["window"])
-        if identity not in _SUBSCRIPTION_ORDER:
-            raise ValueError(f"subscription_rows[{index}] service/window is invalid")
-        subscription_identities.append(identity)
-        _require_percentage(row["used_pct"], f"subscription_rows[{index}].used_pct")
-        _require_percentage(row["remaining_pct"], f"subscription_rows[{index}].remaining_pct")
-        if row["reset_hours"] is not None:
-            _require_safe_int(
-                row["reset_hours"], f"subscription_rows[{index}].reset_hours", nonnegative=True
-            )
-        if row["measurement_confidence"] not in _QUOTA_CONFIDENCE_VALUES:
-            raise ValueError(f"subscription_rows[{index}].measurement_confidence is invalid")
-        if row["status"] not in _SUBSCRIPTION_STATUS_VALUES:
-            raise ValueError(f"subscription_rows[{index}].status is invalid")
-        if row["status"] == "unavailable":
-            if row["used_pct"] is not None or row["remaining_pct"] is not None:
-                raise ValueError("unavailable subscription rows must have null percentages")
-        elif row["used_pct"] is None or row["remaining_pct"] is None:
-            raise ValueError("available subscription rows must have both percentages")
-        if (
-            row["used_pct"] is not None
-            and row["remaining_pct"] is not None
-            and not math.isclose(
-                row["used_pct"] + row["remaining_pct"], 100.0, rel_tol=0.0, abs_tol=1e-9
-            )
-        ):
-            raise ValueError("subscription used_pct and remaining_pct must sum to 100")
-    if len(set(subscription_identities)) != len(subscription_identities):
-        raise ValueError("subscription_rows identities must be unique")
-    if subscription_identities != sorted(subscription_identities, key=_SUBSCRIPTION_ORDER.__getitem__):
-        raise ValueError("subscription_rows must use canonical order")
+    if subscription_rows != []:
+        raise ValueError("subscription_rows must be empty")
 
     summary = _require_exact_keys(top["summary"], _SUMMARY_KEYS, "summary")
     _require_utc_timestamp(summary["updated_at"], "summary.updated_at")

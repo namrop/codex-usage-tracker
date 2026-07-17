@@ -12,6 +12,26 @@ from .token_correlation import build_token_correlation_rows, resolve_state_db_pa
 PUBLIC_PROJECTION_FILENAME = "codex_token_chart_public.json"
 DEFAULT_PUBLIC_PROJECTION_SOURCE = "sol-public-projection"
 MAX_PUBLIC_CHART_WINDOW_HOURS = 2.25
+_PUBLIC_TOKEN_ROW_KEYS = (
+    "window_start",
+    "window_end",
+    "span_hours",
+    "codex_sessions",
+    "api_calls",
+    "input_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "output_tokens",
+    "reasoning_tokens",
+    "prompt_tokens",
+    "total_tokens",
+    "cache_hit_pct",
+    "noncached_prompt_pct",
+    "models",
+    "usage_source",
+    "measurement_confidence",
+    "data_gap",
+)
 
 
 def default_public_projection_path(ledger_path: str) -> Path:
@@ -85,6 +105,11 @@ def suppress_gap_spikes(rows: List[Dict[str, Any]], *, max_window_hours: float =
     return sanitized
 
 
+def _sanitize_public_token_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep aggregate token telemetry while excluding subscription-cap signals."""
+    return [{key: row.get(key) for key in _PUBLIC_TOKEN_ROW_KEYS} for row in rows]
+
+
 def build_public_projection(
     ledger_path: str,
     *,
@@ -98,11 +123,13 @@ def build_public_projection(
     summary cards. It does not project raw usage snapshots, raw API payloads,
     transcript/session bodies, credentials, or unrestricted local paths.
     """
-    rows = suppress_gap_spikes(
-        build_token_correlation_rows(
-            _read_usage_rows(ledger_path),
-            state_db_path=resolve_state_db_path(state_db_path),
-            limit=limit,
+    rows = _sanitize_public_token_rows(
+        suppress_gap_spikes(
+            build_token_correlation_rows(
+                _read_usage_rows(ledger_path),
+                state_db_path=resolve_state_db_path(state_db_path),
+                limit=limit,
+            )
         )
     )
     return {
