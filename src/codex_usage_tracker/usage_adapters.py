@@ -102,21 +102,52 @@ def _usage_value(usage: dict[str,Any], *names: str) -> int | None:
     return None
 
 
-def collect_claude_usage(root: str | Path, source_namespace: str) -> Iterator[dict[str,Any]]:
-    """Read provider assistant receipts only; transcript content is never projected."""
+def collect_claude_usage(
+    root: str | Path,
+    source_namespace: str,
+    *,
+    settle_seconds: float = 300.0,
+) -> Iterator[dict[str,Any]]:
+    """Read stable provider receipts; transcript content is never projected.
+
+    Claude Code can append several assistant receipts for one provider message.
+    The latest stable snapshot supplies both receipt time and usage. A lone
+    non-terminal receipt in a recently modified file is provisional and is
+    deferred to a later collection pass.
+    """
     root_path=Path(root).expanduser()
     if not root_path.exists(): return
+    now_timestamp = datetime.now(timezone.utc).timestamp()
     for path in sorted(root_path.rglob("*.jsonl")):
-        final: dict[tuple[str,str],tuple[int,dict[str,Any]]]={}
+        try:
+            quiescent = now_timestamp - path.stat().st_mtime >= settle_seconds
+        except OSError:
+            continue
+        grouped: dict[tuple[str,str],list[tuple[int,dict[str,Any]]]]={}
         for sequence,item in enumerate(_read_claude_file(path)):
             message=item.get("message")
             if item.get("type")!="assistant" or not isinstance(message,dict): continue
             message_id=message.get("id"); session_id=item.get("sessionId") or item.get("session_id")
             model=message.get("model") or item.get("model")
             if not message_id or not session_id or model=="<synthetic>": continue
-            # Later streaming snapshots replace earlier snapshots for this provider message.
-            final[(str(session_id),str(message_id))]=(sequence,item)
-        for (_,message_id),(sequence,item) in sorted(final.items(),key=lambda pair:pair[1][0]):
+            grouped.setdefault((str(session_id),str(message_id)),[]).append((sequence,item))
+        selected: list[tuple[int,dict[str,Any]]] = []
+        for entries in grouped.values():
+            terminal = [entry for entry in entries if (entry[1].get("message") or {}).get("stop_reason")]
+            if terminal:
+                chosen = terminal[-1]
+            else:
+                usage_snapshots = {
+                    json.dumps((entry[1].get("message") or {}).get("usage") or {}, sort_keys=True, separators=(",", ":"))
+                    for entry in entries
+                }
+                if len(entries) == 1 and not quiescent:
+                    continue
+                if len(usage_snapshots) > 1 and not quiescent:
+                    continue
+                chosen = entries[-1]
+            selected.append(chosen)
+        for sequence,item in sorted(selected,key=lambda entry:entry[0]):
             message=item["message"]; usage=message.get("usage") or {}
             output_details = usage.get("output_tokens_details") or {}
             reasoning_tokens = _usage_value(usage, "thinking_tokens", "reasoning_tokens")
@@ -124,7 +155,7 @@ def collect_claude_usage(root: str | Path, source_namespace: str) -> Iterator[di
                 reasoning_tokens = _usage_value(output_details, "thinking_tokens", "reasoning_tokens")
             occurred=item.get("timestamp") or message.get("timestamp") or datetime.fromtimestamp(path.stat().st_mtime,timezone.utc).isoformat()
             is_subagent=bool(item.get("agentId") or item.get("isSidechain") or "/subagents/" in path.as_posix() or item.get("path"))
-            row=_base_event(namespace=source_namespace,event_id=f"{item.get('sessionId') or item.get('session_id')}:{message_id}",harness="claude_code",occurred=occurred,recorded=occurred,purpose="subagent" if is_subagent else "main")
+            row=_base_event(namespace=source_namespace,event_id=f"{item.get('sessionId') or item.get('session_id')}:{message['id']}",harness="claude_code",occurred=occurred,recorded=occurred,purpose="subagent" if is_subagent else "main")
             row.update({
               "session_id":str(item.get("sessionId") or item.get("session_id")),"provider":"anthropic",
               "model_requested":message.get("model") or item.get("model"),"model_reported":message.get("model") or item.get("model"),

@@ -99,18 +99,74 @@ def test_hermes_mixed_provider_history_and_included_cost(tmp_path):
 def test_claude_stream_dedupe_subagent_synthetic_and_trailing_line(tmp_path):
     root = tmp_path / "projects" / "p"; root.mkdir(parents=True)
     rows = [
-      {"type":"assistant","sessionId":"s","message":{"id":"m1","model":"claude-sonnet","usage":{"input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":4},"stop_reason":None}},
-      {"type":"assistant","sessionId":"s","message":{"id":"m1","model":"claude-sonnet","usage":{"input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":8,"output_tokens_details":{"thinking_tokens":5}},"stop_reason":"end_turn"}},
-      {"type":"assistant","sessionId":"s","agentId":"a","isSidechain":True,"message":{"id":"m2","model":"claude-opus","usage":{"input_tokens":2,"output_tokens":3}}},
-      {"type":"assistant","sessionId":"s","message":{"id":"m3","model":"<synthetic>","usage":{"input_tokens":99}}},
-      {"type":"user","sessionId":"s","message":{"id":"prompt","content":"never read"}},
+      {"type":"assistant","timestamp":"2026-07-12T12:00:00Z","sessionId":"s","message":{"id":"m1","model":"claude-sonnet","usage":{"input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":4},"stop_reason":None}},
+      {"type":"assistant","timestamp":"2026-07-12T12:00:01Z","sessionId":"s","message":{"id":"m1","model":"claude-sonnet","usage":{"input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":8,"output_tokens_details":{"thinking_tokens":5}},"stop_reason":"end_turn"}},
+      {"type":"assistant","timestamp":"2026-07-12T12:00:02Z","sessionId":"s","agentId":"a","isSidechain":True,"message":{"id":"m2","model":"claude-opus","usage":{"input_tokens":2,"output_tokens":3}}},
+      {"type":"assistant","timestamp":"2026-07-12T12:00:03Z","sessionId":"s","message":{"id":"m3","model":"<synthetic>","usage":{"input_tokens":99}}},
+      {"type":"user","timestamp":"2026-07-12T12:00:04Z","sessionId":"s","message":{"id":"prompt","content":"never read"}},
     ]
-    (root / "session.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n{active", encoding="utf-8")
+    transcript = root / "session.jsonl"
+    transcript.write_text("\n".join(json.dumps(r) for r in rows) + "\n{active", encoding="utf-8")
+    os.utime(transcript, (1_783_857_600, 1_783_857_600))
     facts = list(collect_claude_usage(tmp_path / "projects", "ns:claude"))
     assert len(facts) == 2
     assert facts[0]["output_tokens"] == 8 and facts[0]["reasoning_tokens"] == 5
+    assert facts[0]["occurred_at"] == "2026-07-12T12:00:01Z"
     assert facts[1]["purpose"] == "subagent"
     assert all(f["provider"] == "anthropic" and f["cost_status"] == "included" for f in facts)
+
+
+def test_claude_active_single_receipt_is_deferred_then_same_usage_replay_is_stable(tmp_path):
+    root = tmp_path / "projects" / "p"
+    root.mkdir(parents=True)
+    transcript = root / "session.jsonl"
+    first = {
+        "type": "assistant",
+        "timestamp": "2026-07-21T19:10:39.593Z",
+        "sessionId": "session",
+        "message": {
+            "id": "message",
+            "model": "claude-opus",
+            "usage": {"input_tokens": 10, "output_tokens": 4},
+            "stop_reason": None,
+        },
+    }
+    later = {
+        **first,
+        "timestamp": "2026-07-21T19:11:26.082Z",
+    }
+    transcript.write_text(json.dumps(first) + "\n", encoding="utf-8")
+
+    # A lone non-terminal receipt in a recently modified transcript is provisional.
+    assert list(collect_claude_usage(tmp_path / "projects", "ns:claude")) == []
+
+    transcript.write_text(json.dumps(first) + "\n" + json.dumps(later) + "\n", encoding="utf-8")
+    facts = list(collect_claude_usage(tmp_path / "projects", "ns:claude"))
+    assert len(facts) == 1
+    assert facts[0]["occurred_at"] == "2026-07-21T19:11:26.082Z"
+    assert facts[0]["recorded_at"] == "2026-07-21T19:11:26.082Z"
+    assert facts[0]["output_tokens"] == 4
+
+
+def test_claude_quiescent_single_receipt_is_collected(tmp_path):
+    root = tmp_path / "projects" / "p"
+    root.mkdir(parents=True)
+    transcript = root / "session.jsonl"
+    transcript.write_text(json.dumps({
+        "type": "assistant",
+        "timestamp": "2026-07-12T12:00:00Z",
+        "sessionId": "session",
+        "message": {
+            "id": "message",
+            "model": "claude-opus",
+            "usage": {"input_tokens": 10, "output_tokens": 4},
+            "stop_reason": None,
+        },
+    }) + "\n", encoding="utf-8")
+    os.utime(transcript, (1_783_857_600, 1_783_857_600))
+
+    facts = list(collect_claude_usage(tmp_path / "projects", "ns:claude"))
+    assert len(facts) == 1
 
 
 def _make_opencode(path, *, legacy=False):
@@ -190,6 +246,49 @@ def test_codex_quota_reconciles_retained_weekly_only_raw_payload(tmp_path):
     assert facts["week"]["used_value"] == "15"
     assert facts["week"]["remaining_value"] == "85"
     assert facts["week"]["resets_at"] == "2026-07-19T19:39:02Z"
+
+
+def test_codex_quota_history_mode_projects_every_retained_snapshot(tmp_path):
+    ledger = tmp_path / "codex.jsonl"
+    ledger.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "id": snapshot_id,
+                    "fetched_at": fetched_at,
+                    "session_used_pct": used,
+                    "weekly_used_pct": used + 10,
+                }
+            )
+            for snapshot_id, fetched_at, used in (
+                ("older", "2026-07-11T12:00:00Z", 10),
+                ("newer", "2026-07-12T12:00:00Z", 20),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    newest = codex_quota_observations(ledger, "ns:codex")
+    history = codex_quota_observations(
+        ledger,
+        "ns:codex",
+        include_history=True,
+        history_since="2026-07-10T00:00:00Z",
+    )
+    bounded = codex_quota_observations(
+        ledger,
+        "ns:codex",
+        include_history=True,
+        history_since="2026-07-11T18:00:00Z",
+    )
+
+    assert len(newest) == 2
+    assert {fact["source_observation_id"].split(":", 1)[0] for fact in newest} == {"newer"}
+    assert len(history) == 4
+    assert {fact["source_observation_id"].split(":", 1)[0] for fact in history} == {"older", "newer"}
+    assert len(bounded) == 2
+    assert {fact["source_observation_id"].split(":", 1)[0] for fact in bounded} == {"newer"}
 
 
 def test_codex_quota_nulls_and_opencode_partial_coverage(tmp_path):

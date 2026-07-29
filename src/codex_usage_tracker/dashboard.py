@@ -71,6 +71,7 @@ _PRIVATE_API_MAX_JSONL_BYTES = 128 * 1024 * 1024
 _MAX_PRIVATE_API_DAYS = 36_500
 _MAX_UNIFIED_SERIES_HOURS = 168
 _UNIFIED_MODEL_SERIES_LIMIT = 5
+_PRIVATE_LEDGER_MAX_AGE_SECONDS = 3 * 60 * 60
 _ADDITIVE_TOKEN_FIELDS = (
     "input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens",
 )
@@ -113,6 +114,40 @@ def _fact_datetime(raw_timestamp: Any) -> datetime:
     if parsed.tzinfo is None:
         return datetime.min.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _ledger_freshness(
+    ledger_path: str,
+    *,
+    now: datetime,
+    heartbeat_name: str,
+) -> dict[str, Any]:
+    path = Path(ledger_path).expanduser()
+    heartbeat = path.parent / "health" / heartbeat_name
+    candidates = [heartbeat] if heartbeat.exists() else [path]
+    wal = Path(f"{path}-wal")
+    try:
+        if not heartbeat.exists() and wal.exists() and wal.stat().st_size > 0:
+            candidates.append(wal)
+    except OSError:
+        pass
+    try:
+        latest = max(
+            datetime.fromtimestamp(candidate.stat().st_mtime, timezone.utc).replace(microsecond=0)
+            for candidate in candidates
+        )
+    except (OSError, ValueError):
+        return {
+            "status": "empty",
+            "latest_at": None,
+            "max_age_seconds": _PRIVATE_LEDGER_MAX_AGE_SECONDS,
+        }
+    age_seconds = (now - latest).total_seconds()
+    return {
+        "status": "stale" if age_seconds > _PRIVATE_LEDGER_MAX_AGE_SECONDS else "fresh",
+        "latest_at": latest.isoformat().replace("+00:00", "Z"),
+        "max_age_seconds": _PRIVATE_LEDGER_MAX_AGE_SECONDS,
+    }
 
 
 def _private_facts(
@@ -656,6 +691,11 @@ def create_app(
         if hours is not None:
             window_payload["hours"] = hours
         payload: dict[str, Any] = {
+            "freshness": _ledger_freshness(
+                resolved_unified_usage,
+                now=generated_at,
+                heartbeat_name="usage-collect.ok",
+            ),
             "totals": totals,
             "coverage": coverage,
             "window": window_payload,
@@ -719,6 +759,11 @@ def create_app(
 
         return jsonify(
             {
+                "freshness": _ledger_freshness(
+                    resolved_quota_ledger,
+                    now=datetime.now(timezone.utc),
+                    heartbeat_name="quota-collect.ok",
+                ),
                 "latest": [project(row) for row in latest],
                 "observations": [project(row) for row in rows] if include_history else [],
             }

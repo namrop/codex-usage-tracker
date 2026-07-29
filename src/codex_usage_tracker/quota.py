@@ -28,6 +28,9 @@ GO_WINDOWS: tuple[tuple[str, timedelta, Decimal], ...] = (
     ("week", timedelta(days=7), Decimal("30")),
     ("month", timedelta(days=30), Decimal("60")),
 )
+MAX_CODEX_QUOTA_LEDGER_BYTES = 64 * 1024 * 1024
+MAX_CODEX_QUOTA_SNAPSHOTS = 10_000
+MAX_CODEX_QUOTA_FACTS = 40_000
 
 
 def _now(value: str | datetime | None = None) -> str:
@@ -97,40 +100,14 @@ def _reset(value: Any) -> str | None:
     return canonical_timestamp(value)
 
 
-def codex_quota_observations(
-    ledger_path: str | Path,
+def _codex_snapshot_observations(
+    snapshot: Mapping[str, Any],
     source_namespace: str,
 ) -> list[dict[str, Any]]:
-    """Project the newest legacy Codex snapshot into secret-free quota facts."""
-    path = Path(ledger_path).expanduser()
-    if not path.exists():
-        return []
-    snapshots: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fp:
-        for number, line in enumerate(fp, 1):
-            if not line.strip():
-                continue
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"{path}:{number}: malformed JSON: {exc.msg}") from exc
-            if not isinstance(value, dict):
-                raise ValueError(f"{path}:{number}: snapshot must be an object")
-            snapshots.append(reconcile_snapshot_windows(value))
-    if not snapshots:
-        return []
-    snapshot = max(
-        snapshots,
-        key=lambda item: _parse_dt(item.get("fetched_at")) or datetime.min.replace(tzinfo=timezone.utc),
-    )
     observed = snapshot.get("fetched_at")
     if not observed:
-        raise ValueError(f"{path}: newest snapshot has no fetched_at")
+        raise ValueError("Codex snapshot has no fetched_at")
     snapshot_id = str(snapshot.get("id") or _now(observed))
-    definitions = (
-        ("five_hour", "session_used_pct", "session_reset_at"),
-        ("week", "weekly_used_pct", "weekly_reset_at"),
-    )
     rows = [
         _quota(
             namespace=source_namespace,
@@ -147,9 +124,11 @@ def codex_quota_observations(
             resets_at=_reset(snapshot.get(reset_field)),
             x_plan_type=snapshot.get("plan_type"),
         )
-        for name, used_field, reset_field in definitions
+        for name, used_field, reset_field in (
+            ("five_hour", "session_used_pct", "session_reset_at"),
+            ("week", "weekly_used_pct", "weekly_reset_at"),
+        )
     ]
-    # Spark is an independent pair of limits when present in newer snapshots.
     if "spark_session_used_pct" in snapshot or "spark_weekly_used_pct" in snapshot:
         for name, used_field, reset_field in (
             ("spark_five_hour", "spark_session_used_pct", "spark_session_reset_at"),
@@ -172,6 +151,60 @@ def codex_quota_observations(
                     x_plan_type=snapshot.get("plan_type"),
                 )
             )
+    return rows
+
+
+def codex_quota_observations(
+    ledger_path: str | Path,
+    source_namespace: str,
+    *,
+    include_history: bool = False,
+    history_since: str | datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Project the newest snapshot, or a bounded retained history after a cutoff."""
+    path = Path(ledger_path).expanduser()
+    if not path.exists():
+        return []
+    if path.stat().st_size > MAX_CODEX_QUOTA_LEDGER_BYTES:
+        raise ValueError("Codex snapshot ledger exceeds the bounded input size")
+    cutoff = _parse_dt(history_since) if history_since is not None else None
+    if include_history and cutoff is None:
+        raise ValueError("history_since is required for Codex quota history")
+    if not include_history and cutoff is not None:
+        raise ValueError("history_since requires include_history")
+    snapshots: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as fp:
+        for number, line in enumerate(fp, 1):
+            if not line.strip():
+                continue
+            if len(snapshots) >= MAX_CODEX_QUOTA_SNAPSHOTS:
+                raise ValueError("Codex snapshot ledger exceeds the bounded snapshot count")
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{path}:{number}: malformed JSON: {exc.msg}") from exc
+            if not isinstance(value, dict):
+                raise ValueError(f"{path}:{number}: snapshot must be an object")
+            snapshots.append(reconcile_snapshot_windows(value))
+    if not snapshots:
+        return []
+    snapshots.sort(
+        key=lambda item: _parse_dt(item.get("fetched_at")) or datetime.min.replace(tzinfo=timezone.utc)
+    )
+    if include_history:
+        assert cutoff is not None
+        selected = [
+            snapshot
+            for snapshot in snapshots
+            if (observed := _parse_dt(snapshot.get("fetched_at"))) is not None and observed > cutoff
+        ]
+    else:
+        selected = snapshots[-1:]
+    rows: list[dict[str, Any]] = []
+    for snapshot in selected:
+        rows.extend(_codex_snapshot_observations(snapshot, source_namespace))
+        if len(rows) > MAX_CODEX_QUOTA_FACTS:
+            raise ValueError("Codex quota history exceeds the bounded fact count")
     return rows
 
 

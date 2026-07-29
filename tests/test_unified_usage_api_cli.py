@@ -185,6 +185,88 @@ def test_unified_private_aggregate_endpoints_and_filters(tmp_path):
     assert client.get("/api/unified-usage?days=-1").status_code == 400
 
 
+def test_private_dashboard_labels_stale_usage_and_quota_ledgers(tmp_path, monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    usage = tmp_path / "usage.jsonl"
+    quota = tmp_path / "quota.jsonl"
+    usage.write_text(canonical_json(dict(
+        _usage_fact("old"),
+        occurred_at="2026-07-14T06:00:00Z",
+        recorded_at="2026-07-14T06:00:00Z",
+    )) + "\n", encoding="utf-8")
+    quota.write_text(canonical_json({
+        "fact_type": "quota_observation_v1",
+        "schema_version": 1,
+        "source_namespace": "quota",
+        "source_observation_id": "old",
+        "harness": "test",
+        "observed_at": "2026-07-14T06:00:00Z",
+        "provider": "example",
+        "quota_name": "weekly",
+        "quota_scope": "account",
+        "window_kind": "rolling",
+        "unit": "percent",
+        "measurement_confidence": "exact",
+    }) + "\n", encoding="utf-8")
+    stale_mtime = datetime(2026, 7, 14, 6, 0, 0, tzinfo=timezone.utc).timestamp()
+    os.utime(usage, (stale_mtime, stale_mtime))
+    os.utime(quota, (stale_mtime, stale_mtime))
+    client = create_app(unified_usage_ledger=str(usage), quota_ledger=str(quota)).test_client()
+
+    usage_payload = client.get("/api/unified-usage?hours=3").get_json()
+    quota_payload = client.get("/api/subscriptions?days=30&history=0").get_json()
+    expected = {
+        "status": "stale",
+        "latest_at": "2026-07-14T06:00:00Z",
+        "max_age_seconds": 10800,
+    }
+    assert usage_payload["freshness"] == expected
+    assert quota_payload["freshness"] == expected
+
+    page = client.get("/").get_data(as_text=True)
+    assert "Canonical usage is stale" in page
+    assert "Subscription observations are stale" in page
+
+
+def test_private_dashboard_uses_success_heartbeats_for_noop_collection_freshness(tmp_path, monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    usage = tmp_path / "usage.jsonl"
+    quota = tmp_path / "quota.jsonl"
+    usage.write_text(canonical_json(_usage_fact("old")) + "\n", encoding="utf-8")
+    quota.write_text("", encoding="utf-8")
+    old = datetime(2026, 7, 14, 1, 0, 0, tzinfo=timezone.utc).timestamp()
+    os.utime(usage, (old, old))
+    os.utime(quota, (old, old))
+    health = tmp_path / "health"
+    health.mkdir()
+    usage_ok = health / "usage-collect.ok"
+    quota_ok = health / "quota-collect.ok"
+    usage_ok.touch()
+    quota_ok.touch()
+    recent = datetime(2026, 7, 14, 11, 30, 0, tzinfo=timezone.utc).timestamp()
+    os.utime(usage_ok, (recent, recent))
+    os.utime(quota_ok, (recent, recent))
+    client = create_app(unified_usage_ledger=str(usage), quota_ledger=str(quota)).test_client()
+
+    expected = {
+        "status": "fresh",
+        "latest_at": "2026-07-14T11:30:00Z",
+        "max_age_seconds": 10800,
+    }
+    assert client.get("/api/unified-usage?hours=3").get_json()["freshness"] == expected
+    assert client.get("/api/subscriptions?days=30&history=0").get_json()["freshness"] == expected
+
+
 def _chart_fact(source_id, occurred_at, *, harness, provider, model_requested, model_reported=None, **tokens):
     row = dict(
         _usage_fact(source_id),
@@ -543,6 +625,10 @@ def test_collect_all_cli_uses_real_sol_defaults(monkeypatch, capsys):
     assert captured["claude_quota_command"] == "claude"
     assert captured["claude_probe_dir"] == "~/.local/state/codex-usage-tracker/claude-probe"
     assert captured["claude_quota_timeout"] == 25.0
+    assert captured["scope"] == "all"
+    assert captured["codex_quota_history"] is False
+    assert captured["codex_quota_history_since"] is None
+    assert captured["strict_sources"] is False
     assert captured["usage_ledger"] == "~/.local/state/codex-usage-tracker/usage_events.sqlite3"
     assert captured["quota_ledger"] == "~/.local/state/codex-usage-tracker/quota_observations.sqlite3"
     assert captured["billing_ledger"] == "~/.local/state/codex-usage-tracker/billing_facts.sqlite3"
@@ -714,6 +800,207 @@ def test_collect_all_preserves_jsonl_backend_compatibility(tmp_path, monkeypatch
     assert read_facts(usage)[0]["source_event_id"] == "u-1"
     assert {row["fact_type"] for row in read_facts(quota)} == {"quota_observation_v1"}
     assert read_facts(billing) == []
+
+
+def test_collect_all_quarantines_one_changed_identity_without_blocking_safe_usage(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.sqlite3"
+    original = dict(_usage_fact("private-source-id"), input_tokens=1)
+    changed = dict(original, input_tokens=99)
+    safe = dict(_usage_fact("safe"), input_tokens=2)
+    append_sqlite_facts(usage, [original], fact_type="usage_event_v1")
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", lambda *args: [changed, safe])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", lambda *args: [])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+
+    result = collect_all(
+        state_db=tmp_path / "state.db",
+        claude_root=tmp_path / "claude",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "codex.jsonl",
+        usage_ledger=usage,
+        quota_ledger=tmp_path / "quota.sqlite3",
+        live_quota=False,
+        scope="usage",
+    )
+
+    rows = {row["source_event_id"]: row for row in read_sqlite_facts(usage)}
+    assert rows["private-source-id"]["input_tokens"] == 1
+    assert rows["safe"]["input_tokens"] == 2
+    assert result["usage"] == {"appended": 1, "discovered": 2, "quarantined": 1, "replayed": 0}
+    assert len(result["conflicts"]) == 1
+    conflict = result["conflicts"][0]
+    assert conflict["source"] == "hermes"
+    assert conflict["error"] == "IdentityConflictError"
+    assert conflict["changed_fields"] == ["input_tokens"]
+    assert len(conflict["identity_sha256"]) == 64
+    assert "private-source-id" not in json.dumps(result)
+
+
+def test_collect_all_reuses_existing_claude_timestamp_as_canonical_replay(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.sqlite3"
+    original = dict(
+        _usage_fact("private-source-id"),
+        occurred_at="2026-07-21T19:10:39.593Z",
+        recorded_at="2026-07-21T19:10:39.593Z",
+    )
+    later_receipt = dict(
+        original,
+        occurred_at="2026-07-21T19:11:26.082Z",
+        recorded_at="2026-07-21T19:11:26.082Z",
+    )
+    append_sqlite_facts(usage, [original], fact_type="usage_event_v1")
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", lambda *args: [])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", lambda *args: [later_receipt])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+
+    result = collect_all(
+        state_db=tmp_path / "state.db",
+        claude_root=tmp_path / "claude",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "codex.jsonl",
+        usage_ledger=usage,
+        quota_ledger=tmp_path / "quota.sqlite3",
+        live_quota=False,
+        scope="usage",
+    )
+
+    assert result["usage"] == {"appended": 0, "discovered": 1, "replayed": 1}
+    assert result["warnings"] == []
+    assert result["conflicts"] == []
+    assert len(result["stabilized_replays"]) == 1
+    stabilized = result["stabilized_replays"][0]
+    assert stabilized["source"] == "claude_code"
+    assert stabilized["resolution"] == "canonical_replay"
+    assert stabilized["changed_fields"] == ["occurred_at", "recorded_at"]
+    assert "private-source-id" not in json.dumps(result)
+
+
+def test_collect_all_strict_sources_refuses_partial_success(tmp_path, monkeypatch):
+    def broken(*args, **kwargs):
+        raise OSError("private source path")
+
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", broken)
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", lambda *args: [])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+
+    with pytest.raises(RuntimeError, match="strict source policy"):
+        collect_all(
+            state_db=tmp_path / "state.db",
+            claude_root=tmp_path / "claude",
+            opencode_dbs=[],
+            codex_ledger=tmp_path / "codex.jsonl",
+            usage_ledger=tmp_path / "usage.sqlite3",
+            quota_ledger=tmp_path / "quota.sqlite3",
+            live_quota=False,
+            scope="usage",
+            strict_sources=True,
+        )
+
+
+def test_codex_quota_history_is_source_isolated_and_idempotent(tmp_path, monkeypatch):
+    codex = tmp_path / "codex.jsonl"
+    codex.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "id": snapshot_id,
+                    "fetched_at": fetched_at,
+                    "session_used_pct": used,
+                    "weekly_used_pct": used + 10,
+                }
+            )
+            for snapshot_id, fetched_at, used in (
+                ("older", "2026-07-11T12:00:00Z", 10),
+                ("newer", "2026-07-12T12:00:00Z", 20),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("non-Codex source must not run during bounded history recovery")
+
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", unexpected)
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_openrouter_quota", unexpected)
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_deepseek_quota", unexpected)
+    quota = tmp_path / "quota.sqlite3"
+    kwargs = {
+        "state_db": tmp_path / "state.db",
+        "claude_root": tmp_path / "claude",
+        "opencode_dbs": [],
+        "codex_ledger": codex,
+        "usage_ledger": tmp_path / "usage.sqlite3",
+        "quota_ledger": quota,
+        "live_quota": False,
+        "scope": "quota",
+        "codex_quota_history": True,
+        "codex_quota_history_since": "2026-07-11T18:00:00Z",
+    }
+
+    first = collect_all(**kwargs)
+    second = collect_all(**kwargs)
+
+    assert set(first["sources"]) == {"codex_quota"}
+    assert first["warnings"] == []
+    assert first["quotas"] == {"appended": 2, "discovered": 2, "replayed": 0}
+    assert second["quotas"] == {"appended": 0, "discovered": 2, "replayed": 2}
+    assert len(read_sqlite_facts(quota, fact_type="quota_observation_v1")) == 2
+
+
+def test_codex_quota_history_rejects_unbounded_or_mixed_scope(tmp_path):
+    base = {
+        "state_db": tmp_path / "state.db",
+        "claude_root": tmp_path / "claude",
+        "opencode_dbs": [],
+        "codex_ledger": tmp_path / "codex.jsonl",
+        "usage_ledger": tmp_path / "usage.sqlite3",
+        "quota_ledger": tmp_path / "quota.sqlite3",
+        "live_quota": False,
+        "codex_quota_history": True,
+    }
+    with pytest.raises(ValueError, match="history-since"):
+        collect_all(scope="quota", **base)
+    with pytest.raises(ValueError, match="scope quota"):
+        collect_all(scope="all", codex_quota_history_since="2026-07-11T18:00:00Z", **base)
+
+
+def test_collect_all_scopes_do_not_touch_out_of_scope_ledgers(tmp_path, monkeypatch):
+    _stub_collectors(monkeypatch, [_usage_fact()])
+    usage = tmp_path / "usage.sqlite3"
+    quota = tmp_path / "quota.sqlite3"
+    billing = tmp_path / "billing.sqlite3"
+
+    usage_result = collect_all(
+        state_db=tmp_path / "state.db",
+        claude_root=tmp_path / "claude",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "missing-codex.jsonl",
+        usage_ledger=usage,
+        quota_ledger=quota,
+        billing_ledger=billing,
+        live_quota=False,
+        scope="usage",
+    )
+    assert usage_result["scope"] == "usage"
+    assert "usage" in usage_result and "quotas" not in usage_result and "billing" not in usage_result
+    assert usage.exists() and not quota.exists() and not billing.exists()
+
+    quota_result = collect_all(
+        state_db=tmp_path / "missing-state.db",
+        claude_root=tmp_path / "missing-claude",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "missing-codex.jsonl",
+        usage_ledger=tmp_path / "out-of-scope-usage.bad",
+        quota_ledger=quota,
+        billing_ledger=billing,
+        live_quota=False,
+        scope="quota",
+    )
+    assert quota_result["scope"] == "quota"
+    assert "usage" not in quota_result and "quotas" in quota_result and "billing" not in quota_result
+    assert quota.exists() and not billing.exists()
+    assert not (tmp_path / "out-of-scope-usage.bad").exists()
 
 
 def test_collect_all_rejects_unknown_ledger_suffix(tmp_path, monkeypatch):

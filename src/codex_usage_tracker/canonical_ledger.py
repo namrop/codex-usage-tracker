@@ -107,6 +107,17 @@ class AppendResult:
     replayed: int
 
 
+@dataclass(frozen=True)
+class ConflictSummary:
+    """Safe diagnostic for one rejected incoming canonical identity."""
+
+    identity_sha256: str
+    existing_sha256: str
+    incoming_sha256: str
+    changed_fields: tuple[str, ...]
+    resolution: str = "quarantined"
+
+
 def _reject_secrets(value: Any, path: str = "$") -> None:
     if isinstance(value, dict):
         for key, child in value.items():
@@ -463,6 +474,32 @@ def _identity(row: dict[str, Any]) -> tuple[str, str]:
     return row["source_namespace"], row[key]
 
 
+def _conflict_summary(
+    identity: tuple[str, str],
+    existing_payload: str,
+    incoming_payload: str,
+    *,
+    resolution: str = "quarantined",
+) -> ConflictSummary:
+    existing = json.loads(existing_payload)
+    incoming = json.loads(incoming_payload)
+    changed_fields = tuple(
+        sorted(
+            key
+            for key in set(existing) | set(incoming)
+            if existing.get(key) != incoming.get(key)
+        )
+    )
+    identity_payload = _jcs_dumps([identity[0], identity[1]])
+    return ConflictSummary(
+        identity_sha256=hashlib.sha256(identity_payload.encode("utf-8")).hexdigest(),
+        existing_sha256=hashlib.sha256(existing_payload.encode("utf-8")).hexdigest(),
+        incoming_sha256=hashlib.sha256(incoming_payload.encode("utf-8")).hexdigest(),
+        changed_fields=changed_fields,
+        resolution=resolution,
+    )
+
+
 def _read_stream(fp: Any, display: str) -> list[dict[str, Any]]:
     # Parse the complete physical stream first. A corrupt JSON line is the most
     # actionable integrity error even if an earlier object also fails schema.
@@ -596,6 +633,134 @@ def append_facts(path: str | Path, facts: Iterable[dict[str, Any]], *, dry_run: 
         if pending or not target.exists():
             _atomic_write(target, [*existing, *pending])
         return result
+
+
+def append_facts_quarantined(
+    path: str | Path,
+    facts: Iterable[dict[str, Any]],
+    *,
+    dry_run: bool = False,
+    equivalent_changed_fields: frozenset[str] = frozenset(),
+) -> tuple[AppendResult, tuple[ConflictSummary, ...]]:
+    """Append valid JSONL facts while returning changed incoming identities."""
+    incoming = [normalize_fact(fact) for fact in facts]
+    target = Path(path).expanduser()
+    if dry_run:
+        existing = _read_facts_without_side_effects(target) if target.exists() else []
+        result, _pending, conflicts = _compare_quarantined(
+            existing,
+            incoming,
+            equivalent_changed_fields=equivalent_changed_fields,
+        )
+        return result, tuple(conflicts)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with _ledger_lock(target, fcntl.LOCK_EX):
+        if target.exists():
+            os.chmod(target, 0o600)
+            with target.open("r", encoding="utf-8") as fp:
+                existing = _read_stream(fp, str(target))
+        else:
+            existing = []
+        result, pending, conflicts = _compare_quarantined(
+            existing,
+            incoming,
+            equivalent_changed_fields=equivalent_changed_fields,
+        )
+        if pending or not target.exists():
+            _atomic_write(target, [*existing, *pending])
+        return result, tuple(conflicts)
+
+
+def _compare_quarantined(
+    existing: list[dict[str, Any]],
+    incoming: list[dict[str, Any]],
+    *,
+    equivalent_changed_fields: frozenset[str] = frozenset(),
+) -> tuple[AppendResult, list[dict[str, Any]], list[ConflictSummary]]:
+    seen: dict[tuple[str, str], str] = {}
+    for row in existing:
+        identity = _identity(row)
+        payload = canonical_json(row)
+        if identity in seen and seen[identity] != payload:
+            raise IdentityConflictError(f"conflicting existing facts for {identity!r}")
+        seen[identity] = payload
+
+    grouped: dict[tuple[str, str], list[tuple[dict[str, Any], str]]] = {}
+    for row in incoming:
+        grouped.setdefault(_identity(row), []).append((row, canonical_json(row)))
+
+    appended = replayed = 0
+    pending: list[dict[str, Any]] = []
+    conflicts: list[ConflictSummary] = []
+    for identity, variants in grouped.items():
+        distinct: dict[str, dict[str, Any]] = {}
+        for row, payload in variants:
+            distinct.setdefault(payload, row)
+        existing_payload = seen.get(identity)
+
+        if len(distinct) > 1:
+            if existing_payload is not None:
+                changed = [
+                    _conflict_summary(identity, existing_payload, payload)
+                    for payload in distinct
+                    if payload != existing_payload
+                ]
+                if changed and all(
+                    summary.changed_fields
+                    and set(summary.changed_fields) <= equivalent_changed_fields
+                    for summary in changed
+                ):
+                    replayed += len(variants)
+                    conflicts.extend(
+                        _conflict_summary(
+                            identity,
+                            existing_payload,
+                            payload,
+                            resolution="canonical_replay",
+                        )
+                        for payload in distinct
+                        if payload != existing_payload
+                    )
+                    continue
+                summary = next(
+                    (
+                        candidate
+                        for candidate in changed
+                        if not candidate.changed_fields
+                        or not set(candidate.changed_fields) <= equivalent_changed_fields
+                    ),
+                    changed[0],
+                )
+            else:
+                payloads = list(distinct)
+                summary = _conflict_summary(identity, payloads[0], payloads[1])
+            conflicts.append(summary)
+            continue
+
+        payload, row = next(iter((payload, row) for payload, row in distinct.items()))
+        if existing_payload is None:
+            seen[identity] = payload
+            pending.append(row)
+            appended += 1
+            replayed += len(variants) - 1
+            continue
+        if existing_payload == payload:
+            replayed += len(variants)
+            continue
+        summary = _conflict_summary(identity, existing_payload, payload)
+        if summary.changed_fields and set(summary.changed_fields) <= equivalent_changed_fields:
+            replayed += len(variants)
+            conflicts.append(
+                _conflict_summary(
+                    identity,
+                    existing_payload,
+                    payload,
+                    resolution="canonical_replay",
+                )
+            )
+        else:
+            conflicts.append(summary)
+    return AppendResult(len(incoming), appended, replayed), pending, conflicts
 
 
 def _compare(
@@ -1353,41 +1518,111 @@ def _open_writable_sqlite(path: Path, fact_type: str) -> tuple[sqlite3.Connectio
 
 
 def _compare_sqlite_incoming(
-    connection: sqlite3.Connection, incoming: list[dict[str, Any]]
-) -> tuple[AppendResult, list[tuple[dict[str, Any], str, str]]]:
-    appended = replayed = 0
-    pending: list[tuple[dict[str, Any], str, str]] = []
-    batch_seen: dict[tuple[str, str], tuple[str, str]] = {}
+    connection: sqlite3.Connection,
+    incoming: list[dict[str, Any]],
+    *,
+    quarantine_conflicts: bool = False,
+    equivalent_changed_fields: frozenset[str] = frozenset(),
+) -> tuple[
+    AppendResult,
+    list[tuple[dict[str, Any], str, str]],
+    list[ConflictSummary],
+]:
+    grouped: dict[tuple[str, str], list[tuple[dict[str, Any], str, str]]] = {}
     for row in incoming:
-        identity = _identity(row)
         payload = _jcs_dumps(row)
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        prior = batch_seen.get(identity)
-        if prior is not None:
-            if prior != (payload, digest):
-                raise IdentityConflictError(f"conflicting replay for {identity!r}")
-            replayed += 1
-            continue
+        grouped.setdefault(_identity(row), []).append((row, payload, digest))
+
+    appended = replayed = 0
+    pending: list[tuple[dict[str, Any], str, str]] = []
+    conflicts: list[ConflictSummary] = []
+    for identity, variants in grouped.items():
+        distinct: dict[str, tuple[dict[str, Any], str]] = {}
+        for row, payload, digest in variants:
+            distinct.setdefault(payload, (row, digest))
         existing = connection.execute(
             "SELECT canonical_json, canonical_sha256 FROM facts WHERE source_namespace = ? AND source_identity = ?",
             identity,
         ).fetchone()
-        if existing is not None:
-            if existing != (payload, digest):
+        existing_payload = str(existing[0]) if existing is not None else None
+
+        if len(distinct) > 1:
+            if not quarantine_conflicts:
                 raise IdentityConflictError(f"conflicting replay for {identity!r}")
-            replayed += 1
-        else:
-            appended += 1
+            if existing_payload is not None:
+                changed = [
+                    _conflict_summary(identity, existing_payload, payload)
+                    for payload in distinct
+                    if payload != existing_payload
+                ]
+                if changed and all(
+                    summary.changed_fields
+                    and set(summary.changed_fields) <= equivalent_changed_fields
+                    for summary in changed
+                ):
+                    replayed += len(variants)
+                    conflicts.extend(
+                        _conflict_summary(
+                            identity,
+                            existing_payload,
+                            payload,
+                            resolution="canonical_replay",
+                        )
+                        for payload in distinct
+                        if payload != existing_payload
+                    )
+                    continue
+                summary = next(
+                    (
+                        candidate
+                        for candidate in changed
+                        if not candidate.changed_fields
+                        or not set(candidate.changed_fields) <= equivalent_changed_fields
+                    ),
+                    changed[0],
+                )
+            else:
+                payloads = list(distinct)
+                summary = _conflict_summary(identity, payloads[0], payloads[1])
+            conflicts.append(summary)
+            continue
+
+        payload, (row, digest) = next(iter(distinct.items()))
+        if existing_payload is None:
             pending.append((row, payload, digest))
-        batch_seen[identity] = (payload, digest)
-    return AppendResult(len(incoming), appended, replayed), pending
+            appended += 1
+            replayed += len(variants) - 1
+            continue
+        if existing == (payload, digest):
+            replayed += len(variants)
+            continue
+        if not quarantine_conflicts:
+            raise IdentityConflictError(f"conflicting replay for {identity!r}")
+        summary = _conflict_summary(identity, existing_payload, payload)
+        if summary.changed_fields and set(summary.changed_fields) <= equivalent_changed_fields:
+            replayed += len(variants)
+            conflicts.append(
+                _conflict_summary(
+                    identity,
+                    existing_payload,
+                    payload,
+                    resolution="canonical_replay",
+                )
+            )
+        else:
+            conflicts.append(summary)
+    return AppendResult(len(incoming), appended, replayed), pending, conflicts
 
 
-def _append_sqlite_facts_locked(
+def _append_sqlite_facts_policy_locked(
     target: Path,
     incoming: list[dict[str, Any]],
     expected: str,
-) -> AppendResult:
+    *,
+    quarantine_conflicts: bool,
+    equivalent_changed_fields: frozenset[str] = frozenset(),
+) -> tuple[AppendResult, tuple[ConflictSummary, ...]]:
     connection, created = _open_writable_sqlite(target, expected)
     completed = False
     try:
@@ -1395,7 +1630,12 @@ def _append_sqlite_facts_locked(
         _migrate_legacy_timestamp_index(connection, expected)
         _validate_sqlite_schema(connection, expected)
         _secure_sqlite_files(target)
-        result, pending = _compare_sqlite_incoming(connection, incoming)
+        result, pending, conflicts = _compare_sqlite_incoming(
+            connection,
+            incoming,
+            quarantine_conflicts=quarantine_conflicts,
+            equivalent_changed_fields=equivalent_changed_fields,
+        )
         ingested_at = _timestamp(datetime.now(timezone.utc).isoformat(), "ingested_at")
         for row, payload, digest in pending:
             namespace, identity = _identity(row)
@@ -1414,7 +1654,7 @@ def _append_sqlite_facts_locked(
             )
         connection.execute("COMMIT")
         completed = True
-        return result
+        return result, tuple(conflicts)
     except Exception:
         if connection.in_transaction:
             connection.execute("ROLLBACK")
@@ -1425,6 +1665,20 @@ def _append_sqlite_facts_locked(
             _remove_sqlite_artifacts(target)
         elif os.path.lexists(target):
             _secure_sqlite_files(target)
+
+
+def _append_sqlite_facts_locked(
+    target: Path,
+    incoming: list[dict[str, Any]],
+    expected: str,
+) -> AppendResult:
+    result, _conflicts = _append_sqlite_facts_policy_locked(
+        target,
+        incoming,
+        expected,
+        quarantine_conflicts=False,
+    )
+    return result
 
 
 def append_sqlite_facts(
@@ -1449,7 +1703,7 @@ def append_sqlite_facts(
         try:
             _validate_persistent_wal_header(target)
             _validate_sqlite_schema(connection, expected, verify_journal_mode=False)
-            result, _pending = _compare_sqlite_incoming(connection, incoming)
+            result, _pending, _conflicts = _compare_sqlite_incoming(connection, incoming)
             _reject_active_wal_for_immutable_read(target)
             return result
         finally:
@@ -1469,6 +1723,66 @@ def append_sqlite_facts(
     _ensure_private_directory(target.parent)
     with _ledger_lock(target, fcntl.LOCK_EX):
         return _append_sqlite_facts_locked(target, incoming, expected)
+
+
+def append_sqlite_facts_quarantined(
+    path: str | Path,
+    facts: Iterable[dict[str, Any]],
+    *,
+    fact_type: str | None = None,
+    dry_run: bool = False,
+    equivalent_changed_fields: frozenset[str] = frozenset(),
+) -> tuple[AppendResult, tuple[ConflictSummary, ...]]:
+    """Append non-conflicting SQLite facts while safely reporting changed replays."""
+    incoming = [normalize_fact(fact) for fact in facts]
+    expected = _homogeneous_fact_type(incoming, fact_type)
+    target = Path(path).expanduser()
+    if dry_run:
+        if not target.exists():
+            result, _pending, conflicts = _compare_quarantined(
+                [],
+                incoming,
+                equivalent_changed_fields=equivalent_changed_fields,
+            )
+            return result, tuple(conflicts)
+        if not target.is_file():
+            raise MalformedLedgerError(f"SQLite ledger is not a regular file: {target}")
+        _reject_active_wal_for_immutable_read(target)
+        connection = _read_only_sqlite(target, immutable=True)
+        try:
+            _validate_persistent_wal_header(target)
+            _validate_sqlite_schema(connection, expected, verify_journal_mode=False)
+            result, _pending, conflicts = _compare_sqlite_incoming(
+                connection,
+                incoming,
+                quarantine_conflicts=True,
+                equivalent_changed_fields=equivalent_changed_fields,
+            )
+            _reject_active_wal_for_immutable_read(target)
+            return result, tuple(conflicts)
+        finally:
+            connection.close()
+    if expected is None:
+        if not target.exists():
+            raise ValidationError("fact_type is required to create an empty SQLite ledger")
+        if not target.is_file():
+            raise MalformedLedgerError(f"SQLite ledger is not a regular file: {target}")
+        connection = _read_only_sqlite(target)
+        try:
+            _validate_sqlite_schema(connection)
+            return AppendResult(0, 0, 0), ()
+        finally:
+            connection.close()
+
+    _ensure_private_directory(target.parent)
+    with _ledger_lock(target, fcntl.LOCK_EX):
+        return _append_sqlite_facts_policy_locked(
+            target,
+            incoming,
+            expected,
+            quarantine_conflicts=True,
+            equivalent_changed_fields=equivalent_changed_fields,
+        )
 
 
 def _reject_path_alias(source: Path, destination: Path) -> None:

@@ -2049,6 +2049,15 @@
           const response = await fetch("/api/unified-usage?hours=168");
           if (!response.ok) throw new Error("unavailable");
           const data = await response.json();
+          const freshness = data.freshness || {};
+          if (freshness.status === "stale") {
+            showPanel("unifiedUsageState", "unifiedUsageContent", `Canonical usage is stale · last ledger write ${formatTimestamp(freshness.latest_at)}.`);
+            return;
+          }
+          if (freshness.status === "empty") {
+            showPanel("unifiedUsageState", "unifiedUsageContent", "Canonical usage is unavailable.");
+            return;
+          }
           const events = Number(data.window && data.window.event_count || 0);
           if (!events) {
             showPanel("unifiedUsageState", "unifiedUsageContent", "No unified usage events in the last 168 complete hours.");
@@ -2092,6 +2101,15 @@
           const response = await fetch("/api/subscriptions?days=30&history=0");
           if (!response.ok) throw new Error("unavailable");
           const data = await response.json();
+          const freshness = data.freshness || {};
+          if (freshness.status === "stale") {
+            showPanel("subscriptionsState", "subscriptionsContent", `Subscription observations are stale · last ledger write ${formatTimestamp(freshness.latest_at)}.`);
+            return;
+          }
+          if (freshness.status === "empty") {
+            showPanel("subscriptionsState", "subscriptionsContent", "Subscription observations are unavailable.");
+            return;
+          }
           const rows = Array.isArray(data.latest) ? data.latest : [];
           if (!rows.length) {
             showPanel("subscriptionsState", "subscriptionsContent", "No subscription observations.");

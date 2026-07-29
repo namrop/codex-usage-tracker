@@ -14,7 +14,9 @@ from codex_usage_tracker.canonical_ledger import (
     IdentityConflictError,
     MalformedLedgerError,
     ValidationError,
+    append_facts_quarantined,
     append_sqlite_facts,
+    append_sqlite_facts_quarantined,
     audit_sqlite_ledger,
     canonical_json,
     export_sqlite_to_jsonl,
@@ -82,6 +84,39 @@ def billing(source_billing_fact_id: str = "b-1", **updates):
     }
     row.update(updates)
     return row
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_quarantined_jsonl_batch_does_not_choose_a_conflicting_new_identity(tmp_path, reverse):
+    rows = [usage("same", input_tokens=1), usage("same", input_tokens=99)]
+    if reverse:
+        rows.reverse()
+
+    result, conflicts = append_facts_quarantined(tmp_path / "usage.jsonl", rows)
+
+    assert result.appended == 0
+    assert result.replayed == 0
+    assert len(conflicts) == 1
+    assert read_facts(tmp_path / "usage.jsonl") == []
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_quarantined_sqlite_batch_does_not_choose_a_conflicting_new_identity(tmp_path, reverse):
+    rows = [usage("same", input_tokens=1), usage("same", input_tokens=99)]
+    if reverse:
+        rows.reverse()
+    path = tmp_path / "usage.sqlite3"
+
+    result, conflicts = append_sqlite_facts_quarantined(
+        path,
+        rows,
+        fact_type="usage_event_v1",
+    )
+
+    assert result.appended == 0
+    assert result.replayed == 0
+    assert len(conflicts) == 1
+    assert read_sqlite_facts(path, fact_type="usage_event_v1") == []
 
 
 def test_billing_fact_validation_materialization_and_canonicalization():

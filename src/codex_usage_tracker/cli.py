@@ -275,6 +275,10 @@ def cmd_collect_all(args: argparse.Namespace) -> int:
             live_quota=not args.no_live_quota,
             dry_run=args.dry_run,
             source_prefix=args.source_prefix,
+            scope=args.scope,
+            codex_quota_history=args.codex_quota_history,
+            codex_quota_history_since=args.codex_quota_history_since,
+            strict_sources=args.strict_sources,
         )
     except Exception as exc:
         print(f"collect-all failed: {type(exc).__name__}", file=sys.stderr)
@@ -519,6 +523,27 @@ def main() -> int:
         help="Seconds to wait for Claude Code's /usage view",
     )
     collect_parser.add_argument("--source-prefix", default="sol", help="Stable source namespace prefix")
+    collect_parser.add_argument(
+        "--scope",
+        choices=("all", "usage", "quota"),
+        default="all",
+        help="Collect both lanes or only the independently scheduled usage/quota lane",
+    )
+    collect_parser.add_argument(
+        "--strict-sources",
+        action="store_true",
+        help="Exit nonzero after any source warning or quarantined identity",
+    )
+    collect_parser.add_argument(
+        "--codex-quota-history",
+        action="store_true",
+        help="Run a source-isolated idempotent recovery from retained legacy Codex snapshots",
+    )
+    collect_parser.add_argument(
+        "--codex-quota-history-since",
+        default=None,
+        help="Required exclusive ISO-8601 cutoff for bounded Codex quota history recovery",
+    )
     collect_parser.add_argument(
         "--no-live-quota",
         action="store_true",

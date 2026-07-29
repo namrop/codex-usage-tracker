@@ -220,10 +220,27 @@ codex-usage-tracker collect-all \
   --billing-ledger ~/.local/state/codex-usage-tracker/billing_facts.sqlite3
 ```
 
+Use `--scope usage` or `--scope quota` to run the independently schedulable lanes.
+The usage scope reads and writes only usage sources/the usage ledger. The quota
+scope reads the Codex/OpenCode quota sources plus enabled provider probes and
+writes only the quota ledger. Out-of-scope default paths are not preflighted or
+created; billing remains bound only by the compatibility `all` scope. Scheduled
+health-signaled runs should add `--strict-sources`; this keeps partial source
+failures from refreshing a success heartbeat even though already-valid independent
+source batches remain durably appended.
+
 Use `--dry-run` to validate adapters, type bindings, and replay/conflict behavior
 without creating locks, changing permissions, or writing ledger artifacts. Use
 `--no-live-quota` for a completely local run. Successful runs print one compact
 JSON summary and no source payloads.
+
+For a bounded recovery from retained legacy Codex snapshots, run only the quota
+scope with `--codex-quota-history`, `--codex-quota-history-since <ISO-8601>`,
+and `--no-live-quota`. The exclusive cutoff, input-size/snapshot/fact ceilings, and
+source-isolated mode bound the operation. It projects only retained Codex
+snapshots through the secret-free quota contract and fails on malformed input;
+canonical identity makes retries idempotent. Normal scheduled quota runs continue
+to read only the newest snapshot.
 
 ### Migration, audit, and JSONL interchange
 
@@ -267,14 +284,24 @@ field names, canonicalize with RFC 8785/JCS, and enforce idempotent source
 identities. SQLite uses exact immutable schema validation, WAL mode, private
 `0600` database/sidecar/lock artifacts, transactionally serialized first-start,
 and indexed append/query paths. Replaying an identical source identity is a
-no-op; replaying it with different content is an error. Explicit audits scan and
+no-op; replaying it with different content is an error. The strict canonical
+writer APIs retain that fail-closed contract. `collect-all` uses an explicit
+source-isolated projection policy: a changed identity is omitted while unrelated
+facts and sources continue, and only source class, hashes, and changed field names
+are reported. Claude Code's mutable streaming receipts are deferred until terminal,
+repeated-identical, or file-quiescent; a historical receipt that differs only in
+`occurred_at`/`recorded_at` reuses the already-committed canonical timestamp and is
+reported as a `canonical_replay`, never overwritten. Explicit audits scan and
 revalidate every stored payload. Token accounting keeps input, cache read,
 cache write, output, and reasoning buckets separate; reasoning is diagnostic
 and is not added twice where canonical output already includes it.
 
 The dashboard exposes private aggregates when configured with
 `UNIFIED_USAGE_LEDGER_PATH`, `QUOTA_LEDGER_PATH`, and `BILLING_LEDGER_PATH` (or
-the corresponding `create_app` arguments):
+the corresponding `create_app` arguments). Usage and subscription responses
+include a three-hour ledger-write freshness contract (`fresh`, `stale`, or
+`empty`); the UI stops rendering ordinary charts/rows when either canonical lane
+is stale:
 
 - `GET /api/unified-usage` supports `provider`, `harness`, `purpose`,
   `model_requested`, and `days`; it returns token/request-cost totals, selected
