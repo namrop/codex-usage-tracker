@@ -11,8 +11,8 @@ explicit interchange format.
   tokens, and fetches `/backend-api/wham/usage` from `chatgpt.com`.
 - Preserves the legacy Codex JSONL snapshot daemon and public-safe projection.
 - Collects usage from Hermes, Claude Code, and OpenCode plus quota/account
-  observations from Codex, Claude Code, OpenRouter, DeepSeek, and estimated
-  OpenCode Go windows.
+  observations from Codex, Claude Code, Kimi Code, OpenRouter, DeepSeek, and
+  estimated OpenCode Go windows.
 - Maintains separate `usage_event_v1`, `quota_observation_v1`, and
   `billing_fact_v1` SQLite ledgers.
 - Provides eleven CLI subcommands:
@@ -263,9 +263,13 @@ Run `migrate-ledger ... --dry-run` first. Audit a SQLite ledger with
 `export-ledger --source-sqlite PATH --destination-jsonl PATH --fact-type TYPE`.
 Migration and export reject source/destination aliases.
 
-Live OpenRouter and DeepSeek collection reads `OPENROUTER_API_KEY` and
-`DEEPSEEK_API_KEY` from `/var/lib/hermes/primary/.env` by default. Claude
-subscription limits come from the authenticated Claude Code CLI itself: the
+Live OpenRouter, DeepSeek, and Kimi Code collection reads `OPENROUTER_API_KEY`,
+`DEEPSEEK_API_KEY`, and `KIMI_CODING_API_KEY` from
+`/var/lib/hermes/primary/.env` by default. Kimi's official
+`GET https://api.kimi.com/coding/v1/usages` response becomes exact five-hour
+and weekly `provider_unit` observations; only normalized counters and reset
+times are retained. Claude subscription limits come from the authenticated
+Claude Code CLI itself: the
 tracker opens a short-lived safe-mode TUI in a private probe directory, invokes
 Claude Code's built-in `/usage` view, captures the displayed five-hour, weekly,
 and Fable-week percentages and reset times, and exits without making a model
@@ -273,9 +277,9 @@ call. It reuses one deterministic probe session ID to avoid flooding Claude
 Code's session history. The probe requires `tmux`. Configure this boundary with
 `--claude-command`, `--claude-probe-dir`, and `--claude-quota-timeout`.
 
-The optional `--dotenv PATH` loader recognizes only the OpenRouter and DeepSeek
-credential names, does no variable or command expansion, and never copies
-credentials to ledger rows. Existing process environment values take
+The optional `--dotenv PATH` loader recognizes only the OpenRouter, DeepSeek,
+and Kimi Code credential names, does no variable or command expansion, and
+never copies credentials to ledger rows. Existing process environment values take
 precedence. A live provider failure is isolated: other sources still collect,
 while the compact summary reports only the source name and exception class.
 
@@ -291,7 +295,14 @@ facts and sources continue, and only source class, hashes, and changed field nam
 are reported. Claude Code's mutable streaming receipts are deferred until terminal,
 repeated-identical, or file-quiescent; a historical receipt that differs only in
 `occurred_at`/`recorded_at` reuses the already-committed canonical timestamp and is
-reported as a `canonical_replay`, never overwritten. Explicit audits scan and
+reported as a `canonical_replay`, never overwritten. A previously committed
+non-terminal Claude receipt that later becomes `ok` with nondecreasing token counts
+keeps the immutable original and appends one deterministic signed `correction`;
+zero-token corrections retain finalization metadata without changing totals. The
+reconciliation reads the complete ledger and appends inside the canonical writer
+lock/SQLite transaction. Duplicate variants, later differing final totals, token
+decreases, unrelated field changes, and foreign/manual corrections remain
+quarantined conflicts. Explicit audits scan and
 revalidate every stored payload. Token accounting keeps input, cache read,
 cache write, output, and reasoning buckets separate; reasoning is diagnostic
 and is not added twice where canonical output already includes it.

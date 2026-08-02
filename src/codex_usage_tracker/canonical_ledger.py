@@ -15,7 +15,7 @@ import re
 import sqlite3
 import stat
 import tempfile
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 MAX_SAFE_INTEGER = 2**53 - 1
 _RFC3339_RE = re.compile(
@@ -669,6 +669,58 @@ def append_facts_quarantined(
         if pending or not target.exists():
             _atomic_write(target, [*existing, *pending])
         return result, tuple(conflicts)
+
+
+def append_facts_quarantined_reconciled(
+    path: str | Path,
+    facts: Iterable[dict[str, Any]],
+    *,
+    reconcile: Callable[
+        [list[dict[str, Any]], list[dict[str, Any]]],
+        tuple[list[dict[str, Any]], Any],
+    ],
+    dry_run: bool = False,
+    equivalent_changed_fields: frozenset[str] = frozenset(),
+) -> tuple[AppendResult, tuple[ConflictSummary, ...], Any]:
+    """Reconcile against a locked JSONL snapshot, then append atomically.
+
+    The callback runs while the canonical writer lock is held so no standard
+    writer can insert a correction between the semantic read and append.
+    """
+    incoming = [normalize_fact(fact) for fact in facts]
+    target = Path(path).expanduser()
+
+    def prepare(existing: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], Any]:
+        prepared, metadata = reconcile(existing, incoming)
+        return [normalize_fact(fact) for fact in prepared], metadata
+
+    if dry_run:
+        existing = _read_facts_without_side_effects(target) if target.exists() else []
+        prepared, metadata = prepare(existing)
+        result, _pending, conflicts = _compare_quarantined(
+            existing,
+            prepared,
+            equivalent_changed_fields=equivalent_changed_fields,
+        )
+        return result, tuple(conflicts), metadata
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with _ledger_lock(target, fcntl.LOCK_EX):
+        if target.exists():
+            os.chmod(target, 0o600)
+            with target.open("r", encoding="utf-8") as fp:
+                existing = _read_stream(fp, str(target))
+        else:
+            existing = []
+        prepared, metadata = prepare(existing)
+        result, pending, conflicts = _compare_quarantined(
+            existing,
+            prepared,
+            equivalent_changed_fields=equivalent_changed_fields,
+        )
+        if pending or not target.exists():
+            _atomic_write(target, [*existing, *pending])
+        return result, tuple(conflicts), metadata
 
 
 def _compare_quarantined(
@@ -1622,7 +1674,11 @@ def _append_sqlite_facts_policy_locked(
     *,
     quarantine_conflicts: bool,
     equivalent_changed_fields: frozenset[str] = frozenset(),
-) -> tuple[AppendResult, tuple[ConflictSummary, ...]]:
+    reconcile: Callable[
+        [list[dict[str, Any]], list[dict[str, Any]]],
+        tuple[list[dict[str, Any]], Any],
+    ] | None = None,
+) -> tuple[AppendResult, tuple[ConflictSummary, ...], Any]:
     connection, created = _open_writable_sqlite(target, expected)
     completed = False
     try:
@@ -1630,6 +1686,17 @@ def _append_sqlite_facts_policy_locked(
         _migrate_legacy_timestamp_index(connection, expected)
         _validate_sqlite_schema(connection, expected)
         _secure_sqlite_files(target)
+        metadata: Any = None
+        if reconcile is not None:
+            payloads = connection.execute(
+                "SELECT canonical_json FROM facts ORDER BY ingestion_sequence"
+            ).fetchall()
+            existing = [json.loads(payload) for (payload,) in payloads]
+            incoming, metadata = reconcile(existing, incoming)
+            incoming = [normalize_fact(fact) for fact in incoming]
+            reconciled_type = _homogeneous_fact_type(incoming, expected)
+            if reconciled_type != expected:
+                raise ValidationError("reconciled SQLite batch changed fact_type")
         result, pending, conflicts = _compare_sqlite_incoming(
             connection,
             incoming,
@@ -1654,7 +1721,7 @@ def _append_sqlite_facts_policy_locked(
             )
         connection.execute("COMMIT")
         completed = True
-        return result, tuple(conflicts)
+        return result, tuple(conflicts), metadata
     except Exception:
         if connection.in_transaction:
             connection.execute("ROLLBACK")
@@ -1672,7 +1739,7 @@ def _append_sqlite_facts_locked(
     incoming: list[dict[str, Any]],
     expected: str,
 ) -> AppendResult:
-    result, _conflicts = _append_sqlite_facts_policy_locked(
+    result, _conflicts, _metadata = _append_sqlite_facts_policy_locked(
         target,
         incoming,
         expected,
@@ -1776,12 +1843,77 @@ def append_sqlite_facts_quarantined(
 
     _ensure_private_directory(target.parent)
     with _ledger_lock(target, fcntl.LOCK_EX):
+        result, conflicts, _metadata = _append_sqlite_facts_policy_locked(
+            target,
+            incoming,
+            expected,
+            quarantine_conflicts=True,
+            equivalent_changed_fields=equivalent_changed_fields,
+        )
+        return result, conflicts
+
+
+def append_sqlite_facts_quarantined_reconciled(
+    path: str | Path,
+    facts: Iterable[dict[str, Any]],
+    *,
+    fact_type: str,
+    reconcile: Callable[
+        [list[dict[str, Any]], list[dict[str, Any]]],
+        tuple[list[dict[str, Any]], Any],
+    ],
+    dry_run: bool = False,
+    equivalent_changed_fields: frozenset[str] = frozenset(),
+) -> tuple[AppendResult, tuple[ConflictSummary, ...], Any]:
+    """Reconcile against one locked SQLite transaction before appending."""
+    incoming = [normalize_fact(fact) for fact in facts]
+    expected = _homogeneous_fact_type(incoming, fact_type)
+    assert expected is not None
+    target = Path(path).expanduser()
+
+    if dry_run:
+        if not target.exists():
+            prepared, metadata = reconcile([], incoming)
+            prepared = [normalize_fact(fact) for fact in prepared]
+            result, _pending, conflicts = _compare_quarantined(
+                [],
+                prepared,
+                equivalent_changed_fields=equivalent_changed_fields,
+            )
+            return result, tuple(conflicts), metadata
+        if not target.is_file():
+            raise MalformedLedgerError(f"SQLite ledger is not a regular file: {target}")
+        _reject_active_wal_for_immutable_read(target)
+        connection = _read_only_sqlite(target, immutable=True)
+        try:
+            _validate_persistent_wal_header(target)
+            _validate_sqlite_schema(connection, expected, verify_journal_mode=False)
+            payloads = connection.execute(
+                "SELECT canonical_json FROM facts ORDER BY ingestion_sequence"
+            ).fetchall()
+            existing = [json.loads(payload) for (payload,) in payloads]
+            prepared, metadata = reconcile(existing, incoming)
+            prepared = [normalize_fact(fact) for fact in prepared]
+            result, _pending, conflicts = _compare_sqlite_incoming(
+                connection,
+                prepared,
+                quarantine_conflicts=True,
+                equivalent_changed_fields=equivalent_changed_fields,
+            )
+            _reject_active_wal_for_immutable_read(target)
+            return result, tuple(conflicts), metadata
+        finally:
+            connection.close()
+
+    _ensure_private_directory(target.parent)
+    with _ledger_lock(target, fcntl.LOCK_EX):
         return _append_sqlite_facts_policy_locked(
             target,
             incoming,
             expected,
             quarantine_conflicts=True,
             equivalent_changed_fields=equivalent_changed_fields,
+            reconcile=reconcile,
         )
 
 

@@ -519,7 +519,7 @@ def main() -> int:
     collect_parser.add_argument(
         "--claude-quota-timeout",
         type=float,
-        default=25.0,
+        default=45.0,
         help="Seconds to wait for Claude Code's /usage view",
     )
     collect_parser.add_argument("--source-prefix", default="sol", help="Stable source namespace prefix")

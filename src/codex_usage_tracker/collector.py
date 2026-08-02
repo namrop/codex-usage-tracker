@@ -6,6 +6,7 @@ canonical usage, quota, and optional billing ledgers supplied by the caller.
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
 import os
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -13,18 +14,24 @@ from typing import Any, Iterable, Mapping
 from .canonical_ledger import (
     AppendResult,
     ConflictSummary,
+    TOKEN_FIELDS,
     ValidationError,
     _read_facts_without_side_effects,
     append_facts,
     append_facts_quarantined,
+    append_facts_quarantined_reconciled,
     append_sqlite_facts,
     append_sqlite_facts_quarantined,
+    append_sqlite_facts_quarantined_reconciled,
+    canonical_json,
+    normalize_fact,
     query_sqlite_facts,
 )
 from .quota import (
     codex_quota_observations,
     collect_claude_code_quota,
     collect_deepseek_quota,
+    collect_kimi_code_quota,
     collect_openrouter_quota,
     derive_opencode_go_quotas,
 )
@@ -34,6 +41,7 @@ ALLOWED_DOTENV_KEYS = frozenset(
     {
         "OPENROUTER_API_KEY",
         "DEEPSEEK_API_KEY",
+        "KIMI_CODING_API_KEY",
     }
 )
 
@@ -137,6 +145,38 @@ def _append_canonical_ledger_quarantined(
     )
 
 
+def _append_canonical_ledger_quarantined_reconciled(
+    path: str | Path,
+    facts: Iterable[dict[str, Any]],
+    *,
+    fact_type: str,
+    dry_run: bool,
+    reconcile: Any,
+    equivalent_changed_fields: frozenset[str] = frozenset(),
+) -> tuple[AppendResult, tuple[ConflictSummary, ...], Any]:
+    """Run semantic reconciliation inside the canonical writer boundary."""
+    backend = _ledger_backend(path)
+    rows = list(facts)
+    if backend == "sqlite":
+        return append_sqlite_facts_quarantined_reconciled(
+            path,
+            rows,
+            fact_type=fact_type,
+            reconcile=reconcile,
+            dry_run=dry_run,
+            equivalent_changed_fields=equivalent_changed_fields,
+        )
+    if any(not isinstance(row, dict) or row.get("fact_type") != fact_type for row in rows):
+        raise ValidationError(f"ledger requires fact_type {fact_type}")
+    return append_facts_quarantined_reconciled(
+        path,
+        rows,
+        reconcile=reconcile,
+        dry_run=dry_run,
+        equivalent_changed_fields=equivalent_changed_fields,
+    )
+
+
 def _aggregate_append_results(
     batches: Iterable[tuple[AppendResult, int]],
 ) -> dict[str, int]:
@@ -191,6 +231,152 @@ def _preflight_ledger_binding(path: str | Path, fact_type: str, *, dry_run: bool
         raise ValidationError(f"ledger requires fact_type {fact_type}")
 
 
+_CLAUDE_FINALIZATION_MUTABLE_FIELDS = frozenset(
+    {"occurred_at", "recorded_at", "request_status", *TOKEN_FIELDS}
+)
+
+
+def _fact_sha256(row: Mapping[str, Any]) -> str:
+    return hashlib.sha256(canonical_json(dict(row)).encode("utf-8")).hexdigest()
+
+
+def _identity_sha256(row: Mapping[str, Any]) -> str:
+    namespace = str(row.get("source_namespace") or "")
+    event_id = str(row.get("source_event_id") or "")
+    return hashlib.sha256(f"{namespace}\0{event_id}".encode("utf-8")).hexdigest()
+
+
+def _reconcile_finalized_claude_rows(
+    existing: list[dict[str, Any]],
+    rows: Iterable[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], tuple[int, list[dict[str, Any]]]]:
+    """Convert safe monotonic Claude stream finalizations into signed corrections.
+
+    The caller supplies the complete canonical snapshot while holding the writer
+    boundary. The original attempt remains immutable; only one deterministic
+    signed token delta may be added. Differing incoming variants, decreases,
+    unrelated mutations, and non-generated corrections stay quarantined.
+    """
+    incoming = [normalize_fact(row) for row in rows]
+    existing = [normalize_fact(row) for row in existing]
+    if not existing:
+        return incoming, (0, [])
+
+    baselines: dict[tuple[str, str], dict[str, Any]] = {}
+    corrections: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in existing:
+        if row.get("record_kind") == "correction":
+            target_namespace = row.get("corrects_source_namespace")
+            target_event = row.get("corrects_source_event_id")
+            if isinstance(target_namespace, str) and isinstance(target_event, str):
+                corrections.setdefault((target_namespace, target_event), []).append(row)
+            continue
+        identity = (str(row.get("source_namespace")), str(row.get("source_event_id")))
+        baselines[identity] = row
+
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in incoming:
+        identity = (str(row.get("source_namespace")), str(row.get("source_event_id")))
+        grouped.setdefault(identity, []).append(row)
+
+    reconciled: list[dict[str, Any]] = []
+    generated = 0
+    resolutions: list[dict[str, Any]] = []
+    for identity, variants in grouped.items():
+        if len({canonical_json(row) for row in variants}) > 1:
+            # Preserve all variants so the canonical writer quarantines the
+            # ambiguous identity instead of manufacturing multiple deltas.
+            reconciled.extend(variants)
+            continue
+        row = variants[0]
+        baseline = baselines.get(identity)
+        if baseline is None:
+            reconciled.extend(variants)
+            continue
+        changed_fields = sorted(
+            key for key in set(baseline) | set(row) if baseline.get(key) != row.get(key)
+        )
+        target_corrections = corrections.get(identity, [])
+        safe_generated_corrections = all(
+            correction.get("x_claude_stream_finalization") is True
+            for correction in target_corrections
+        )
+        eligible = (
+            bool(changed_fields)
+            and set(changed_fields).issubset(_CLAUDE_FINALIZATION_MUTABLE_FIELDS)
+            and baseline.get("harness") == "claude_code"
+            and row.get("harness") == "claude_code"
+            and baseline.get("request_status") == "unknown"
+            and row.get("request_status") == "ok"
+            and safe_generated_corrections
+        )
+        deltas: dict[str, int] = {}
+        if eligible:
+            for field in TOKEN_FIELDS:
+                effective = int(baseline.get(field) or 0) + sum(
+                    int(correction.get(field) or 0) for correction in target_corrections
+                )
+                current = int(row.get(field) or 0)
+                deltas[field] = current - effective
+                if current < effective:
+                    eligible = False
+                    break
+            # A prior generated finalization may prove idempotence, but it may
+            # not be incrementally extended. A later differing final total is
+            # ambiguous and remains quarantined.
+            if target_corrections and any(deltas.values()):
+                eligible = False
+        if not eligible:
+            reconciled.extend(variants)
+            continue
+
+        # Replay one immutable baseline per exact incoming duplicate so the
+        # generic writer preserves its discovered/replayed accounting.
+        reconciled.extend([baseline] * len(variants))
+        incoming_sha = _fact_sha256(row)
+        if not target_corrections:
+            correction = dict(row)
+            correction.update(
+                {
+                    "source_event_id": f"{row['source_event_id']}:stream-finalization",
+                    "event_uid": None,
+                    "logical_call_id": None,
+                    "provider_request_id": None,
+                    "record_kind": "correction",
+                    "request_status": None,
+                    "error_class": None,
+                    "latency_ms": None,
+                    "attempt_no": None,
+                    "reconstructed_call_count": None,
+                    "estimated_cost_usd": None,
+                    "actual_cost_usd": None,
+                    "cost_source": None,
+                    "pricing_version": None,
+                    "cost_status": "included",
+                    "corrects_source_namespace": row["source_namespace"],
+                    "corrects_source_event_id": row["source_event_id"],
+                    "x_claude_stream_finalization": True,
+                    "x_final_request_status": "ok",
+                    "x_finalized_source_sha256": incoming_sha,
+                }
+            )
+            for field, delta in deltas.items():
+                correction[field] = delta
+            reconciled.append(normalize_fact(correction))
+            generated += 1
+        resolutions.append(
+            {
+                "source": "claude_code",
+                "resolution": "canonical_correction",
+                "identity_sha256": _identity_sha256(row),
+                "existing_sha256": _fact_sha256(baseline),
+                "incoming_sha256": incoming_sha,
+                "changed_fields": changed_fields,
+            }
+        )
+    return reconciled, (generated, resolutions)
+
+
 def collect_all(
     *,
     state_db: str | Path,
@@ -203,7 +389,7 @@ def collect_all(
     dotenv: str | Path | None = None,
     claude_quota_command: str | Path | None = None,
     claude_probe_dir: str | Path = "~/.local/state/codex-usage-tracker/claude-probe",
-    claude_quota_timeout: float = 25.0,
+    claude_quota_timeout: float = 45.0,
     live_quota: bool = True,
     dry_run: bool = False,
     environment: Mapping[str, str] | None = None,
@@ -251,6 +437,7 @@ def collect_all(
     warnings: list[dict[str, str]] = []
     conflicts: list[dict[str, Any]] = []
     stabilized_replays: list[dict[str, Any]] = []
+    generated_corrections = 0
 
     def collect_source(source: str, collect: Any) -> list[dict[str, Any]]:
         try:
@@ -269,17 +456,35 @@ def collect_all(
         *,
         fact_type: str,
     ) -> tuple[AppendResult, int]:
-        append_result, summaries = _append_canonical_ledger_quarantined(
-            path,
-            rows,
-            fact_type=fact_type,
-            dry_run=dry_run,
-            equivalent_changed_fields=(
-                frozenset({"occurred_at", "recorded_at"})
-                if source == "claude_code" and fact_type == "usage_event_v1"
-                else frozenset()
-            ),
+        nonlocal generated_corrections
+        prepared_rows = list(rows)
+        equivalent_fields = (
+            frozenset({"occurred_at", "recorded_at"})
+            if source == "claude_code" and fact_type == "usage_event_v1"
+            else frozenset()
         )
+        if source == "claude_code" and fact_type == "usage_event_v1":
+            append_result, summaries, reconciliation = (
+                _append_canonical_ledger_quarantined_reconciled(
+                    path,
+                    prepared_rows,
+                    fact_type=fact_type,
+                    dry_run=dry_run,
+                    reconcile=_reconcile_finalized_claude_rows,
+                    equivalent_changed_fields=equivalent_fields,
+                )
+            )
+            generated, resolutions = reconciliation
+            generated_corrections += generated
+            stabilized_replays.extend(resolutions)
+        else:
+            append_result, summaries = _append_canonical_ledger_quarantined(
+                path,
+                prepared_rows,
+                fact_type=fact_type,
+                dry_run=dry_run,
+                equivalent_changed_fields=equivalent_fields,
+            )
         quarantined = [summary for summary in summaries if summary.resolution == "quarantined"]
         stabilized = [summary for summary in summaries if summary.resolution == "canonical_replay"]
         if quarantined:
@@ -345,6 +550,7 @@ def collect_all(
             persist_source("opencode", usage_ledger, opencode, fact_type="usage_event_v1"),
         ]
         result["usage"] = _aggregate_append_results(usage_batches)
+        result["generated_corrections"] = generated_corrections
         paths["usage_ledger"] = str(Path(usage_ledger).expanduser())
 
     if collect_quota_scope:
@@ -433,6 +639,21 @@ def collect_all(
                                 lambda: collect_deepseek_quota(
                                     deepseek_key,
                                     f"{source_prefix}:deepseek-quota",
+                                ),
+                            ),
+                        )
+                    )
+
+                kimi_key = env.get("KIMI_CODING_API_KEY")
+                if kimi_key:
+                    quota_sources.append(
+                        (
+                            "kimi_code_quota",
+                            collect_source(
+                                "kimi_code_quota",
+                                lambda: collect_kimi_code_quota(
+                                    kimi_key,
+                                    f"{source_prefix}:kimi-code-quota",
                                 ),
                             ),
                         )

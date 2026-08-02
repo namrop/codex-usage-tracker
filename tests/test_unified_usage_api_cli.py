@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -23,6 +26,7 @@ from codex_usage_tracker.quota import (
     capture_claude_code_usage_screen,
     collect_claude_code_quota,
     collect_deepseek_quota,
+    collect_kimi_code_quota,
     collect_openrouter_quota,
 )
 from codex_usage_tracker.collector import collect_all
@@ -60,13 +64,193 @@ def test_live_provider_fetches_are_structured_and_secret_free(monkeypatch):
                 return Response({"data":{"total_credits":100,"total_usage":25}})
             if url.endswith("key"):
                 return Response({"data":{"limit":50,"limit_remaining":40,"usage":10}})
-            return Response({"balance_infos":[{"currency":"USD","total_balance":"8.25","granted_balance":"1"}],"is_available":True})
+            return Response({"balance_infos":[{"currency":"USD","total_balance":"8.25","granted_balance":"10","topped_up_balance":"-1.75"}],"is_available":True})
     monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client",Client)
     opened=collect_openrouter_quota("key", "ns:or", observed_at="2026-07-12T12:00:00Z")
     deep=collect_deepseek_quota("key", "ns:ds", observed_at="2026-07-12T12:00:00Z")
     assert {r["quota_name"] for r in opened} >= {"credit_balance","api_key_quota"}
     assert deep[0]["remaining_value"]=="8.25"
+    assert deep[0]["x_topped_up_balance"] == "-1.75"
     assert '"key"' not in json.dumps(opened+deep).lower()
+
+
+def test_deepseek_negative_account_balance_clamps_remaining_and_preserves_signed_value(monkeypatch):
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {
+                "balance_infos": [{
+                    "currency": "USD",
+                    "total_balance": "-1.75",
+                    "granted_balance": "0",
+                    "topped_up_balance": "-1.75",
+                }],
+                "is_available": False,
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers): return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    rows = collect_deepseek_quota("private-key", "ns:deepseek")
+
+    assert rows[0]["remaining_value"] == "0"
+    assert rows[0]["x_provider_balance"] == "-1.75"
+    assert rows[0]["x_topped_up_balance"] == "-1.75"
+    assert rows[0]["x_is_available"] is False
+
+
+def test_kimi_code_quota_uses_official_windows_and_derives_missing_remaining(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {
+                "usage": {
+                    "limit": "100",
+                    "used": "21",
+                    "remaining": "79",
+                    "resetTime": "2026-08-09T02:45:51.442531Z",
+                },
+                "limits": [{
+                    "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                    "detail": {
+                        "limit": "100",
+                        "used": "100",
+                        "resetTime": "2026-08-02T07:45:51.442531Z",
+                    },
+                }],
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs): captured["timeout"] = kwargs.get("timeout")
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers):
+            captured["url"] = url
+            captured["authorized"] = headers.get("Authorization") == "Bearer private-key"
+            return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    rows = collect_kimi_code_quota(
+        "private-key",
+        "ns:kimi-code",
+        observed_at="2026-08-02T05:25:00Z",
+    )
+
+    assert captured == {
+        "timeout": 30.0,
+        "url": "https://api.kimi.com/coding/v1/usages",
+        "authorized": True,
+    }
+    assert {row["quota_name"] for row in rows} == {"five_hour", "week"}
+    five_hour = next(row for row in rows if row["quota_name"] == "five_hour")
+    weekly = next(row for row in rows if row["quota_name"] == "week")
+    assert five_hour["window_kind"] == "rolling"
+    assert five_hour["limit_value"] == "100"
+    assert five_hour["used_value"] == "100"
+    assert five_hour["remaining_value"] == "0"
+    assert five_hour["resets_at"] == "2026-08-02T07:45:51.442531Z"
+    assert weekly["window_kind"] == "fixed"
+    assert weekly["used_value"] == "21" and weekly["remaining_value"] == "79"
+    assert weekly["resets_at"] == "2026-08-09T02:45:51.442531Z"
+    assert all(
+        row["provider"] == "kimi-coding"
+        and row["harness"] == "kimi_code"
+        and row["unit"] == "provider_unit"
+        and row["measurement_confidence"] == "exact"
+        for row in rows
+    )
+    assert "private-key" not in json.dumps(rows)
+
+
+def test_kimi_code_quota_rejects_missing_five_hour_window(monkeypatch):
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {
+                "usage": {"limit": "100", "used": "21", "remaining": "79"},
+                "limits": [],
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers): return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    with pytest.raises(ValueError, match="five-hour"):
+        collect_kimi_code_quota("private-key", "ns:kimi-code")
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (
+            {
+                "usage": {"limit": "100", "used": "21", "remaining": "80"},
+                "limits": [{
+                    "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                    "detail": {"limit": "100", "used": "10", "remaining": "90"},
+                }],
+            },
+            "inconsistent",
+        ),
+        (
+            {
+                "usage": {"limit": "100", "used": "21", "remaining": "79"},
+                "limits": [
+                    {
+                        "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                        "detail": {"limit": "100", "used": "10", "remaining": "90"},
+                    },
+                    {
+                        "window": {"duration": 5, "timeUnit": "TIME_UNIT_HOUR"},
+                        "detail": {"limit": "100", "used": "10", "remaining": "90"},
+                    },
+                ],
+            },
+            "ambiguous",
+        ),
+        (
+            {
+                "usage": {"limit": "100", "used": "21", "remaining": "79"},
+                "limits": [
+                    {
+                        "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                        "detail": {"limit": "100", "used": "10", "remaining": "90"},
+                    },
+                    {
+                        "window": {"duration": 5, "timeUnit": "TIME_UNIT_HOUR"},
+                        "detail": None,
+                    },
+                ],
+            },
+            "ambiguous",
+        ),
+    ],
+)
+def test_kimi_code_quota_rejects_contradictory_or_ambiguous_payloads(
+    monkeypatch, payload, message
+):
+    class Response:
+        def raise_for_status(self): pass
+        def json(self): return payload
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers): return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    with pytest.raises(ValueError, match=message):
+        collect_kimi_code_quota("private-key", "ns:kimi-code")
 
 
 def test_claude_quota_comes_from_claude_code_usage_screen(tmp_path, monkeypatch):
@@ -573,6 +757,68 @@ def test_latest_budget_state_filters_to_current_week(monkeypatch):
     assert result["direct_provider_spend_usd"]==9
 
 
+def test_collect_all_loads_and_persists_kimi_code_quota_without_secret_leak(tmp_path, monkeypatch):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(
+        "KIMI_CODING_API_KEY=private-kimi-key\nUNRELATED_SECRET=must-not-load\n",
+        encoding="utf-8",
+    )
+    captured = {}
+
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {
+                "usage": {
+                    "limit": "100", "used": "21", "remaining": "79",
+                    "resetTime": "2026-08-09T02:45:51.442531Z",
+                },
+                "limits": [{
+                    "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                    "detail": {
+                        "limit": "100", "used": "100",
+                        "resetTime": "2026-08-02T07:45:51.442531Z",
+                    },
+                }],
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers):
+            captured["authorized"] = headers.get("Authorization") == "Bearer private-kimi-key"
+            return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    quota = tmp_path / "quota.sqlite3"
+    result = collect_all(
+        state_db=tmp_path / "missing-state.db",
+        claude_root=tmp_path / "missing-claude",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "missing-codex.jsonl",
+        usage_ledger=tmp_path / "out-of-scope-usage.sqlite3",
+        quota_ledger=quota,
+        dotenv=dotenv,
+        claude_quota_command=None,
+        live_quota=True,
+        environment={},
+        scope="quota",
+    )
+
+    kimi_rows = [
+        row for row in read_sqlite_facts(quota, fact_type="quota_observation_v1")
+        if row["provider"] == "kimi-coding"
+    ]
+    assert captured == {"authorized": True}
+    assert result["sources"]["kimi_code_quota"] == {"discovered": 2}
+    assert result["warnings"] == []
+    assert {row["quota_name"] for row in kimi_rows} == {"five_hour", "week"}
+    assert "private-kimi-key" not in json.dumps(result)
+    assert "private-kimi-key" not in json.dumps(kimi_rows)
+    assert "must-not-load" not in json.dumps(result)
+
+
 def test_live_quota_failures_are_isolated_and_reported(tmp_path, monkeypatch):
     state=tmp_path/"missing.db"; claude=tmp_path/"claude"; claude.mkdir()
     monkeypatch.setattr(
@@ -624,7 +870,7 @@ def test_collect_all_cli_uses_real_sol_defaults(monkeypatch, capsys):
     assert captured["dotenv"] == "/var/lib/hermes/primary/.env"
     assert captured["claude_quota_command"] == "claude"
     assert captured["claude_probe_dir"] == "~/.local/state/codex-usage-tracker/claude-probe"
-    assert captured["claude_quota_timeout"] == 25.0
+    assert captured["claude_quota_timeout"] == 45.0
     assert captured["scope"] == "all"
     assert captured["codex_quota_history"] is False
     assert captured["codex_quota_history_since"] is None
@@ -873,6 +1119,289 @@ def test_collect_all_reuses_existing_claude_timestamp_as_canonical_replay(tmp_pa
     assert stabilized["resolution"] == "canonical_replay"
     assert stabilized["changed_fields"] == ["occurred_at", "recorded_at"]
     assert "private-source-id" not in json.dumps(result)
+
+
+def test_collect_all_corrects_finalized_claude_stream_without_rewriting_original(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.sqlite3"
+    original = dict(
+        _usage_fact("private-source-id"),
+        harness="claude_code",
+        provider="anthropic",
+        model_requested="claude-opus",
+        model_reported="claude-opus",
+        occurred_at="2026-08-01T19:10:47.465Z",
+        recorded_at="2026-08-01T19:10:47.465Z",
+        request_status="unknown",
+        input_tokens=10,
+        cache_read_tokens=20,
+        cache_write_tokens=0,
+        output_tokens=5,
+        reasoning_tokens=0,
+    )
+    finalized = dict(
+        original,
+        occurred_at="2026-08-01T19:10:50.384Z",
+        recorded_at="2026-08-01T19:10:50.384Z",
+        request_status="ok",
+        output_tokens=1028,
+    )
+    append_sqlite_facts(usage, [original], fact_type="usage_event_v1")
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", lambda *args: [])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", lambda *args: [finalized])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+    kwargs = dict(
+        state_db=tmp_path / "state.db",
+        claude_root=tmp_path / "claude",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "codex.jsonl",
+        usage_ledger=usage,
+        quota_ledger=tmp_path / "quota.sqlite3",
+        live_quota=False,
+        scope="usage",
+        strict_sources=True,
+    )
+
+    first = collect_all(**kwargs)
+    rows = read_sqlite_facts(usage, fact_type="usage_event_v1")
+    original_after = next(row for row in rows if row["source_event_id"] == "private-source-id")
+    correction = next(row for row in rows if row["record_kind"] == "correction")
+
+    assert original_after["output_tokens"] == 5
+    assert original_after["request_status"] == "unknown"
+    assert original_after["occurred_at"] == "2026-08-01T19:10:47.465Z"
+    assert correction["output_tokens"] == 1023
+    assert correction["input_tokens"] == 0
+    assert correction["cache_read_tokens"] == 0
+    assert correction["corrects_source_namespace"] == original["source_namespace"]
+    assert correction["corrects_source_event_id"] == "private-source-id"
+    assert correction["x_final_request_status"] == "ok"
+    assert sum(int(row.get("output_tokens") or 0) for row in rows) == 1028
+    assert first["warnings"] == [] and first["conflicts"] == []
+    assert first["usage"] == {"appended": 1, "discovered": 2, "replayed": 1}
+    assert first["generated_corrections"] == 1
+    assert first["stabilized_replays"][0]["resolution"] == "canonical_correction"
+    assert "private-source-id" not in json.dumps(first)
+
+    second = collect_all(**kwargs)
+    assert second["usage"] == {"appended": 0, "discovered": 1, "replayed": 1}
+    assert second["generated_corrections"] == 0
+    assert len(read_sqlite_facts(usage, fact_type="usage_event_v1")) == 2
+
+
+def test_collect_all_records_zero_token_claude_finalization_once(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.sqlite3"
+    original = dict(
+        _usage_fact("private-source-id"),
+        harness="claude_code",
+        provider="anthropic",
+        request_status="unknown",
+        occurred_at="2026-08-01T19:10:47.465Z",
+        recorded_at="2026-08-01T19:10:47.465Z",
+        output_tokens=5,
+    )
+    finalized = dict(
+        original,
+        request_status="ok",
+        occurred_at="2026-08-01T19:10:50.384Z",
+        recorded_at="2026-08-01T19:10:50.384Z",
+    )
+    append_sqlite_facts(usage, [original], fact_type="usage_event_v1")
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", lambda *args: [])
+    monkeypatch.setattr(
+        "codex_usage_tracker.collector.collect_claude_usage", lambda *args: [finalized]
+    )
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+    kwargs: dict[str, Any] = dict(
+        state_db=tmp_path / "state.db",
+        claude_root=tmp_path / "claude",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "codex.jsonl",
+        usage_ledger=usage,
+        quota_ledger=tmp_path / "quota.sqlite3",
+        live_quota=False,
+        scope="usage",
+        strict_sources=True,
+    )
+
+    first = collect_all(**kwargs)
+    second = collect_all(**kwargs)
+    rows = read_sqlite_facts(usage, fact_type="usage_event_v1")
+    corrections = [row for row in rows if row["record_kind"] == "correction"]
+
+    assert len(corrections) == 1
+    assert corrections[0]["x_final_request_status"] == "ok"
+    assert all(int(corrections[0].get(field) or 0) == 0 for field in (
+        "input_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+    ))
+    assert sum(int(row.get("output_tokens") or 0) for row in rows) == 5
+    assert first["generated_corrections"] == 1
+    assert second["generated_corrections"] == 0
+    assert len(rows) == 2
+
+
+def test_collect_all_does_not_correct_nonmonotonic_claude_mutation(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.sqlite3"
+    original = dict(
+        _usage_fact("private-source-id"),
+        harness="claude_code",
+        provider="anthropic",
+        request_status="unknown",
+        output_tokens=50,
+    )
+    changed = dict(original, request_status="ok", output_tokens=5)
+    append_sqlite_facts(usage, [original], fact_type="usage_event_v1")
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", lambda *args: [])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", lambda *args: [changed])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+
+    with pytest.raises(RuntimeError, match="strict source policy"):
+        collect_all(
+            state_db=tmp_path / "state.db",
+            claude_root=tmp_path / "claude",
+            opencode_dbs=[],
+            codex_ledger=tmp_path / "codex.jsonl",
+            usage_ledger=usage,
+            quota_ledger=tmp_path / "quota.sqlite3",
+            live_quota=False,
+            scope="usage",
+            strict_sources=True,
+        )
+
+    rows = read_sqlite_facts(usage, fact_type="usage_event_v1")
+    assert len(rows) == 1 and rows[0]["output_tokens"] == 50
+
+
+def test_collect_all_quarantines_multiple_finalized_claude_variants(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.sqlite3"
+    original = dict(
+        _usage_fact("private-source-id"),
+        harness="claude_code",
+        provider="anthropic",
+        request_status="unknown",
+        output_tokens=5,
+    )
+    append_sqlite_facts(usage, [original], fact_type="usage_event_v1")
+    variants = [
+        dict(original, request_status="ok", output_tokens=100),
+        dict(original, request_status="ok", output_tokens=200),
+    ]
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", lambda *args: [])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", lambda *args: variants)
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+
+    with pytest.raises(RuntimeError, match="strict source policy"):
+        collect_all(
+            state_db=tmp_path / "state.db",
+            claude_root=tmp_path / "claude",
+            opencode_dbs=[],
+            codex_ledger=tmp_path / "codex.jsonl",
+            usage_ledger=usage,
+            quota_ledger=tmp_path / "quota.sqlite3",
+            live_quota=False,
+            scope="usage",
+            strict_sources=True,
+        )
+
+    rows = read_sqlite_facts(usage, fact_type="usage_event_v1")
+    assert len(rows) == 1
+    assert rows[0]["output_tokens"] == 5
+
+
+def test_collect_all_sees_foreign_manual_correction_before_finalizing_claude(
+    tmp_path, monkeypatch
+):
+    usage = tmp_path / "usage.sqlite3"
+    original = dict(
+        _usage_fact("private-source-id"),
+        harness="claude_code",
+        provider="anthropic",
+        request_status="unknown",
+        output_tokens=5,
+    )
+    manual = dict(
+        original,
+        source_event_id="operator-correction",
+        harness="operator",
+        record_kind="correction",
+        request_status=None,
+        output_tokens=10,
+        corrects_source_namespace=original["source_namespace"],
+        corrects_source_event_id=original["source_event_id"],
+    )
+    append_sqlite_facts(usage, [original, manual], fact_type="usage_event_v1")
+    finalized = dict(original, request_status="ok", output_tokens=100)
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", lambda *args: [])
+    monkeypatch.setattr(
+        "codex_usage_tracker.collector.collect_claude_usage", lambda *args: [finalized]
+    )
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+
+    with pytest.raises(RuntimeError, match="strict source policy"):
+        collect_all(
+            state_db=tmp_path / "state.db",
+            claude_root=tmp_path / "claude",
+            opencode_dbs=[],
+            codex_ledger=tmp_path / "codex.jsonl",
+            usage_ledger=usage,
+            quota_ledger=tmp_path / "quota.sqlite3",
+            live_quota=False,
+            scope="usage",
+            strict_sources=True,
+        )
+
+    rows = read_sqlite_facts(usage, fact_type="usage_event_v1")
+    assert len(rows) == 2
+    assert sum(row["record_kind"] == "correction" for row in rows) == 1
+    assert not any(row.get("x_claude_stream_finalization") for row in rows)
+
+
+def test_concurrent_claude_finalizations_cannot_double_count(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.sqlite3"
+    original = dict(
+        _usage_fact("private-source-id"),
+        harness="claude_code",
+        provider="anthropic",
+        request_status="unknown",
+        output_tokens=5,
+    )
+    append_sqlite_facts(usage, [original], fact_type="usage_event_v1")
+    barrier = threading.Barrier(2)
+    assignment_lock = threading.Lock()
+    assignments = iter((100, 200))
+
+    def concurrent_receipt(*args):
+        with assignment_lock:
+            output_tokens = next(assignments)
+        barrier.wait(timeout=10)
+        return [dict(original, request_status="ok", output_tokens=output_tokens)]
+
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", lambda *args: [])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", concurrent_receipt)
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+    kwargs: dict[str, Any] = dict(
+        state_db=tmp_path / "state.db",
+        claude_root=tmp_path / "claude",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "codex.jsonl",
+        usage_ledger=usage,
+        quota_ledger=tmp_path / "quota.sqlite3",
+        live_quota=False,
+        scope="usage",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: collect_all(**kwargs), range(2)))
+
+    rows = read_sqlite_facts(usage, fact_type="usage_event_v1")
+    corrections = [row for row in rows if row["record_kind"] == "correction"]
+    assert len(corrections) == 1
+    assert sum(int(row.get("output_tokens") or 0) for row in rows) in {100, 200}
+    assert sum(result["generated_corrections"] for result in results) == 1
+    assert sum(len(result["conflicts"]) for result in results) == 1
 
 
 def test_collect_all_strict_sources_refuses_partial_success(tmp_path, monkeypatch):

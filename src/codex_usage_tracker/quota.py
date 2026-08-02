@@ -23,6 +23,7 @@ from .ledger import reconcile_snapshot_windows
 OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance"
+KIMI_CODING_USAGE_URL = "https://api.kimi.com/coding/v1/usages"
 GO_WINDOWS: tuple[tuple[str, timedelta, Decimal], ...] = (
     ("five_hour", timedelta(hours=5), Decimal("12")),
     ("week", timedelta(days=7), Decimal("30")),
@@ -292,6 +293,16 @@ def collect_deepseek_quota(
             continue
         currency = str(balance.get("currency") or "provider_unit").lower()
         unit = "usd" if currency == "usd" else "provider_unit"
+        provider_balance = decimal_string(
+            balance.get("total_balance"),
+            "provider_balance",
+            allow_negative=True,
+        )
+        remaining = (
+            None
+            if provider_balance is None
+            else max(Decimal("0"), Decimal(provider_balance))
+        )
         rows.append(
             _quota(
                 namespace=source_namespace,
@@ -302,14 +313,119 @@ def collect_deepseek_quota(
                 quota_name="account_balance",
                 window_kind="lifetime",
                 unit=unit,
-                remaining=balance.get("total_balance"),
+                remaining=remaining,
                 x_currency=currency.upper(),
                 x_is_available=payload.get("is_available"),
-                x_granted_balance=decimal_string(balance.get("granted_balance"), "granted_balance"),
-                x_topped_up_balance=decimal_string(balance.get("topped_up_balance"), "topped_up_balance"),
+                x_provider_balance=provider_balance,
+                x_granted_balance=decimal_string(
+                    balance.get("granted_balance"),
+                    "granted_balance",
+                    allow_negative=True,
+                ),
+                x_topped_up_balance=decimal_string(
+                    balance.get("topped_up_balance"),
+                    "topped_up_balance",
+                    allow_negative=True,
+                ),
             )
         )
     return rows
+
+
+def _kimi_quota_detail(detail: Any, label: str) -> tuple[str, str, str, str | None]:
+    if not isinstance(detail, Mapping):
+        raise ValueError(f"Kimi {label} quota detail is missing")
+    limit = decimal_string(detail.get("limit"), "limit_value")
+    used = decimal_string(detail.get("used"), "used_value")
+    remaining = decimal_string(detail.get("remaining"), "remaining_value")
+    if limit is None or used is None:
+        raise ValueError(f"Kimi {label} quota requires limit and used values")
+    derived_remaining = max(Decimal("0"), Decimal(limit) - Decimal(used))
+    if remaining is None:
+        remaining = decimal_string(derived_remaining, "remaining_value")
+    elif Decimal(remaining) != derived_remaining:
+        raise ValueError(f"Kimi {label} quota values are inconsistent")
+    assert remaining is not None
+    return limit, used, remaining, _reset(detail.get("resetTime"))
+
+
+def collect_kimi_code_quota(
+    api_key: str,
+    source_namespace: str,
+    *,
+    observed_at: str | datetime | None = None,
+    timeout: float = 30.0,
+) -> list[dict[str, Any]]:
+    """Fetch Kimi Code's weekly and five-hour coding allowance counters."""
+    observed = _now(observed_at)
+    with httpx.Client(timeout=timeout) as client:
+        payload = _payload(
+            client.get(
+                KIMI_CODING_USAGE_URL,
+                headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
+            )
+        )
+
+    weekly_limit, weekly_used, weekly_remaining, weekly_reset = _kimi_quota_detail(
+        payload.get("usage"), "weekly"
+    )
+    five_hour_windows: list[Mapping[str, Any]] = []
+    limits = payload.get("limits")
+    if isinstance(limits, list):
+        for item in limits:
+            if not isinstance(item, Mapping):
+                continue
+            window = item.get("window")
+            if not isinstance(window, Mapping):
+                continue
+            duration = window.get("duration")
+            time_unit = window.get("timeUnit")
+            if (duration, time_unit) in {
+                (300, "TIME_UNIT_MINUTE"),
+                ("300", "TIME_UNIT_MINUTE"),
+                (5, "TIME_UNIT_HOUR"),
+                ("5", "TIME_UNIT_HOUR"),
+            }:
+                five_hour_windows.append(item)
+    if len(five_hour_windows) != 1:
+        raise ValueError("Kimi five-hour quota window is missing or ambiguous")
+    five_hour_detail = five_hour_windows[0].get("detail")
+    if not isinstance(five_hour_detail, Mapping):
+        raise ValueError("Kimi five-hour quota detail is missing")
+    five_limit, five_used, five_remaining, five_reset = _kimi_quota_detail(
+        five_hour_detail, "five-hour"
+    )
+
+    return [
+        _quota(
+            namespace=source_namespace,
+            observation_id=f"{observed}:five_hour",
+            harness="kimi_code",
+            observed_at=observed,
+            provider="kimi-coding",
+            quota_name="five_hour",
+            window_kind="rolling",
+            unit="provider_unit",
+            limit=five_limit,
+            used=five_used,
+            remaining=five_remaining,
+            resets_at=five_reset,
+        ),
+        _quota(
+            namespace=source_namespace,
+            observation_id=f"{observed}:week",
+            harness="kimi_code",
+            observed_at=observed,
+            provider="kimi-coding",
+            quota_name="week",
+            window_kind="fixed",
+            unit="provider_unit",
+            limit=weekly_limit,
+            used=weekly_used,
+            remaining=weekly_remaining,
+            resets_at=weekly_reset,
+        ),
+    ]
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -445,7 +561,7 @@ def capture_claude_code_usage_screen(
     *,
     claude_command: str | Path = "claude",
     probe_dir: str | Path,
-    timeout: float = 25.0,
+    timeout: float = 45.0,
 ) -> str:
     """Open Claude Code's authenticated TUI and capture its built-in ``/usage`` view.
 
@@ -573,7 +689,7 @@ def collect_claude_code_quota(
     *,
     claude_command: str | Path = "claude",
     probe_dir: str | Path,
-    timeout: float = 25.0,
+    timeout: float = 45.0,
     observed_at: str | datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Collect subscription limits from Claude Code CLI's own ``/usage`` view."""
