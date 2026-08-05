@@ -174,7 +174,7 @@ def _timestamp(value: Any, field: str) -> str:
             if zone[0] == "-":
                 offset = -offset
         utc = base - offset
-    except ValueError as exc:
+    except (ValueError, OverflowError) as exc:
         raise ValidationError(f"{field} must be an RFC 3339 timestamp") from exc
     fraction = (match["fraction"] or "")[1:].rstrip("0")
     return utc.strftime("%Y-%m-%dT%H:%M:%S") + (f".{fraction}" if fraction else "") + "Z"
@@ -182,7 +182,10 @@ def _timestamp(value: Any, field: str) -> str:
 
 def canonical_timestamp(value: Any) -> str:
     if isinstance(value, (int, float)):
-        return _timestamp(datetime.fromtimestamp(float(value), timezone.utc).isoformat(), "timestamp")
+        try:
+            value = datetime.fromtimestamp(float(value), timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError) as exc:
+            raise ValidationError("timestamp must be an RFC 3339 timestamp") from exc
     return _timestamp(value, "timestamp")
 
 

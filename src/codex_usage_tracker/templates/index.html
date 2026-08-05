@@ -576,6 +576,73 @@
         gap: 12px;
       }
 
+      .subscription-quota-history {
+        min-width: 0;
+        max-width: 100%;
+        margin-bottom: 22px;
+        padding: 14px;
+        overflow: hidden;
+        border: 1px solid var(--line-soft);
+        border-radius: var(--radius);
+        background: rgba(7, 10, 18, 0.38);
+      }
+
+      .subscription-quota-history h3,
+      .subscription-quota-history h4 {
+        margin-top: 0;
+      }
+
+      .subscription-quota-chart-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(160px, 220px);
+        gap: 14px;
+        align-items: stretch;
+        min-width: 0;
+      }
+
+      .subscription-quota-chart-wrap {
+        position: relative;
+        min-width: 0;
+        max-width: 100%;
+        min-height: 290px;
+      }
+
+      .subscription-provider-chart .subscription-quota-chart-wrap {
+        min-height: 230px;
+      }
+
+      .subscription-provider-chart .subscription-quota-chart-layout {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .subscription-provider-chart {
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+        padding: 12px;
+        border: 1px solid rgba(0, 179, 164, 0.2);
+        border-radius: 4px;
+        background: rgba(14, 31, 36, 0.52);
+      }
+
+      .subscription-quota-chart-wrap canvas {
+        max-width: 100%;
+      }
+
+      .subscription-chart-no-data {
+        color: var(--warning);
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+
+      .subscription-chart-labels {
+        min-width: 0;
+      }
+
+      .subscription-chart-labels .direct-label {
+        overflow-wrap: anywhere;
+      }
+
       .subscription-provider-card {
         min-width: 0;
         max-width: 100%;
@@ -805,6 +872,14 @@
           grid-template-columns: 1fr;
         }
 
+        .subscription-quota-chart-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .subscription-quota-chart-wrap {
+          min-height: 220px;
+        }
+
         .subscription-quota-grid {
           grid-template-columns: 1fr;
         }
@@ -929,7 +1004,33 @@
         </div>
         <div id="subscriptionsState" class="empty-state">Loading subscription observations…</div>
         <div id="subscriptionsContent" hidden>
-          <div id="subscriptionProviderGrid" class="subscription-provider-grid" aria-live="polite"></div>
+          <section class="subscription-quota-history" aria-labelledby="subscriptionUnifiedTitle">
+            <h3 id="subscriptionUnifiedTitle">Unified weekly subscription utilization</h3>
+            <p id="subscriptionUnifiedDescription" class="caption">Each provider’s explicitly mapped primary weekly-equivalent quota on a normalized 0–100% scale; this does not compare tokens or dollars.</p>
+            <p id="subscriptionUnifiedSummary" class="chart-summary" aria-live="polite">Loading weekly subscription quota history…</p>
+            <div class="subscription-quota-chart-layout">
+              <div class="subscription-quota-chart-wrap">
+                <canvas id="subscriptionUnifiedChart" aria-label="Unified weekly subscription quota utilization from 0 to 100 percent" role="img" aria-describedby="subscriptionUnifiedDescription subscriptionUnifiedSummary"></canvas>
+              </div>
+              <div id="subscriptionUnifiedLabels" class="direct-labels subscription-chart-labels" aria-label="Unified weekly subscription series and confidence statuses"></div>
+            </div>
+            <details class="chart-data">
+              <summary>Hourly unified quota data</summary>
+              <div class="table-wrap">
+                <table>
+                  <caption>Primary weekly-equivalent provider quota utilization per complete UTC hour</caption>
+                  <thead><tr id="subscriptionUnifiedTableHead"><th scope="col">UTC hour</th></tr></thead>
+                  <tbody id="subscriptionUnifiedTableBody"></tbody>
+                </table>
+              </div>
+            </details>
+            <section aria-labelledby="subscriptionProviderHistoryTitle">
+              <h3 id="subscriptionProviderHistoryTitle">Provider quota history</h3>
+              <p class="caption">Provider quota windows are shown separately on the same bounded percentage scale. Solid lines are exact; dashed lines have another confidence status.</p>
+              <div id="subscriptionProviderChartGrid" class="subscription-provider-grid"></div>
+            </section>
+          </section>
+          <div id="subscriptionProviderGrid" class="subscription-provider-grid"></div>
           <details id="subscriptionRawDetails" class="subscription-raw-details">
             <summary>Raw quota observation ledger</summary>
             <div class="table-wrap"><table><caption>Latest quota observations; these are not usage events or billing facts.</caption><thead><tr><th>Provider</th><th>Observed</th><th>Confidence</th><th>Harness</th><th>Quota</th><th>Window</th><th>Used</th><th>Remaining</th><th>Limit</th><th>Unit</th><th>Starts</th><th>Ends</th><th>Resets</th></tr></thead><tbody id="subscriptionsBody"></tbody></table></div>
@@ -1309,6 +1410,8 @@
       let tokenBucketChart;
       let tokenDeltaChart;
       let cacheHitChart;
+      let subscriptionUnifiedChart;
+      const subscriptionProviderCharts = new Map();
 
       const thresholdPlugin = {
         id: "thresholdPlugin",
@@ -2296,7 +2399,420 @@
         }
       }
 
+      function quotaConfidenceLabel(status) {
+        const normalized = String(status || "unknown").trim().toLowerCase();
+        const labels = {
+          exact: "Exact",
+          estimated: "Estimated",
+          reconstructed: "Reconstructed",
+          partial: "Partial",
+          mixed: "Mixed",
+          unknown: "Unknown",
+        };
+        return labels[normalized] || "Unknown";
+      }
+
+      function quotaConfidenceDash(confidenceStatus) {
+        const status = String(confidenceStatus || "unknown").trim().toLowerCase();
+        return status === "exact" ? [] : [7, 5];
+      }
+
+      function destroySubscriptionProviderCharts() {
+        subscriptionProviderCharts.forEach((chart) => {
+          chart.destroy();
+        });
+        subscriptionProviderCharts.clear();
+      }
+
+      function destroySubscriptionQuotaCharts() {
+        if (subscriptionUnifiedChart) {
+          subscriptionUnifiedChart.destroy();
+          subscriptionUnifiedChart = undefined;
+        }
+        destroySubscriptionProviderCharts();
+      }
+
+      function normalizedQuotaSeries(series, bucketCount) {
+        if (!series || typeof series !== "object" || !Array.isArray(series.values)) return null;
+        const values = Array.from({ length: bucketCount }, (_unused, index) => {
+          const raw = series.values[index];
+          if (raw === null || raw === undefined || raw === "") return null;
+          const value = Number(raw);
+          return Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+        });
+        if (!values.some((value) => value !== null)) return null;
+        return {
+          provider: String(series.provider || "unknown"),
+          label: String(series.label || series.quota_name || "Quota"),
+          quota_name: String(series.quota_name || "unknown"),
+          harness: series.harness ? String(series.harness) : "",
+          confidence_status: String(series.confidence_status || "unknown").toLowerCase(),
+          values,
+        };
+      }
+
+      function subscriptionQuotaDatasets(series) {
+        return series.map((row, index) => {
+          const color = UNIFIED_MODEL_COLORS[index % UNIFIED_MODEL_COLORS.length];
+          const status = row.confidence_status;
+          return {
+            label: `${row.label} — ${quotaConfidenceLabel(status)} confidence`,
+            data: row.values,
+            borderColor: color,
+            backgroundColor: color,
+            borderDash: quotaConfidenceDash(status),
+            borderWidth: 2.4,
+            pointRadius: 0,
+            pointHitRadius: 10,
+            pointHoverRadius: 3,
+            fill: false,
+            spanGaps: false,
+            tension: 0,
+          };
+        });
+      }
+
+      function subscriptionQuotaChartOptions() {
+        return {
+          maintainAspectRatio: false,
+          responsive: true,
+          interaction: { mode: "index", intersect: false },
+          animation: REDUCED_MOTION ? false : { duration: 260 },
+          scales: {
+            y: {
+              min: 0,
+              max: 100,
+              border: { color: SERIES.line },
+              ticks: { color: SERIES.muted, stepSize: 25, callback: (value) => `${value}%` },
+              grid: { color: "rgba(0, 179, 164, 0.10)" },
+              title: { display: true, text: "quota used", color: SERIES.muted },
+            },
+            x: {
+              border: { color: SERIES.line },
+              ticks: {
+                color: SERIES.muted,
+                autoSkip: true,
+                maxRotation: 0,
+                minRotation: 0,
+                maxTicksLimit: window.matchMedia("(max-width: 520px)").matches ? 3 : 9,
+              },
+              grid: { display: false },
+            },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              displayColors: true,
+              backgroundColor: "rgba(11, 15, 26, 0.96)",
+              borderColor: SERIES.line,
+              borderWidth: 1,
+              padding: 10,
+              callbacks: {
+                label: (context) => `${context.dataset.label}: ${percent(context.parsed.y)}`,
+              },
+            },
+          },
+        };
+      }
+
+      function renderSubscriptionQuotaLabels(container, rows) {
+        container.textContent = "";
+        rows.forEach((row, index) => {
+          const color = UNIFIED_MODEL_COLORS[index % UNIFIED_MODEL_COLORS.length];
+          const statusText = `${quotaConfidenceLabel(row.confidence_status)} confidence`;
+          const item = document.createElement("div");
+          item.className = "direct-label";
+          const swatch = document.createElement("span");
+          swatch.className = "swatch";
+          swatch.style.setProperty("--series-color", color);
+          if (row.confidence_status !== "exact") {
+            swatch.style.background = "transparent";
+            swatch.style.borderTop = `2px dashed ${color}`;
+          }
+          const label = document.createElement("strong");
+          label.textContent = row.label;
+          const confidence = document.createElement("span");
+          confidence.textContent = statusText;
+          item.setAttribute("aria-label", `${row.label}: ${statusText}`);
+          item.append(swatch, label, confidence);
+          container.appendChild(item);
+        });
+      }
+
+      function renderSubscriptionQuotaTable(head, body, bucketStarts, rows) {
+        head.textContent = "";
+        const hourHead = document.createElement("th");
+        hourHead.scope = "col";
+        hourHead.textContent = "UTC hour";
+        head.appendChild(hourHead);
+        rows.forEach((row) => {
+          const cell = document.createElement("th");
+          cell.scope = "col";
+          cell.textContent = `${row.label} (${quotaConfidenceLabel(row.confidence_status)} confidence)`;
+          head.appendChild(cell);
+        });
+
+        body.textContent = "";
+        bucketStarts.forEach((startedAt, index) => {
+          const tableRow = document.createElement("tr");
+          const rowHead = document.createElement("th");
+          rowHead.scope = "row";
+          rowHead.textContent = formatUtcHour(startedAt);
+          tableRow.appendChild(rowHead);
+          rows.forEach((row) => {
+            const cell = document.createElement("td");
+            cell.textContent = row.values[index] === null ? "—" : percent(row.values[index]);
+            tableRow.appendChild(cell);
+          });
+          body.appendChild(tableRow);
+        });
+      }
+
+      function buildOrUpdateSubscriptionUnifiedChart(labels, datasets) {
+        const canvas = document.getElementById("subscriptionUnifiedChart");
+        canvas.hidden = false;
+        if (typeof Chart === "undefined") {
+          if (subscriptionUnifiedChart) {
+            subscriptionUnifiedChart.destroy();
+            subscriptionUnifiedChart = undefined;
+          }
+          canvas.hidden = true;
+          return false;
+        }
+        try {
+          const options = subscriptionQuotaChartOptions();
+          if (!subscriptionUnifiedChart) {
+            subscriptionUnifiedChart = new Chart(canvas, {
+              type: "line",
+              data: { labels, datasets },
+              options,
+            });
+          } else {
+            replaceChartData(subscriptionUnifiedChart, labels, datasets, options);
+          }
+          return true;
+        } catch (error) {
+          if (subscriptionUnifiedChart) {
+            subscriptionUnifiedChart.destroy();
+            subscriptionUnifiedChart = undefined;
+          }
+          canvas.hidden = true;
+          return false;
+        }
+      }
+
+      function missingWeeklyQuotaMessage(rows) {
+        if (!Array.isArray(rows) || !rows.length) return "";
+        const missing = rows.map((row) => {
+          const label = String(row && (row.label || row.provider) || "Unknown provider");
+          const status = String(row && row.status || "status unavailable").replace(/[-_]+/g, " ");
+          return `${label} (${status})`;
+        });
+        return `No comparable primary weekly-equivalent data: ${missing.join("; ")}.`;
+      }
+
+      function setSubscriptionChartsUnavailable(message) {
+        destroySubscriptionQuotaCharts();
+        const canvas = document.getElementById("subscriptionUnifiedChart");
+        canvas.hidden = true;
+        document.getElementById("subscriptionUnifiedSummary").textContent = message;
+        document.getElementById("subscriptionUnifiedLabels").textContent = "";
+        renderSubscriptionQuotaTable(
+          document.getElementById("subscriptionUnifiedTableHead"),
+          document.getElementById("subscriptionUnifiedTableBody"),
+          [],
+          [],
+        );
+        const providerGrid = document.getElementById("subscriptionProviderChartGrid");
+        providerGrid.textContent = "";
+        const stateMessage = document.createElement("p");
+        stateMessage.className = "subscription-chart-no-data";
+        stateMessage.textContent = message;
+        providerGrid.appendChild(stateMessage);
+      }
+
+      function renderSubscriptionProviderCharts(timeSeries, bucketStarts, labels) {
+        destroySubscriptionProviderCharts();
+        const grid = document.getElementById("subscriptionProviderChartGrid");
+        grid.textContent = "";
+        const providers = Array.isArray(timeSeries.providers) ? timeSeries.providers : [];
+        const truncation = timeSeries.truncation && typeof timeSeries.truncation === "object"
+          ? timeSeries.truncation
+          : {};
+        const truncationStatuses = [];
+        if (truncation.providers_truncated) {
+          truncationStatuses.push(`providers_truncated (${intFormat(Number(truncation.providers_omitted) || 0)} providers omitted)`);
+        }
+        if (truncation.series_truncated) {
+          truncationStatuses.push(`series_truncated (${intFormat(Number(truncation.series_omitted) || 0)} series omitted)`);
+        }
+        if (truncationStatuses.length) {
+          const truncationSummary = document.createElement("p");
+          truncationSummary.className = "subscription-chart-no-data";
+          truncationSummary.textContent = `Chart response truncated: ${truncationStatuses.join("; ")}.`;
+          grid.appendChild(truncationSummary);
+        }
+        if (!providers.length) {
+          const noProviders = document.createElement("p");
+          noProviders.className = "subscription-chart-no-data";
+          noProviders.textContent = "No provider quota observations are available in this weekly window.";
+          grid.appendChild(noProviders);
+          return;
+        }
+
+        providers.forEach((provider, cardIndex) => {
+          const providerLabel = String(provider && (provider.label || provider.provider) || "Unknown provider");
+          const rows = (Array.isArray(provider && provider.series) ? provider.series : [])
+            .map((series) => normalizedQuotaSeries(series, bucketStarts.length))
+            .filter((series) => series !== null);
+          const card = document.createElement("article");
+          card.className = "subscription-provider-chart";
+          const title = document.createElement("h4");
+          title.textContent = providerLabel;
+          card.appendChild(title);
+          const observationSummary = document.createElement("p");
+          const descriptionId = `subscriptionProviderDescription-${cardIndex}`;
+          observationSummary.id = descriptionId;
+          observationSummary.className = "caption";
+          const observationCount = Number(provider && provider.observation_count);
+          observationSummary.textContent = Number.isFinite(observationCount)
+            ? `${intFormat(observationCount)} observations in the selected weekly window.`
+            : "Observation count unavailable.";
+          card.appendChild(observationSummary);
+
+          const unavailableSeries = Array.isArray(provider && provider.unavailable_series)
+            ? provider.unavailable_series
+            : [];
+          if (unavailableSeries.length) {
+            const unavailableList = document.createElement("ul");
+            unavailableSeries.forEach((series) => {
+              const item = document.createElement("li");
+              const seriesLabel = String(series && (series.label || series.quota_name) || "Unnamed quota");
+              item.textContent = `Not charted: ${seriesLabel} — no comparable utilization ratio`;
+              unavailableList.appendChild(item);
+            });
+            card.appendChild(unavailableList);
+          }
+
+          if (!rows.length) {
+            const noRatio = document.createElement("p");
+            noRatio.className = "subscription-chart-no-data";
+            noRatio.textContent = provider && provider.status === "no_observations"
+              ? "No provider quota observations are available in this weekly window."
+              : "No comparable utilization ratio is reported for this provider.";
+            card.appendChild(noRatio);
+            grid.appendChild(card);
+            return;
+          }
+
+          const chartLayout = document.createElement("div");
+          chartLayout.className = "subscription-quota-chart-layout";
+          const chartWrap = document.createElement("div");
+          chartWrap.className = "subscription-quota-chart-wrap";
+          const canvas = document.createElement("canvas");
+          const canvasId = `subscriptionProviderChart-${cardIndex}`;
+          canvas.id = canvasId;
+          canvas.setAttribute("role", "img");
+          canvas.setAttribute("aria-describedby", descriptionId);
+          canvas.setAttribute("aria-label", `${providerLabel} subscription quota utilization history from 0 to 100 percent`);
+          chartWrap.appendChild(canvas);
+          const directLabels = document.createElement("div");
+          directLabels.className = "direct-labels subscription-chart-labels";
+          directLabels.setAttribute("aria-label", `${providerLabel} quota series and confidence statuses`);
+          renderSubscriptionQuotaLabels(directLabels, rows);
+          chartLayout.append(chartWrap, directLabels);
+          card.appendChild(chartLayout);
+
+          const details = document.createElement("details");
+          details.className = "chart-data";
+          const summary = document.createElement("summary");
+          summary.textContent = "Hourly provider quota data";
+          const tableWrap = document.createElement("div");
+          tableWrap.className = "table-wrap";
+          const table = document.createElement("table");
+          const caption = document.createElement("caption");
+          caption.textContent = `${providerLabel} quota utilization per complete UTC hour`;
+          const tableHead = document.createElement("thead");
+          const headRow = document.createElement("tr");
+          headRow.id = `subscriptionProviderTableHead-${cardIndex}`;
+          tableHead.appendChild(headRow);
+          const tableBody = document.createElement("tbody");
+          tableBody.id = `subscriptionProviderTableBody-${cardIndex}`;
+          table.append(caption, tableHead, tableBody);
+          tableWrap.appendChild(table);
+          details.append(summary, tableWrap);
+          card.appendChild(details);
+          renderSubscriptionQuotaTable(headRow, tableBody, bucketStarts, rows);
+          grid.appendChild(card);
+
+          if (typeof Chart === "undefined") {
+            canvas.hidden = true;
+            const noRuntime = document.createElement("p");
+            noRuntime.className = "subscription-chart-no-data";
+            noRuntime.textContent = "Chart drawing is unavailable; the accessible data table remains current.";
+            chartLayout.appendChild(noRuntime);
+            return;
+          }
+          try {
+            const chart = new Chart(canvas, {
+              type: "line",
+              data: { labels, datasets: subscriptionQuotaDatasets(rows) },
+              options: subscriptionQuotaChartOptions(),
+            });
+            subscriptionProviderCharts.set(canvasId, chart);
+          } catch (error) {
+            canvas.hidden = true;
+            const noChart = document.createElement("p");
+            noChart.className = "subscription-chart-no-data";
+            noChart.textContent = "Chart drawing is unavailable; the accessible data table remains current.";
+            chartLayout.appendChild(noChart);
+          }
+        });
+      }
+
+      function renderSubscriptionQuotaCharts(timeSeries) {
+        if (!timeSeries || typeof timeSeries !== "object" || !Array.isArray(timeSeries.bucket_starts) || !timeSeries.bucket_starts.length) {
+          setSubscriptionChartsUnavailable("No bounded subscription quota history is available for this weekly window.");
+          return;
+        }
+        const bucketStarts = timeSeries.bucket_starts.map((value) => String(value));
+        const labels = bucketStarts.map((value) => formatUtcHour(value, true));
+        const unified = timeSeries.unified_weekly && typeof timeSeries.unified_weekly === "object"
+          ? timeSeries.unified_weekly
+          : {};
+        const unifiedRows = (Array.isArray(unified.series) ? unified.series : [])
+          .map((series) => normalizedQuotaSeries(series, bucketStarts.length))
+          .filter((series) => series !== null);
+        const summary = document.getElementById("subscriptionUnifiedSummary");
+        const missingMessage = missingWeeklyQuotaMessage(unified.no_data_providers);
+        renderSubscriptionQuotaLabels(document.getElementById("subscriptionUnifiedLabels"), unifiedRows);
+        renderSubscriptionQuotaTable(
+          document.getElementById("subscriptionUnifiedTableHead"),
+          document.getElementById("subscriptionUnifiedTableBody"),
+          bucketStarts,
+          unifiedRows,
+        );
+
+        let chartRendered = true;
+        if (unifiedRows.length) {
+          chartRendered = buildOrUpdateSubscriptionUnifiedChart(labels, subscriptionQuotaDatasets(unifiedRows));
+          summary.textContent = `${unifiedRows.length} comparable primary weekly-equivalent provider series. ${missingMessage}`.trim();
+        } else {
+          if (subscriptionUnifiedChart) {
+            subscriptionUnifiedChart.destroy();
+            subscriptionUnifiedChart = undefined;
+          }
+          document.getElementById("subscriptionUnifiedChart").hidden = true;
+          summary.textContent = missingMessage || "No comparable primary weekly-equivalent data: no mapped provider series was returned (status unavailable).";
+        }
+        if (!chartRendered) {
+          summary.textContent = `${summary.textContent} Chart drawing is unavailable; the accessible data table remains current.`;
+        }
+        renderSubscriptionProviderCharts(timeSeries, bucketStarts, labels);
+      }
+
       function renderUnavailableSubscriptionPlaceholders() {
+        setSubscriptionChartsUnavailable("Subscription quota history is unavailable.");
         const expectedProviders = [
           ["openai-codex", "OpenAI / Codex"],
           ["anthropic", "Anthropic / Claude"],
@@ -2345,7 +2861,7 @@
 
       async function loadSubscriptions() {
         try {
-          const response = await fetch("/api/subscriptions?days=30&history=0");
+          const response = await fetch("/api/subscriptions?hours=168&history=0");
           if (!response.ok) throw new Error("unavailable");
           const data = await response.json();
           const freshness = data.freshness || {};
@@ -2369,24 +2885,25 @@
             "kimi-k3-coding": "Kimi K3 Coding",
           };
           const providerAliases = {
-            openai: "openai-codex",
+            "openai": "openai-codex",
             "openai-codex": "openai-codex",
-            codex: "openai-codex",
-            anthropic: "anthropic",
-            claude: "anthropic",
+            "codex": "openai-codex",
+            "anthropic": "anthropic",
+            "claude": "anthropic",
             "claude-code": "anthropic",
             "opencode-go": "opencode-go",
             "z.ai": "z-ai-glm",
             "z-ai": "z-ai-glm",
-            zai: "z-ai-glm",
-            zhipu: "z-ai-glm",
-            zhipuai: "z-ai-glm",
-            glm: "z-ai-glm",
-            kimi: "kimi-k3-coding",
+            "zai": "z-ai-glm",
+            "z-ai-glm": "z-ai-glm",
+            "zhipu": "z-ai-glm",
+            "zhipuai": "z-ai-glm",
+            "glm": "z-ai-glm",
+            "kimi": "kimi-k3-coding",
             "kimi-code": "kimi-k3-coding",
             "kimi-coding": "kimi-k3-coding",
             "kimi-k3-coding": "kimi-k3-coding",
-            moonshot: "kimi-k3-coding",
+            "moonshot": "kimi-k3-coding",
             "moonshot-ai": "kimi-k3-coding",
           };
           const providerOrder = [
@@ -2394,8 +2911,11 @@
           ];
           const providerGroups = new Map();
           const providerKey = (provider) => {
-            const normalized = String(provider || "unknown").trim().toLowerCase();
-            return providerAliases[normalized] || normalized || "unknown";
+            const rawProvider = String(provider || "unknown").trim() || "unknown";
+            const aliasKey = rawProvider.toLowerCase();
+            return Object.prototype.hasOwnProperty.call(providerAliases, aliasKey)
+              ? providerAliases[aliasKey]
+              : rawProvider;
           };
           const ensureProviderGroup = (provider) => {
             const rawProvider = String(provider || "unknown").trim() || "unknown";
@@ -2433,8 +2953,7 @@
           };
           const readableProviderName = (group) => {
             if (providerDisplayNames[group.key]) return providerDisplayNames[group.key];
-            const raw = Array.from(group.providerIds)[0] || "unknown";
-            return raw.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+            return group.key;
           };
           const confidencePresentation = (row) => {
             const confidence = String(row.measurement_confidence || "unknown").toLowerCase();
@@ -2497,7 +3016,11 @@
             const leftRank = leftIndex === -1 ? providerOrder.length : leftIndex;
             const rightRank = rightIndex === -1 ? providerOrder.length : rightIndex;
             if (leftRank !== rightRank) return leftRank - rightRank;
-            return readableProviderName(left).localeCompare(readableProviderName(right));
+            const displayOrder = readableProviderName(left).localeCompare(
+              readableProviderName(right), undefined, { sensitivity: "variant" },
+            );
+            if (displayOrder !== 0) return displayOrder;
+            return left.key < right.key ? -1 : left.key > right.key ? 1 : 0;
           });
 
           groups.forEach((group) => {
@@ -2636,6 +3159,13 @@
           state.textContent = ledgerNotice;
           state.hidden = !ledgerNotice;
           content.hidden = false;
+          if (freshness.status === "stale") {
+            setSubscriptionChartsUnavailable("Subscription quota history is stale; charts are hidden until current observations arrive.");
+          } else if (freshness.status === "empty") {
+            setSubscriptionChartsUnavailable("Subscription quota history is unavailable because the quota ledger is empty.");
+          } else {
+            renderSubscriptionQuotaCharts(data.time_series);
+          }
         } catch (error) {
           renderUnavailableSubscriptionPlaceholders();
         }

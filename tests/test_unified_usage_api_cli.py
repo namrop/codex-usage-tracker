@@ -1853,7 +1853,8 @@ def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independent
     assert "overflow-x: hidden" in page
     assert "overflow-wrap: anywhere" in page
     assert 'align: "inner"' in page
-    assert 'fetch("/api/subscriptions?days=30&history=0")' in page
+    assert 'fetch("/api/subscriptions?hours=168&history=0")' in page
+    assert 'fetch("/api/subscriptions?days=30&history=0")' not in page
     assert 'fetch("/api/billing?days=30")' in page
     optional_script = page[page.index('fetch("/api/unified-usage?hours=168")'):]
     assert "Promise.all([" not in optional_script

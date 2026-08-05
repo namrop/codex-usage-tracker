@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypeAlias
 
 from flask import Flask, jsonify, render_template, request
 
@@ -30,6 +30,7 @@ from .canonical_ledger import (
     IdentityConflictError,
     MalformedLedgerError,
     ValidationError,
+    canonical_timestamp,
     query_sqlite_facts,
     read_facts,
 )
@@ -71,9 +72,64 @@ _PRIVATE_API_MAX_JSONL_BYTES = 128 * 1024 * 1024
 _MAX_PRIVATE_API_DAYS = 36_500
 _MAX_UNIFIED_SERIES_HOURS = 168
 _UNIFIED_MODEL_SERIES_LIMIT = 5
+_SUBSCRIPTION_CHART_PROVIDER_LIMIT = 32
+_SUBSCRIPTION_CHART_SERIES_PER_PROVIDER_LIMIT = 16
 _PRIVATE_LEDGER_MAX_AGE_SECONDS = 3 * 60 * 60
 _QUOTA_PROVIDER_STATES = frozenset({"inactive_or_not_reported"})
 _QUOTA_COVERAGE_STATUSES = frozenset({"partial"})
+_QUOTA_PROVIDER_ORDER = (
+    "openai-codex",
+    "anthropic",
+    "opencode-go",
+    "z-ai-glm",
+    "kimi-k3-coding",
+)
+_QUOTA_PROVIDER_LABELS = {
+    "openai-codex": "OpenAI / Codex",
+    "anthropic": "Anthropic / Claude",
+    "opencode-go": "OpenCode Go",
+    "z-ai-glm": "Z.AI / GLM",
+    "kimi-k3-coding": "Kimi K3 Coding",
+}
+_PRIMARY_WEEKLY_QUOTAS = {
+    "openai-codex": "week",
+    "anthropic": "seven_day",
+    "opencode-go": "week",
+    "z-ai-glm": "week",
+    "kimi-k3-coding": "week",
+}
+_QUOTA_PROVIDER_ALIASES = {
+    "openai": "openai-codex",
+    "openai-codex": "openai-codex",
+    "codex": "openai-codex",
+    "anthropic": "anthropic",
+    "claude": "anthropic",
+    "claude-code": "anthropic",
+    "opencode-go": "opencode-go",
+    "z.ai": "z-ai-glm",
+    "z-ai": "z-ai-glm",
+    "zai": "z-ai-glm",
+    "z-ai-glm": "z-ai-glm",
+    "zhipu": "z-ai-glm",
+    "zhipuai": "z-ai-glm",
+    "glm": "z-ai-glm",
+    "kimi": "kimi-k3-coding",
+    "kimi-code": "kimi-k3-coding",
+    "kimi-coding": "kimi-k3-coding",
+    "kimi-k3-coding": "kimi-k3-coding",
+    "moonshot": "kimi-k3-coding",
+    "moonshot-ai": "kimi-k3-coding",
+}
+_QuotaAccountIdentity: TypeAlias = tuple[bool, str]
+_QuotaSeriesIdentity: TypeAlias = tuple[
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    _QuotaAccountIdentity,
+]
 _ADDITIVE_TOKEN_FIELDS = (
     "input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens",
 )
@@ -101,8 +157,11 @@ def _normalize_timestamp(raw_timestamp: Any) -> float:
         return 0.0
     value = raw_timestamp.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(value).timestamp()
-    except (TypeError, ValueError):
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            return 0.0
+        return parsed.astimezone(timezone.utc).timestamp()
+    except (TypeError, ValueError, OverflowError, OSError):
         return 0.0
 
 
@@ -111,11 +170,47 @@ def _fact_datetime(raw_timestamp: Any) -> datetime:
         return datetime.min.replace(tzinfo=timezone.utc)
     try:
         parsed = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
-    except ValueError:
+        if parsed.tzinfo is None:
+            return datetime.min.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
         return datetime.min.replace(tzinfo=timezone.utc)
-    if parsed.tzinfo is None:
-        return datetime.min.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+
+
+def _rfc3339_order_key(raw_timestamp: Any) -> tuple[datetime, Decimal] | None:
+    """Return an exact UTC timestamp key, or fail closed for invalid input."""
+    if not isinstance(raw_timestamp, str):
+        return None
+    try:
+        canonical = canonical_timestamp(raw_timestamp)
+        timestamp_text = canonical.removesuffix("Z")
+        whole_text, separator, fraction_text = timestamp_text.partition(".")
+        # canonical_timestamp validates and normalizes the UTC whole second.
+        # Pad years because strftime may omit leading zeroes on some platforms.
+        year, remainder = whole_text.split("-", 1)
+        whole_second = datetime.fromisoformat(f"{int(year):04d}-{remainder}+00:00")
+        fraction = Decimal(f"0.{fraction_text}") if separator else Decimal(0)
+    except (
+        InvalidOperation,
+        OSError,
+        OverflowError,
+        TypeError,
+        ValidationError,
+        ValueError,
+    ):
+        return None
+    return whole_second, fraction
+
+
+def _datetime_rfc3339_order_key(value: datetime) -> tuple[datetime, Decimal] | None:
+    """Return the exact RFC 3339 key corresponding to an aware datetime."""
+    try:
+        if value.tzinfo is None or value.utcoffset() is None:
+            return None
+        rendered = value.astimezone(timezone.utc).isoformat()
+    except (AttributeError, OSError, OverflowError, TypeError, ValueError):
+        return None
+    return _rfc3339_order_key(rendered)
 
 
 def _ledger_freshness(
@@ -138,7 +233,7 @@ def _ledger_freshness(
             datetime.fromtimestamp(candidate.stat().st_mtime, timezone.utc).replace(microsecond=0)
             for candidate in candidates
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError, OverflowError):
         return {
             "status": "empty",
             "latest_at": None,
@@ -343,6 +438,344 @@ def _build_unified_time_series(
         "other_model_series": other_model_series,
         "comparison_series": comparison_series,
         "comparison_excluded_tokens": excluded_tokens,
+    }
+
+
+def _canonical_quota_provider(value: Any) -> str:
+    raw = "unknown" if value is None else str(value).strip()
+    if not raw:
+        raw = "unknown"
+    return _QUOTA_PROVIDER_ALIASES.get(raw.casefold(), raw)
+
+
+def _quota_provider_label(provider: str) -> str:
+    return _QUOTA_PROVIDER_LABELS.get(provider, provider)
+
+
+def _quota_utilization_pct(row: dict[str, Any]) -> float | None:
+    """Return a bounded, deterministic ratio without inferring missing values."""
+    used_raw = row.get("used_value")
+    limit_raw = row.get("limit_value")
+    if used_raw is None or limit_raw is None or isinstance(used_raw, bool) or isinstance(limit_raw, bool):
+        return None
+    try:
+        used = Decimal(str(used_raw))
+        limit = Decimal(str(limit_raw))
+        if not used.is_finite() or not limit.is_finite():
+            return None
+        if used < 0 or limit <= 0:
+            return None
+        ratio = used / limit * Decimal("100")
+        if not ratio.is_finite() or ratio < 0 or ratio > 100:
+            return None
+        return float(ratio.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+    except (ArithmeticError, InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _quota_row_confidence(row: dict[str, Any]) -> str:
+    coverage = row.get("x_coverage")
+    if isinstance(coverage, dict) and coverage.get("status") == "partial":
+        return "partial"
+    confidence = str(row.get("measurement_confidence") or "unknown").casefold()
+    if confidence in {"exact", "estimated", "reconstructed", "partial"}:
+        return confidence
+    return "unknown"
+
+
+def _quota_series_confidence(rows: list[dict[str, Any]]) -> str:
+    statuses = {_quota_row_confidence(row) for row in rows}
+    if len(statuses) == 1:
+        return next(iter(statuses))
+    return "mixed" if statuses else "unknown"
+
+
+def _quota_observation_order_key(
+    row: dict[str, Any],
+) -> tuple[int, datetime, Decimal, str, str, str]:
+    """Order observations independent of backend; the lexicographically greatest tie wins."""
+    canonical_row = json.dumps(
+        row,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        default=str,
+    )
+    timestamp_key = _rfc3339_order_key(row.get("observed_at"))
+    if timestamp_key is None:
+        valid_timestamp = 0
+        whole_second = datetime.min.replace(tzinfo=timezone.utc)
+        fraction = Decimal(0)
+    else:
+        valid_timestamp = 1
+        whole_second, fraction = timestamp_key
+    return (
+        valid_timestamp,
+        whole_second,
+        fraction,
+        str(row.get("source_namespace") or ""),
+        str(row.get("source_observation_id") or ""),
+        canonical_row,
+    )
+
+
+def _quota_series_identity(row: dict[str, Any]) -> _QuotaSeriesIdentity:
+    """Return the complete private identity used to prevent cross-account merging."""
+    account_ref = row.get("account_ref")
+    return (
+        _canonical_quota_provider(row.get("provider")),
+        str(row.get("quota_name") or "unknown"),
+        str(row.get("harness") or "unknown"),
+        str(row.get("quota_scope") or "unknown"),
+        str(row.get("window_kind") or "unknown"),
+        str(row.get("unit") or "unknown"),
+        (account_ref is not None, str(account_ref or "")),
+    )
+
+
+def _quota_identity_sort_key(
+    identity: _QuotaSeriesIdentity,
+) -> tuple[tuple[tuple[str, str], ...], tuple[bool, str, str]]:
+    account_is_present, account_ref = identity[6]
+    return (
+        tuple((value.casefold(), value) for value in identity[:6]),
+        (account_is_present, account_ref.casefold(), account_ref),
+    )
+
+
+def _build_subscription_time_series(
+    rows: list[dict[str, Any]],
+    *,
+    window_start: datetime,
+    window_end: datetime,
+    generated_at: datetime,
+) -> dict[str, Any]:
+    """Project canonical quota observations into complete UTC hourly buckets."""
+    bucket_count = int((window_end - window_start).total_seconds() // 3600)
+    bucket_starts = [window_start + timedelta(hours=index) for index in range(bucket_count)]
+    grouped: dict[_QuotaSeriesIdentity, list[dict[str, Any]]] = {}
+    provider_rows: dict[str, list[dict[str, Any]]] = {}
+    provider_raw_ids: dict[str, set[str]] = {}
+
+    for row in rows:
+        observed_at = _fact_datetime(row.get("observed_at"))
+        if observed_at < window_start or observed_at >= window_end:
+            continue
+        identity = _quota_series_identity(row)
+        provider = identity[0]
+        grouped.setdefault(identity, []).append(row)
+        provider_rows.setdefault(provider, []).append(row)
+        raw_provider = str(row.get("provider") or "unknown").strip() or "unknown"
+        provider_raw_ids.setdefault(provider, set()).add(raw_provider)
+
+    identities_by_provider_quota: dict[
+        tuple[str, str], list[_QuotaSeriesIdentity]
+    ] = {}
+    for identity in grouped:
+        identities_by_provider_quota.setdefault(identity[:2], []).append(identity)
+
+    labels: dict[_QuotaSeriesIdentity, str] = {}
+    for identities in identities_by_provider_quota.values():
+        ordered = sorted(identities, key=_quota_identity_sort_key)
+        account_order = {
+            account_ref: index + 1
+            for index, account_ref in enumerate(
+                sorted(
+                    {identity[6] for identity in ordered},
+                    key=lambda value: (value[0], value[1].casefold(), value[1]),
+                )
+            )
+        }
+        preliminary: dict[_QuotaSeriesIdentity, str] = {}
+        for identity in ordered:
+            quota_name = identity[1].replace("_", " ")
+            preliminary[identity] = (
+                quota_name
+                if len(ordered) == 1
+                else f"{quota_name} · {identity[2]} · account {account_order[identity[6]]}"
+            )
+        duplicate_counts = {
+            label: sum(candidate == label for candidate in preliminary.values())
+            for label in preliminary.values()
+        }
+        for identity, label in preliminary.items():
+            if duplicate_counts[label] > 1:
+                label = f"{label} · {identity[3]} · {identity[4]} · {identity[5]}"
+            labels[identity] = label
+
+    entries: dict[_QuotaSeriesIdentity, dict[str, Any]] = {}
+    for identity in sorted(grouped, key=_quota_identity_sort_key):
+        provider, quota_name, harness, _quota_scope, _window_kind, unit, _account_ref = identity
+        quota_rows = grouped[identity]
+        bucket_rows: list[dict[str, Any] | None] = [None] * bucket_count
+        for row in sorted(quota_rows, key=_quota_observation_order_key):
+            observed_at = _fact_datetime(row.get("observed_at"))
+            bucket_index = int((observed_at - window_start).total_seconds() // 3600)
+            if 0 <= bucket_index < bucket_count:
+                # The greatest deterministic key is the last observation in a tied hour.
+                bucket_rows[bucket_index] = row
+        values = [
+            _quota_utilization_pct(row) if row is not None else None
+            for row in bucket_rows
+        ]
+        selected_rows = [row for row in bucket_rows if row is not None]
+        valid_rows = [
+            row
+            for row, value in zip(bucket_rows, values)
+            if row is not None and value is not None
+        ]
+        if valid_rows:
+            latest = max(valid_rows, key=_quota_observation_order_key)
+            payload = {
+                "provider": provider,
+                "label": labels[identity],
+                "quota_name": quota_name,
+                "raw_provider_ids": sorted(
+                    {str(row.get("provider") or "unknown") for row in quota_rows}
+                ),
+                "harness": harness,
+                "unit": unit,
+                "used_value": latest.get("used_value"),
+                "limit_value": latest.get("limit_value"),
+                "remaining_value": latest.get("remaining_value"),
+                "latest_observed_at": latest.get("observed_at"),
+                "measurement_confidence": latest.get("measurement_confidence"),
+                "confidence_status": _quota_series_confidence(valid_rows),
+                "sample_count": len(valid_rows),
+                "observation_count": len(quota_rows),
+                "values": values,
+            }
+            entries[identity] = {"chartable": True, "payload": payload}
+        else:
+            latest = max(selected_rows, key=_quota_observation_order_key)
+            payload = {
+                "label": labels[identity],
+                "quota_name": quota_name,
+                "harness": harness,
+                "unit": unit,
+                "measurement_confidence": latest.get("measurement_confidence"),
+                "confidence_status": _quota_series_confidence(selected_rows),
+                "sample_count": 0,
+                "observation_count": len(quota_rows),
+                "reason": "no_comparable_utilization",
+            }
+            entries[identity] = {"chartable": False, "payload": payload}
+
+    def provider_rank(provider: str) -> tuple[int, str, str]:
+        try:
+            return _QUOTA_PROVIDER_ORDER.index(provider), "", ""
+        except ValueError:
+            return len(_QUOTA_PROVIDER_ORDER), provider.casefold(), provider
+
+    all_providers = sorted(
+        set(_QUOTA_PROVIDER_ORDER).union(provider_rows),
+        key=provider_rank,
+    )
+    included_providers = all_providers[:_SUBSCRIPTION_CHART_PROVIDER_LIMIT]
+    providers: list[dict[str, Any]] = []
+    included_series_count = 0
+    for provider in included_providers:
+        provider_identities = sorted(
+            (identity for identity in grouped if identity[0] == provider),
+            key=lambda identity: (
+                0 if entries[identity]["chartable"] else 1,
+                _quota_identity_sort_key(identity),
+            ),
+        )
+        selected_identities = provider_identities[
+            :_SUBSCRIPTION_CHART_SERIES_PER_PROVIDER_LIMIT
+        ]
+        included_series_count += len(selected_identities)
+        chart_series = [
+            entries[identity]["payload"]
+            for identity in selected_identities
+            if entries[identity]["chartable"]
+        ]
+        unavailable_series = [
+            entries[identity]["payload"]
+            for identity in selected_identities
+            if not entries[identity]["chartable"]
+        ]
+        if not provider_identities:
+            status = "no_observations"
+        elif any(entries[identity]["chartable"] for identity in provider_identities):
+            status = "available"
+        else:
+            status = "no_comparable_utilization"
+        providers.append(
+            {
+                "provider": provider,
+                "label": _quota_provider_label(provider),
+                "raw_provider_ids": sorted(provider_raw_ids.get(provider, set())),
+                "observation_count": len(provider_rows.get(provider, [])),
+                "status": status,
+                "series": chart_series,
+                "unavailable_series": unavailable_series,
+            }
+        )
+
+    unified_series: list[dict[str, Any]] = []
+    no_data_providers: list[dict[str, str]] = []
+    for provider in _QUOTA_PROVIDER_ORDER:
+        quota_name = _PRIMARY_WEEKLY_QUOTAS[provider]
+        primary_identities = sorted(
+            identities_by_provider_quota.get((provider, quota_name), []),
+            key=_quota_identity_sort_key,
+        )
+        if len(primary_identities) == 1 and entries[primary_identities[0]]["chartable"]:
+            unified_series.append(
+                {
+                    **entries[primary_identities[0]]["payload"],
+                    "label": _QUOTA_PROVIDER_LABELS[provider],
+                }
+            )
+            continue
+        if len(primary_identities) > 1:
+            status = "ambiguous_primary_weekly_identity"
+        elif primary_identities:
+            status = "no_comparable_weekly_utilization"
+        else:
+            status = "primary_weekly_quota_not_reported"
+        no_data_providers.append(
+            {
+                "provider": provider,
+                "label": _QUOTA_PROVIDER_LABELS[provider],
+                "quota_name": quota_name,
+                "status": status,
+            }
+        )
+
+    total_series_count = len(grouped)
+    truncation = {
+        "provider_limit": _SUBSCRIPTION_CHART_PROVIDER_LIMIT,
+        "providers_included": len(included_providers),
+        "providers_omitted": len(all_providers) - len(included_providers),
+        "providers_total": len(all_providers),
+        "providers_truncated": len(included_providers) < len(all_providers),
+        "series_included": included_series_count,
+        "series_limit_per_provider": _SUBSCRIPTION_CHART_SERIES_PER_PROVIDER_LIMIT,
+        "series_omitted": total_series_count - included_series_count,
+        "series_total": total_series_count,
+        "series_truncated": included_series_count < total_series_count,
+    }
+    return {
+        "generated_at": _iso_z(generated_at),
+        "bucket_minutes": 60,
+        "bucket_count": bucket_count,
+        "window_start": _iso_z(window_start),
+        "window_end": _iso_z(window_end),
+        "bucket_starts": [_iso_z(value) for value in bucket_starts],
+        "providers": providers,
+        "truncation": truncation,
+        "unified_weekly": {
+            "label": "Unified weekly subscription utilization",
+            "description": (
+                "Each named provider's explicitly mapped primary weekly-equivalent quota "
+                "on a normalized 0–100% scale; this does not compare tokens or dollars."
+            ),
+            "series": unified_series,
+            "no_data_providers": no_data_providers,
+        },
     }
 
 
@@ -717,13 +1150,37 @@ def create_app(
     def api_subscriptions():
         if not resolved_quota_ledger:
             return jsonify({"error": "quota ledger is not configured"}), 404
-        cutoff, days_error = _days_argument()
+        hours, hours_error = _hours_argument()
+        if hours_error is not None:
+            return hours_error
+        generated_at = datetime.now(timezone.utc)
+        series_start = None
+        series_end = None
+        query_before = None
+        if hours is not None:
+            series_end = generated_at.replace(minute=0, second=0, microsecond=0)
+            series_start = series_end - timedelta(hours=hours)
+            cutoff = series_start
+            days_error = None
+            try:
+                # Private ledger bounds are strict, so use the smallest
+                # representable successor and then enforce inclusive-now below.
+                query_before = generated_at + timedelta(microseconds=1)
+            except OverflowError:
+                # Fail closed at datetime.max rather than dropping the bound.
+                query_before = generated_at
+        else:
+            cutoff, days_error = _days_argument()
         if days_error is not None:
             return days_error
         history_text = request.args.get("history")
         if history_text not in (None, "0", "1"):
             return jsonify({"error": "history must be 0 or 1"}), 400
-        include_history = history_text != "0"
+        if hours is not None and history_text == "1":
+            return jsonify(
+                {"error": "history=1 is not supported with hours chart mode"}
+            ), 400
+        include_history = history_text != "0" if hours is None else False
         typed_filters = {
             field: requested
             for field in ("provider", "harness", "quota_name")
@@ -735,6 +1192,7 @@ def create_app(
                 fact_type="quota_observation_v1",
                 filters=typed_filters,
                 cutoff=cutoff,
+                before=query_before,
                 order="desc",
             )
         except UnsupportedLedgerSuffix:
@@ -743,15 +1201,28 @@ def create_app(
             return jsonify({"error": "ledger query exceeds private API row limit"}), 413
         except (MalformedLedgerError, ValidationError, IdentityConflictError):
             return jsonify({"error": "configured private ledger is unavailable"}), 503
+        if hours is not None:
+            # Backends use a strict successor only to admit the exact request
+            # instant; this exact comparison prevents any future fact from
+            # reaching latest/history/chart projections.
+            generated_at_key = _datetime_rfc3339_order_key(generated_at)
+            if generated_at_key is None:
+                rows = []
+            else:
+                rows = [
+                    row
+                    for row in rows
+                    if (
+                        (observed_at_key := _rfc3339_order_key(row.get("observed_at")))
+                        is not None
+                        and observed_at_key <= generated_at_key
+                    )
+                ]
+        rows.sort(key=_quota_observation_order_key, reverse=True)
         latest: list[dict[str, Any]] = []
-        seen: set[tuple[str, str, str, str]] = set()
+        seen: set[_QuotaSeriesIdentity] = set()
         for row in rows:
-            identity = (
-                str(row.get("provider") or "unknown"),
-                str(row.get("harness") or "unknown"),
-                str(row.get("quota_name") or "unknown"),
-                str(row.get("account_ref") or "default"),
-            )
+            identity = _quota_series_identity(row)
             if identity in seen:
                 continue
             seen.add(identity)
@@ -775,17 +1246,23 @@ def create_app(
             )
             return projected
 
-        return jsonify(
-            {
-                "freshness": _ledger_freshness(
-                    resolved_quota_ledger,
-                    now=datetime.now(timezone.utc),
-                    heartbeat_name="quota-collect.ok",
-                ),
-                "latest": [project(row) for row in latest],
-                "observations": [project(row) for row in rows] if include_history else [],
-            }
-        )
+        payload: dict[str, Any] = {
+            "freshness": _ledger_freshness(
+                resolved_quota_ledger,
+                now=generated_at,
+                heartbeat_name="quota-collect.ok",
+            ),
+            "latest": [project(row) for row in latest],
+            "observations": [project(row) for row in rows] if include_history else [],
+        }
+        if series_start is not None and series_end is not None:
+            payload["time_series"] = _build_subscription_time_series(
+                rows,
+                window_start=series_start,
+                window_end=series_end,
+                generated_at=generated_at,
+            )
+        return jsonify(payload)
 
     @app.route("/api/billing")
     def api_billing():
