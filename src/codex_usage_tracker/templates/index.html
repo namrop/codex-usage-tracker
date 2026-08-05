@@ -570,6 +570,186 @@
         gap: 12px;
       }
 
+      .subscription-provider-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+        gap: 12px;
+      }
+
+      .subscription-provider-card {
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+        display: grid;
+        align-content: start;
+        gap: 12px;
+        padding: 14px;
+        border: 1px solid var(--line-soft);
+        border-radius: var(--radius);
+        background: rgba(14, 31, 36, 0.62);
+      }
+
+      .subscription-provider-header,
+      .subscription-window-header,
+      .subscription-window-badges {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+        min-width: 0;
+      }
+
+      .subscription-provider-title {
+        min-width: 0;
+        display: grid;
+        gap: 3px;
+      }
+
+      .subscription-provider-title h3,
+      .subscription-window-title {
+        overflow-wrap: anywhere;
+      }
+
+      .subscription-provider-id,
+      .subscription-provider-observed,
+      .subscription-window-meta,
+      .subscription-window-time,
+      .subscription-explanation {
+        color: var(--muted);
+        font-size: 0.82rem;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+      }
+
+      .subscription-badge {
+        display: inline-flex;
+        align-items: center;
+        width: fit-content;
+        max-width: 100%;
+        padding: 4px 8px;
+        border: 1px solid var(--line-soft);
+        border-radius: 999px;
+        color: var(--muted);
+        background: rgba(26, 34, 51, 0.8);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        line-height: 1.2;
+        text-transform: uppercase;
+        overflow-wrap: anywhere;
+      }
+
+      .subscription-badge.fresh,
+      .subscription-badge.confidence-exact {
+        color: var(--ok);
+        border-color: rgba(164, 240, 0, 0.48);
+        background: rgba(164, 240, 0, 0.1);
+      }
+
+      .subscription-badge.stale,
+      .subscription-badge.confidence-estimated {
+        color: var(--warning);
+        border-color: rgba(255, 200, 87, 0.52);
+        background: rgba(255, 200, 87, 0.12);
+      }
+
+      .subscription-badge.unknown,
+      .subscription-badge.confidence-unknown {
+        color: var(--muted);
+      }
+
+      .subscription-window-list {
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .subscription-window {
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+        border: 1px solid rgba(0, 179, 164, 0.2);
+        border-radius: 4px;
+        background: rgba(7, 10, 18, 0.45);
+      }
+
+      .subscription-window.is-estimated {
+        border-color: rgba(255, 200, 87, 0.58);
+        background: rgba(255, 200, 87, 0.06);
+      }
+
+      .subscription-window-title {
+        font-family: Oxanium, Rajdhani, sans-serif;
+        font-size: 0.98rem;
+      }
+
+      .subscription-quota-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .subscription-quota-stat {
+        min-width: 0;
+        padding: 8px;
+        border-left: 2px solid var(--line);
+        background: rgba(26, 34, 51, 0.48);
+      }
+
+      .subscription-quota-stat .label {
+        color: var(--muted-2);
+        font-size: 0.72rem;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+
+      .subscription-quota-value {
+        margin-top: 3px;
+        font-family: Oxanium, Rajdhani, sans-serif;
+        font-size: 0.94rem;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+
+      .subscription-progress {
+        height: 8px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(0, 179, 164, 0.12);
+      }
+
+      .subscription-progress-fill {
+        height: 100%;
+        border-radius: inherit;
+        background: var(--ok);
+      }
+
+      .subscription-explanation {
+        padding-left: 8px;
+        border-left: 2px solid var(--warning);
+        color: var(--warning);
+      }
+
+      .subscription-raw-details {
+        margin-top: 14px;
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .subscription-raw-details summary {
+        padding: 12px 0 8px;
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .subscription-raw-details .table-wrap {
+        margin: 0 -16px -16px;
+      }
+
       .empty-state {
         color: var(--muted);
         padding: 12px 0;
@@ -618,6 +798,14 @@
 
         .mini-grid,
         .insights {
+          grid-template-columns: 1fr;
+        }
+
+        .subscription-provider-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .subscription-quota-grid {
           grid-template-columns: 1fr;
         }
 
@@ -732,9 +920,21 @@
       </section>
 
       <section class="card" aria-labelledby="subscriptionsTitle">
-        <div class="card-header"><div class="card-title"><h2 id="subscriptionsTitle">Subscriptions</h2><p class="caption">Latest private quota windows and provider reset times.</p></div></div>
+        <div class="card-header">
+          <div class="card-title">
+            <h2 id="subscriptionsTitle">Subscriptions</h2>
+            <p class="caption">Provider quota windows, authority, reset times, and observation freshness.</p>
+            <p class="caption">Usage events above, subscription quota observations here, and billing facts below are separate record classes. No quota estimate is a billing fact.</p>
+          </div>
+        </div>
         <div id="subscriptionsState" class="empty-state">Loading subscription observations…</div>
-        <div id="subscriptionsContent" class="table-wrap" hidden><table><thead><tr><th>Provider</th><th>Harness</th><th>Quota</th><th>Window</th><th>Used</th><th>Remaining</th><th>Limit</th><th>Unit</th><th>Starts</th><th>Ends</th><th>Resets</th></tr></thead><tbody id="subscriptionsBody"></tbody></table></div>
+        <div id="subscriptionsContent" hidden>
+          <div id="subscriptionProviderGrid" class="subscription-provider-grid" aria-live="polite"></div>
+          <details id="subscriptionRawDetails" class="subscription-raw-details">
+            <summary>Raw quota observation ledger</summary>
+            <div class="table-wrap"><table><caption>Latest quota observations; these are not usage events or billing facts.</caption><thead><tr><th>Provider</th><th>Observed</th><th>Confidence</th><th>Harness</th><th>Quota</th><th>Window</th><th>Used</th><th>Remaining</th><th>Limit</th><th>Unit</th><th>Starts</th><th>Ends</th><th>Resets</th></tr></thead><tbody id="subscriptionsBody"></tbody></table></div>
+          </details>
+        </div>
       </section>
 
       <section class="card" aria-labelledby="billingTitle">
@@ -2096,35 +2296,348 @@
         }
       }
 
+      function renderUnavailableSubscriptionPlaceholders() {
+        const expectedProviders = [
+          ["openai-codex", "OpenAI / Codex"],
+          ["anthropic", "Anthropic / Claude"],
+          ["opencode-go", "OpenCode Go"],
+          ["z-ai-glm", "Z.AI / GLM"],
+          ["kimi-k3-coding", "Kimi K3 Coding"],
+        ];
+        const grid = document.getElementById("subscriptionProviderGrid");
+        grid.textContent = "";
+        expectedProviders.forEach(([providerId, displayName]) => {
+          const card = document.createElement("article");
+          card.className = "subscription-provider-card";
+
+          const header = document.createElement("div");
+          header.className = "subscription-provider-header";
+          const titleBlock = document.createElement("div");
+          titleBlock.className = "subscription-provider-title";
+          const title = document.createElement("h3");
+          title.textContent = displayName;
+          const id = document.createElement("div");
+          id.className = "subscription-provider-id mono";
+          id.textContent = providerId;
+          titleBlock.appendChild(title);
+          titleBlock.appendChild(id);
+          const freshness = document.createElement("span");
+          freshness.className = "subscription-badge unknown";
+          freshness.textContent = "Unknown freshness";
+          header.appendChild(titleBlock);
+          header.appendChild(freshness);
+          card.appendChild(header);
+
+          const unavailable = document.createElement("p");
+          unavailable.className = "empty-state";
+          unavailable.textContent = "No quota windows available for this provider.";
+          card.appendChild(unavailable);
+          grid.appendChild(card);
+        });
+
+        document.getElementById("subscriptionsBody").textContent = "";
+        const state = document.getElementById("subscriptionsState");
+        const content = document.getElementById("subscriptionsContent");
+        state.textContent = "Subscription data unavailable.";
+        state.hidden = false;
+        content.hidden = false;
+      }
+
       async function loadSubscriptions() {
         try {
           const response = await fetch("/api/subscriptions?days=30&history=0");
           if (!response.ok) throw new Error("unavailable");
           const data = await response.json();
           const freshness = data.freshness || {};
+          let ledgerNotice = "";
           if (freshness.status === "stale") {
-            showPanel("subscriptionsState", "subscriptionsContent", `Subscription observations are stale · last ledger write ${formatTimestamp(freshness.latest_at)}.`);
-            return;
+            ledgerNotice = `Subscription observations are stale · last ledger write ${formatTimestamp(freshness.latest_at)}. Provider observations remain visible below.`;
           }
           if (freshness.status === "empty") {
-            showPanel("subscriptionsState", "subscriptionsContent", "Subscription observations are unavailable.");
-            return;
+            ledgerNotice = "Subscription ledger freshness is unavailable. Provider observations remain visible when present.";
           }
+
           const rows = Array.isArray(data.latest) ? data.latest : [];
-          if (!rows.length) {
-            showPanel("subscriptionsState", "subscriptionsContent", "No subscription observations.");
-            return;
+          if (!rows.length && !ledgerNotice) {
+            ledgerNotice = "No subscription observations are currently recorded. Expected providers remain visible below.";
           }
+          const providerDisplayNames = {
+            "openai-codex": "OpenAI / Codex",
+            anthropic: "Anthropic / Claude",
+            "opencode-go": "OpenCode Go",
+            "z-ai-glm": "Z.AI / GLM",
+            "kimi-k3-coding": "Kimi K3 Coding",
+          };
+          const providerAliases = {
+            openai: "openai-codex",
+            "openai-codex": "openai-codex",
+            codex: "openai-codex",
+            anthropic: "anthropic",
+            claude: "anthropic",
+            "claude-code": "anthropic",
+            "opencode-go": "opencode-go",
+            "z.ai": "z-ai-glm",
+            "z-ai": "z-ai-glm",
+            zai: "z-ai-glm",
+            zhipu: "z-ai-glm",
+            zhipuai: "z-ai-glm",
+            glm: "z-ai-glm",
+            kimi: "kimi-k3-coding",
+            "kimi-code": "kimi-k3-coding",
+            "kimi-coding": "kimi-k3-coding",
+            "kimi-k3-coding": "kimi-k3-coding",
+            moonshot: "kimi-k3-coding",
+            "moonshot-ai": "kimi-k3-coding",
+          };
+          const providerOrder = [
+            "openai-codex", "anthropic", "opencode-go", "z-ai-glm", "kimi-k3-coding",
+          ];
+          const providerGroups = new Map();
+          const providerKey = (provider) => {
+            const normalized = String(provider || "unknown").trim().toLowerCase();
+            return providerAliases[normalized] || normalized || "unknown";
+          };
+          const ensureProviderGroup = (provider) => {
+            const rawProvider = String(provider || "unknown").trim() || "unknown";
+            const key = providerKey(rawProvider);
+            if (!providerGroups.has(key)) {
+              providerGroups.set(key, {
+                key,
+                providerIds: new Set(),
+                rows: [],
+              });
+            }
+            const group = providerGroups.get(key);
+            group.providerIds.add(rawProvider);
+            return group;
+          };
+
+          providerOrder.forEach((provider) => ensureProviderGroup(provider));
+          rows.forEach((row) => {
+            const group = ensureProviderGroup(row.provider);
+            group.rows.push(row);
+          });
+
+          const thresholdCandidate = Number(freshness.threshold_seconds);
+          const maxAgeCandidate = Number(freshness.max_age_seconds);
+          const thresholdSeconds = Number.isFinite(thresholdCandidate) && thresholdCandidate > 0
+            ? thresholdCandidate
+            : Number.isFinite(maxAgeCandidate) && maxAgeCandidate > 0
+              ? maxAgeCandidate
+              : 21600;
+          const hasQuotaValue = (value) => value !== null && value !== undefined && value !== "";
+          const quotaAmount = (value, unit) => {
+            if (!hasQuotaValue(value)) return "Unavailable";
+            const unitText = hasQuotaValue(unit) ? ` ${String(unit)}` : "";
+            return `${String(value)}${unitText}`;
+          };
+          const readableProviderName = (group) => {
+            if (providerDisplayNames[group.key]) return providerDisplayNames[group.key];
+            const raw = Array.from(group.providerIds)[0] || "unknown";
+            return raw.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+          };
+          const confidencePresentation = (row) => {
+            const confidence = String(row.measurement_confidence || "unknown").toLowerCase();
+            if (confidence === "exact") {
+              return { key: "exact", label: "Exact" };
+            }
+            if (confidence === "estimated") {
+              return { key: "estimated", label: "Estimated / partial" };
+            }
+            return { key: "unknown", label: "Unknown" };
+          };
+          const addBadge = (parent, text, className) => {
+            const badge = document.createElement("span");
+            badge.className = `subscription-badge ${className}`;
+            badge.textContent = text;
+            parent.appendChild(badge);
+            return badge;
+          };
+          const addQuotaStat = (parent, labelText, valueText) => {
+            const stat = document.createElement("div");
+            stat.className = "subscription-quota-stat";
+            const label = document.createElement("div");
+            label.className = "label";
+            label.textContent = labelText;
+            const value = document.createElement("div");
+            value.className = "subscription-quota-value";
+            value.textContent = valueText;
+            stat.appendChild(label);
+            stat.appendChild(value);
+            parent.appendChild(stat);
+          };
+          const presentationExplanation = (row, confidence) => {
+            const parts = [];
+            if (confidence.key === "estimated") {
+              parts.push("Partial estimate; not an exact provider observation.");
+            }
+            if (hasQuotaValue(row.coverage_status)) {
+              parts.push(`Coverage: ${String(row.coverage_status).replace(/[-_]+/g, " ")}.`);
+            }
+            if (hasQuotaValue(row.provider_state)) {
+              parts.push(`Provider state: ${String(row.provider_state).replace(/[-_]+/g, " ")}.`);
+            }
+            return parts.join(" ");
+          };
+
           const body = document.getElementById("subscriptionsBody");
           body.textContent = "";
           rows.forEach((row) => appendTextRow(body, [
-            row.provider, row.harness, row.quota_name, row.window_kind, row.used_value,
+            row.provider, formatTimestamp(row.observed_at), row.measurement_confidence,
+            row.harness, row.quota_name, row.window_kind, row.used_value,
             row.remaining_value, row.limit_value, row.unit, formatTimestamp(row.window_started_at),
             formatTimestamp(row.window_ends_at), formatTimestamp(row.resets_at),
           ]));
-          showPanel("subscriptionsState", "subscriptionsContent", "");
+
+          const grid = document.getElementById("subscriptionProviderGrid");
+          grid.textContent = "";
+          const groups = Array.from(providerGroups.values()).sort((left, right) => {
+            const leftIndex = providerOrder.indexOf(left.key);
+            const rightIndex = providerOrder.indexOf(right.key);
+            const leftRank = leftIndex === -1 ? providerOrder.length : leftIndex;
+            const rightRank = rightIndex === -1 ? providerOrder.length : rightIndex;
+            if (leftRank !== rightRank) return leftRank - rightRank;
+            return readableProviderName(left).localeCompare(readableProviderName(right));
+          });
+
+          groups.forEach((group) => {
+            const card = document.createElement("article");
+            card.className = "subscription-provider-card";
+            const header = document.createElement("div");
+            header.className = "subscription-provider-header";
+            const titleBlock = document.createElement("div");
+            titleBlock.className = "subscription-provider-title";
+            const title = document.createElement("h3");
+            title.textContent = readableProviderName(group);
+            const providerId = document.createElement("div");
+            providerId.className = "subscription-provider-id mono";
+            providerId.textContent = Array.from(group.providerIds).join(" · ");
+            titleBlock.appendChild(title);
+            titleBlock.appendChild(providerId);
+
+            const observedTimes = group.rows
+              .map((row) => Date.parse(row.observed_at))
+              .filter((value) => Number.isFinite(value));
+            const newestObservedMs = observedTimes.length ? Math.max(...observedTimes) : null;
+            let providerFreshness = "unknown";
+            if (newestObservedMs !== null) {
+              const ageSeconds = (Date.now() - newestObservedMs) / 1000;
+              providerFreshness = ageSeconds <= thresholdSeconds ? "fresh" : "stale";
+            }
+            const freshnessLabel = providerFreshness === "fresh"
+              ? "Fresh"
+              : providerFreshness === "stale" ? "Stale" : "Unknown freshness";
+            addBadge(header, freshnessLabel, providerFreshness);
+            header.insertBefore(titleBlock, header.firstChild);
+            card.appendChild(header);
+
+            const observed = document.createElement("p");
+            observed.className = "subscription-provider-observed";
+            observed.textContent = `Last observation: ${newestObservedMs === null ? "Unavailable" : formatTimestamp(new Date(newestObservedMs).toISOString())} · freshness threshold ${Math.round(thresholdSeconds / 60)} min`;
+            card.appendChild(observed);
+
+            const windowList = document.createElement("div");
+            windowList.className = "subscription-window-list";
+            const sortedRows = group.rows.slice().sort((left, right) =>
+              String(left.quota_name || "").localeCompare(String(right.quota_name || ""))
+            );
+            if (!sortedRows.length) {
+              const unavailable = document.createElement("p");
+              unavailable.className = "empty-state";
+              unavailable.textContent = "No quota windows available for this provider.";
+              windowList.appendChild(unavailable);
+            }
+
+            sortedRows.forEach((row) => {
+              const confidence = confidencePresentation(row);
+              const windowCard = document.createElement("section");
+              windowCard.className = confidence.key === "estimated"
+                ? "subscription-window is-estimated"
+                : "subscription-window";
+              const windowHeader = document.createElement("div");
+              windowHeader.className = "subscription-window-header";
+              const windowTitle = document.createElement("h4");
+              windowTitle.className = "subscription-window-title";
+              windowTitle.textContent = hasQuotaValue(row.quota_name) ? String(row.quota_name) : "Unnamed quota";
+              const badges = document.createElement("div");
+              badges.className = "subscription-window-badges";
+              addBadge(badges, confidence.label, `confidence-${confidence.key}`);
+              addBadge(
+                badges,
+                hasQuotaValue(row.window_kind) ? String(row.window_kind) : "Unknown window",
+                "unknown",
+              );
+              windowHeader.appendChild(windowTitle);
+              windowHeader.appendChild(badges);
+              windowCard.appendChild(windowHeader);
+
+              const metadata = document.createElement("p");
+              metadata.className = "subscription-window-meta";
+              const metadataParts = [];
+              if (hasQuotaValue(row.harness)) metadataParts.push(`Harness: ${String(row.harness)}`);
+              if (hasQuotaValue(row.quota_scope)) metadataParts.push(`Scope: ${String(row.quota_scope)}`);
+              metadataParts.push(`Unit: ${hasQuotaValue(row.unit) ? String(row.unit) : "unavailable"}`);
+              metadata.textContent = metadataParts.join(" · ");
+              windowCard.appendChild(metadata);
+
+              const quotaGrid = document.createElement("div");
+              quotaGrid.className = "subscription-quota-grid";
+              const usedText = quotaAmount(row.used_value, row.unit);
+              const limitText = quotaAmount(row.limit_value, row.unit);
+              const usedAndLimit = !hasQuotaValue(row.used_value) && !hasQuotaValue(row.limit_value)
+                ? "Unavailable"
+                : `${usedText} / ${limitText}`;
+              addQuotaStat(quotaGrid, "Used / limit", usedAndLimit);
+              addQuotaStat(quotaGrid, "Remaining", quotaAmount(row.remaining_value, row.unit));
+              windowCard.appendChild(quotaGrid);
+
+              const usedNumber = hasQuotaValue(row.used_value) ? Number(row.used_value) : NaN;
+              const limitNumber = hasQuotaValue(row.limit_value) ? Number(row.limit_value) : NaN;
+              const ratioIsAuthoritative = confidence.key === "exact"
+                && Number.isFinite(usedNumber)
+                && Number.isFinite(limitNumber)
+                && limitNumber > 0;
+              if (ratioIsAuthoritative) {
+                const ratio = Math.max(0, Math.min(100, usedNumber / limitNumber * 100));
+                const progress = document.createElement("div");
+                progress.className = "subscription-progress";
+                progress.setAttribute("role", "progressbar");
+                progress.setAttribute("aria-label", "Authoritative quota used");
+                progress.setAttribute("aria-valuemin", "0");
+                progress.setAttribute("aria-valuemax", "100");
+                progress.setAttribute("aria-valuenow", ratio.toFixed(1));
+                const fill = document.createElement("div");
+                fill.className = "subscription-progress-fill";
+                fill.style.width = `${ratio}%`;
+                progress.appendChild(fill);
+                windowCard.appendChild(progress);
+              }
+
+              const windowTime = document.createElement("p");
+              windowTime.className = "subscription-window-time";
+              windowTime.textContent = `Window: ${formatTimestamp(row.window_started_at)} → ${formatTimestamp(row.window_ends_at)} · Reset: ${formatTimestamp(row.resets_at)}`;
+              windowCard.appendChild(windowTime);
+
+              const explanationText = presentationExplanation(row, confidence);
+              if (explanationText) {
+                const explanation = document.createElement("p");
+                explanation.className = "subscription-explanation";
+                explanation.textContent = explanationText;
+                windowCard.appendChild(explanation);
+              }
+              windowList.appendChild(windowCard);
+            });
+            card.appendChild(windowList);
+            grid.appendChild(card);
+          });
+
+          const state = document.getElementById("subscriptionsState");
+          const content = document.getElementById("subscriptionsContent");
+          state.textContent = ledgerNotice;
+          state.hidden = !ledgerNotice;
+          content.hidden = false;
         } catch (error) {
-          showPanel("subscriptionsState", "subscriptionsContent", "Subscription data unavailable.");
+          renderUnavailableSubscriptionPlaceholders();
         }
       }
 

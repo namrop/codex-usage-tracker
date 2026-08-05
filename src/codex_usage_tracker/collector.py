@@ -32,7 +32,9 @@ from .quota import (
     collect_claude_code_quota,
     collect_deepseek_quota,
     collect_kimi_code_quota,
+    collect_opencode_go_quota as collect_exact_opencode_go_quota,
     collect_openrouter_quota,
+    collect_z_ai_quota,
     derive_opencode_go_quotas,
 )
 from .usage_adapters import collect_claude_usage, collect_hermes_usage, collect_opencode_usage
@@ -42,6 +44,10 @@ ALLOWED_DOTENV_KEYS = frozenset(
         "OPENROUTER_API_KEY",
         "DEEPSEEK_API_KEY",
         "KIMI_CODING_API_KEY",
+        "Z_AI_API_KEY",
+        "ZAI_API_KEY",
+        "OPENCODE_GO_WORKSPACE_ID",
+        "OPENCODE_GO_AUTH_COOKIE",
     }
 )
 
@@ -439,9 +445,16 @@ def collect_all(
     stabilized_replays: list[dict[str, Any]] = []
     generated_corrections = 0
 
-    def collect_source(source: str, collect: Any) -> list[dict[str, Any]]:
+    def collect_source(
+        source: str,
+        collect: Any,
+        *,
+        require_rows: bool = False,
+    ) -> list[dict[str, Any]]:
         try:
             rows = list(collect())
+            if require_rows and not rows:
+                raise ValueError(f"{source} returned no rows")
         except Exception as exc:
             warnings.append({"source": source, "error": type(exc).__name__})
             sources[source] = _source_result(0)
@@ -582,18 +595,39 @@ def collect_all(
                     ),
                 )
             )
-            quota_sources.append(
-                (
+            opencode_go_workspace = env.get("OPENCODE_GO_WORKSPACE_ID")
+            opencode_go_cookie = env.get("OPENCODE_GO_AUTH_COOKIE")
+            if live_quota and opencode_go_workspace and opencode_go_cookie:
+                opencode_go_rows = collect_source(
                     "opencode_go_quota",
-                    collect_source(
-                        "opencode_go_quota",
+                    lambda: collect_exact_opencode_go_quota(
+                        opencode_go_workspace,
+                        opencode_go_cookie,
+                        f"{source_prefix}:opencode-go",
+                    ),
+                    require_rows=True,
+                )
+                if opencode_go_rows:
+                    quota_sources.append(("opencode_go_quota", opencode_go_rows))
+                else:
+                    estimated_source = "opencode_go_quota_estimated"
+                    estimated_rows = collect_source(
+                        estimated_source,
                         lambda: derive_opencode_go_quotas(
                             opencode or [],
                             f"{source_prefix}:opencode-go",
                         ),
+                    )
+                    quota_sources.append((estimated_source, estimated_rows))
+            else:
+                opencode_go_rows = collect_source(
+                    "opencode_go_quota",
+                    lambda: derive_opencode_go_quotas(
+                        opencode or [],
+                        f"{source_prefix}:opencode-go",
                     ),
                 )
-            )
+                quota_sources.append(("opencode_go_quota", opencode_go_rows))
 
             if live_quota:
                 if claude_quota_command and not dry_run:
@@ -654,6 +688,21 @@ def collect_all(
                                 lambda: collect_kimi_code_quota(
                                     kimi_key,
                                     f"{source_prefix}:kimi-code-quota",
+                                ),
+                            ),
+                        )
+                    )
+
+                z_ai_key = env.get("Z_AI_API_KEY") or env.get("ZAI_API_KEY")
+                if z_ai_key:
+                    quota_sources.append(
+                        (
+                            "z_ai_quota",
+                            collect_source(
+                                "z_ai_quota",
+                                lambda: collect_z_ai_quota(
+                                    z_ai_key,
+                                    f"{source_prefix}:z-ai-quota",
                                 ),
                             ),
                         )

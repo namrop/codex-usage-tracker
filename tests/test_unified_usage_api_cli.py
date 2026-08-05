@@ -18,7 +18,9 @@ from codex_usage_tracker.canonical_ledger import (
     read_facts,
     read_sqlite_facts,
 )
+import codex_usage_tracker.collector as collector_module
 import codex_usage_tracker.dashboard as dashboard_module
+import codex_usage_tracker.quota as quota_module
 from codex_usage_tracker.cli import main
 from codex_usage_tracker.dashboard import create_app
 from codex_usage_tracker.provider_spend import latest_budget_state
@@ -48,6 +50,47 @@ def _usage_fact(source_event_id="u-1"):
         "measurement_confidence": "exact",
         "cost_status": "included",
     }
+
+
+def _collector_quota_rows(provider, harness, namespace, names):
+    rows = []
+    for name in names:
+        rows.append(
+            quota_module._quota(
+                namespace=namespace,
+                observation_id=f"collector-test:{name}",
+                harness=harness,
+                observed_at="2026-08-02T05:25:00Z",
+                provider=provider,
+                quota_name=name,
+                window_kind="rolling" if name == "five_hour" else "fixed",
+                unit="requests" if name == "web_search_month" else "percent",
+                limit=100,
+                used=25,
+                remaining=75,
+                x_source_surface="collector_test",
+            )
+        )
+    return rows
+
+
+def _collect_quota_only(tmp_path, *, environment, dotenv=None, strict_sources=False):
+    quota = tmp_path / "quota.sqlite3"
+    result = collect_all(
+        state_db=tmp_path / "missing-state.db",
+        claude_root=tmp_path / "missing-claude",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "missing-codex.jsonl",
+        usage_ledger=tmp_path / "out-of-scope-usage.sqlite3",
+        quota_ledger=quota,
+        dotenv=dotenv,
+        claude_quota_command=None,
+        live_quota=True,
+        environment=environment,
+        scope="quota",
+        strict_sources=strict_sources,
+    )
+    return result, quota
 
 
 def test_live_provider_fetches_are_structured_and_secret_free(monkeypatch):
@@ -101,6 +144,408 @@ def test_deepseek_negative_account_balance_clamps_remaining_and_preserves_signed
     assert rows[0]["x_provider_balance"] == "-1.75"
     assert rows[0]["x_topped_up_balance"] == "-1.75"
     assert rows[0]["x_is_available"] is False
+
+
+def test_z_ai_quota_collects_exact_recognized_windows(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self): captured["status_checked"] = True
+        def json(self):
+            return {
+                "success": True,
+                "code": 200,
+                "data": {
+                    "limits": [
+                        {
+                            "type": "TOKENS_LIMIT",
+                            "unit": 3,
+                            "number": 5,
+                            "percentage": "12.5",
+                            "nextResetTime": 1785656751000,
+                            "level": "MAX",
+                        },
+                        {
+                            "name": "TOKENS_LIMIT",
+                            "unit": 6,
+                            "number": 1,
+                            "percentage": 40,
+                            "nextResetTime": "2026-08-09T02:45:51Z",
+                        },
+                        {
+                            "type": "TIME_LIMIT",
+                            "unit": 5,
+                            "number": 1,
+                            "currentValue": "30",
+                            "usage": "100",
+                            "remaining": "70",
+                            "nextResetTime": 1788220800000,
+                        },
+                    ]
+                },
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs): captured["timeout"] = kwargs.get("timeout")
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers):
+            captured["url"] = url
+            captured["accept"] = headers.get("Accept")
+            captured["authorized"] = headers.get("Authorization") == "Bearer private-z-ai-key"
+            return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    rows = quota_module.collect_z_ai_quota(
+        "private-z-ai-key",
+        "ns:z-ai",
+        observed_at="2026-08-02T05:25:00Z",
+    )
+
+    assert captured == {
+        "timeout": 30.0,
+        "url": "https://api.z.ai/api/monitor/usage/quota/limit",
+        "accept": "application/json",
+        "authorized": True,
+        "status_checked": True,
+    }
+    by_name = {row["quota_name"]: row for row in rows}
+    assert set(by_name) == {"five_hour", "week", "web_search_month"}
+    assert (
+        by_name["five_hour"]["used_value"],
+        by_name["five_hour"]["remaining_value"],
+        by_name["five_hour"]["resets_at"],
+    ) == ("12.5", "87.5", "2026-08-02T07:45:51Z")
+    assert by_name["five_hour"]["window_kind"] == "rolling"
+    assert by_name["week"]["used_value"] == "40"
+    assert by_name["week"]["remaining_value"] == "60"
+    assert by_name["week"]["resets_at"] == "2026-08-09T02:45:51Z"
+    web = by_name["web_search_month"]
+    assert web["window_kind"] == "fixed" and web["unit"] == "requests"
+    assert (web["limit_value"], web["used_value"], web["remaining_value"]) == (
+        "100", "30", "70"
+    )
+    assert web["resets_at"] == "2026-09-01T00:00:00Z"
+    assert all(
+        row["provider"] == "z-ai"
+        and row["harness"] == "z_ai_api"
+        and row["measurement_confidence"] == "exact"
+        for row in rows
+    )
+    assert by_name["five_hour"]["x_provider_unit"] == 3
+    assert by_name["five_hour"]["x_provider_number"] == 5
+    assert by_name["five_hour"]["x_provider_level"] == "MAX"
+    serialized = json.dumps(rows)
+    assert "private-z-ai-key" not in serialized
+    assert "data" not in by_name["five_hour"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"success": False, "code": 500, "data": {"limits": []}},
+        {
+            "success": True,
+            "code": 200,
+            "data": {"limits": [
+                {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 10},
+                {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 11},
+            ]},
+        },
+        {
+            "success": True,
+            "code": 200,
+            "data": {"limits": [
+                {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 101},
+            ]},
+        },
+        {
+            "success": True,
+            "code": 200,
+            "data": {"limits": [{
+                "type": "TIME_LIMIT", "unit": 5, "number": 1,
+                "currentValue": 30, "usage": 100, "remaining": 69,
+            }]},
+        },
+        {
+            "success": True,
+            "code": 200,
+            "data": {"limits": [
+                {"type": "TOKENS_LIMIT", "unit": 4, "number": 1, "percentage": 10},
+            ]},
+        },
+    ],
+)
+def test_z_ai_quota_rejects_unsuccessful_malformed_or_ambiguous_payloads(monkeypatch, payload):
+    class Response:
+        def raise_for_status(self): pass
+        def json(self): return payload
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers): return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    with pytest.raises(ValueError, match="Z.AI"):
+        quota_module.collect_z_ai_quota("private-z-ai-key", "ns:z-ai")
+
+
+def _complete_z_ai_limits():
+    return [
+        {
+            "type": "TOKENS_LIMIT",
+            "unit": 3,
+            "number": 5,
+            "percentage": 10,
+            "nextResetTime": 1785656751000,
+        },
+        {
+            "type": "TOKENS_LIMIT",
+            "unit": 6,
+            "number": 1,
+            "percentage": 20,
+            "nextResetTime": 1786262400000,
+        },
+        {
+            "type": "TIME_LIMIT",
+            "unit": 5,
+            "number": 1,
+            "currentValue": 30,
+            "usage": 100,
+            "remaining": 70,
+            "nextResetTime": 1788220800000,
+        },
+    ]
+
+
+def _collect_z_ai_limits(monkeypatch, limits):
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"success": True, "code": 200, "data": {"limits": limits}}
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers): return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    return quota_module.collect_z_ai_quota("private-z-ai-key", "ns:z-ai")
+
+
+@pytest.mark.parametrize("recognized_count", [1, 2])
+def test_z_ai_quota_rejects_partial_known_quota_surface(monkeypatch, recognized_count):
+    with pytest.raises(ValueError, match="Z.AI"):
+        _collect_z_ai_limits(monkeypatch, _complete_z_ai_limits()[:recognized_count])
+
+
+@pytest.mark.parametrize("malformed_position", [0, 3])
+def test_z_ai_quota_rejects_non_object_limits_regardless_of_order(
+    monkeypatch, malformed_position
+):
+    limits: list[Any] = _complete_z_ai_limits()
+    limits.insert(malformed_position, "malformed-limit")
+
+    with pytest.raises(ValueError, match="Z.AI"):
+        _collect_z_ai_limits(monkeypatch, limits)
+
+
+def test_z_ai_quota_ignores_unknown_well_formed_limits(monkeypatch):
+    limits = _complete_z_ai_limits()
+    limits.insert(1, {"type": "FUTURE_LIMIT", "providerField": "preserved-upstream"})
+
+    rows = _collect_z_ai_limits(monkeypatch, limits)
+
+    assert {row["quota_name"] for row in rows} == {
+        "five_hour", "week", "web_search_month"
+    }
+
+
+@pytest.mark.parametrize(
+    ("entry_index", "field"),
+    [
+        (0, "percentage"),
+        (2, "currentValue"),
+        (2, "usage"),
+        (2, "remaining"),
+    ],
+)
+@pytest.mark.parametrize(
+    "invalid_value",
+    [-1, True, float("nan"), float("inf")],
+    ids=["negative", "bool", "nan", "infinity"],
+)
+def test_z_ai_quota_rejects_invalid_nonnegative_values(
+    monkeypatch, entry_index, field, invalid_value
+):
+    limits = _complete_z_ai_limits()
+    limits[entry_index][field] = invalid_value
+
+    with pytest.raises(ValueError, match="Z.AI"):
+        _collect_z_ai_limits(monkeypatch, limits)
+
+
+def test_opencode_go_quota_collects_exact_server_function_windows(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self): captured["status_checked"] = True
+        def json(self):
+            return {
+                "rollingUsage": {"usagePercent": "12.5", "resetInSec": 3600},
+                "weeklyUsage": {"usagePercent": 25, "resetInSec": 7200},
+                "monthlyUsage": {"usagePercent": 80, "resetInSec": 0},
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs): captured["timeout"] = kwargs.get("timeout")
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, params, headers):
+            captured["url"] = url
+            captured["params"] = params
+            captured["accept"] = headers.get("Accept")
+            captured["cookie"] = headers.get("Cookie")
+            captured["referer"] = headers.get("Referer")
+            captured["server_id"] = headers.get("X-Server-Id")
+            captured["server_instance"] = headers.get("X-Server-Instance")
+            return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    rows = quota_module.collect_opencode_go_quota(
+        "fake-workspace-id",
+        "fake-auth-cookie",
+        "ns:opencode-go",
+        observed_at="2026-08-02T05:25:00Z",
+    )
+
+    assert captured == {
+        "timeout": 30.0,
+        "url": "https://opencode.ai/_server/",
+        "params": {"id": "lite.subscription.get", "args": '["fake-workspace-id"]'},
+        "accept": "application/json",
+        "cookie": "auth=fake-auth-cookie",
+        "referer": "https://opencode.ai/workspace/fake-workspace-id/go",
+        "server_id": "lite.subscription.get",
+        "server_instance": "codex-usage-tracker",
+        "status_checked": True,
+    }
+    by_name = {row["quota_name"]: row for row in rows}
+    assert set(by_name) == {"five_hour", "week", "month"}
+    assert (
+        by_name["five_hour"]["used_value"],
+        by_name["five_hour"]["remaining_value"],
+        by_name["five_hour"]["resets_at"],
+        by_name["five_hour"]["window_kind"],
+    ) == ("12.5", "87.5", "2026-08-02T06:25:00Z", "rolling")
+    assert by_name["week"]["resets_at"] == "2026-08-02T07:25:00Z"
+    assert by_name["week"]["window_kind"] == "fixed"
+    assert by_name["month"]["resets_at"] == "2026-08-02T05:25:00Z"
+    assert by_name["month"]["window_kind"] == "fixed"
+    assert all(
+        row["provider"] == "opencode-go"
+        and row["harness"] == "opencode_go_api"
+        and row["unit"] == "percent"
+        and row["limit_value"] == "100"
+        and row["measurement_confidence"] == "exact"
+        for row in rows
+    )
+    serialized = json.dumps(rows)
+    assert "fake-workspace-id" not in serialized
+    assert "fake-auth-cookie" not in serialized
+
+
+def test_opencode_go_quota_parses_server_function_text_without_evaluating_it(monkeypatch):
+    class Response:
+        def raise_for_status(self): pass
+        def json(self): raise json.JSONDecodeError("not JSON", "x", 0)
+        def text(self):
+            return (
+                ';0x000000ef;(globalThis.$R={},$R[0]={'
+                'rollingUsage:$R[1]={usagePercent:7,resetInSec:18000},'
+                'weeklyUsage:$R[2]={resetInSec:540000,usagePercent:2},'
+                'monthlyUsage:$R[3]={usagePercent:16,resetInSec:2480000}})'
+            )
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, params, headers): return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    rows = quota_module.collect_opencode_go_quota(
+        "fake-workspace-id",
+        "fake-auth-cookie",
+        "ns:opencode-go",
+        observed_at="2026-08-02T05:25:00Z",
+    )
+    assert [row["used_value"] for row in rows] == ["7", "2", "16"]
+    assert "globalThis" not in json.dumps(rows)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "rollingUsage": {"usagePercent": 10, "resetInSec": 1},
+            "weeklyUsage": {"usagePercent": 20, "resetInSec": 2},
+        },
+        {
+            "rollingUsage": {"usagePercent": 101, "resetInSec": 1},
+            "weeklyUsage": {"usagePercent": 20, "resetInSec": 2},
+            "monthlyUsage": {"usagePercent": 30, "resetInSec": 3},
+        },
+        {
+            "rollingUsage": {"usagePercent": 10, "resetInSec": -1},
+            "weeklyUsage": {"usagePercent": 20, "resetInSec": 2},
+            "monthlyUsage": {"usagePercent": 30, "resetInSec": 3},
+        },
+    ],
+)
+def test_opencode_go_quota_rejects_partial_or_invalid_windows_without_secret_leak(
+    monkeypatch, payload
+):
+    class Response:
+        def raise_for_status(self): pass
+        def json(self): return payload
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, params, headers): return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    with pytest.raises(ValueError, match="OpenCode Go") as error:
+        quota_module.collect_opencode_go_quota(
+            "fake-workspace-id", "fake-auth-cookie", "ns:opencode-go"
+        )
+    assert "fake-workspace-id" not in str(error.value)
+    assert "fake-auth-cookie" not in str(error.value)
+
+
+def test_opencode_go_quota_sanitizes_transport_errors(monkeypatch):
+    class Response:
+        def raise_for_status(self):
+            raise RuntimeError("fake-workspace-id fake-auth-cookie")
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, params, headers): return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    with pytest.raises(ValueError, match="OpenCode Go quota request failed") as error:
+        quota_module.collect_opencode_go_quota(
+            "fake-workspace-id", "fake-auth-cookie", "ns:opencode-go"
+        )
+    assert "fake-workspace-id" not in str(error.value)
+    assert "fake-auth-cookie" not in str(error.value)
 
 
 def test_kimi_code_quota_uses_official_windows_and_derives_missing_remaining(monkeypatch):
@@ -165,6 +610,201 @@ def test_kimi_code_quota_uses_official_windows_and_derives_missing_remaining(mon
         and row["measurement_confidence"] == "exact"
         for row in rows
     )
+    assert "private-key" not in json.dumps(rows)
+
+
+def _collect_kimi_payload(monkeypatch, *, usage, five_hour_detail):
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {
+                "usage": usage,
+                "limits": [{
+                    "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                    "detail": five_hour_detail,
+                }],
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers): return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    return collect_kimi_code_quota(
+        "private-key",
+        "ns:kimi-code",
+        observed_at="2026-08-02T05:25:00Z",
+    )
+
+
+def test_kimi_code_quota_accepts_live_two_of_three_value_variant(monkeypatch):
+    rows = _collect_kimi_payload(
+        monkeypatch,
+        usage={
+            "limit": "100",
+            "used": "100",
+            "resetTime": "2026-08-09T02:45:51.442531Z",
+        },
+        five_hour_detail={
+            "limit": "100",
+            "remaining": "100",
+            "resetTime": "2026-08-02T07:45:51.442531Z",
+        },
+    )
+
+    by_name = {row["quota_name"]: row for row in rows}
+    five_hour = by_name["five_hour"]
+    weekly = by_name["week"]
+    assert (
+        five_hour["limit_value"],
+        five_hour["used_value"],
+        five_hour["remaining_value"],
+    ) == ("100", "0", "100")
+    assert five_hour["resets_at"] == "2026-08-02T07:45:51.442531Z"
+    assert (
+        weekly["limit_value"],
+        weekly["used_value"],
+        weekly["remaining_value"],
+    ) == ("100", "100", "0")
+    assert weekly["resets_at"] == "2026-08-09T02:45:51.442531Z"
+    assert all(row["measurement_confidence"] == "exact" for row in rows)
+
+
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [
+        ({"used": "25", "remaining": "75"}, ("100", "25", "75")),
+        ({"limit": "100", "remaining": "75"}, ("100", "25", "75")),
+        ({"limit": "100", "used": "25"}, ("100", "25", "75")),
+    ],
+    ids=["derive-limit", "derive-used", "derive-remaining"],
+)
+def test_kimi_code_quota_derives_each_missing_core_value_exactly(
+    monkeypatch, detail, expected
+):
+    rows = _collect_kimi_payload(
+        monkeypatch,
+        usage={"limit": "100", "used": "25", "remaining": "75"},
+        five_hour_detail=detail,
+    )
+
+    five_hour = next(row for row in rows if row["quota_name"] == "five_hour")
+    assert (
+        five_hour["limit_value"],
+        five_hour["used_value"],
+        five_hour["remaining_value"],
+    ) == expected
+    assert five_hour["measurement_confidence"] == "exact"
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        {"limit": "100", "used": "25", "remaining": "80"},
+        {"limit": "-1", "used": "0"},
+        {"limit": "100", "used": "-1"},
+        {"limit": "100", "remaining": "-1"},
+        {"limit": "100"},
+        {"used": "25"},
+        {"remaining": "75"},
+        {"limit": "100", "used": True},
+        {"limit": float("nan"), "used": "25"},
+        {"limit": "100", "remaining": float("inf")},
+        {"limit": "100", "used": "101"},
+        {"limit": "100", "remaining": "101"},
+    ],
+    ids=[
+        "inconsistent",
+        "negative-limit",
+        "negative-used",
+        "negative-remaining",
+        "only-limit",
+        "only-used",
+        "only-remaining",
+        "bool",
+        "nan",
+        "infinity",
+        "used-exceeds-limit",
+        "remaining-exceeds-limit",
+    ],
+)
+def test_kimi_code_quota_rejects_invalid_or_ambiguous_core_values(monkeypatch, detail):
+    with pytest.raises(ValueError):
+        _collect_kimi_payload(
+            monkeypatch,
+            usage={"limit": "100", "used": "25", "remaining": "75"},
+            five_hour_detail=detail,
+        )
+
+
+def test_kimi_code_quota_retains_unknown_row_when_all_core_values_are_omitted(monkeypatch):
+    rows = _collect_kimi_payload(
+        monkeypatch,
+        usage={"limit": "100", "used": "25", "remaining": "75"},
+        five_hour_detail={},
+    )
+
+    five_hour = next(row for row in rows if row["quota_name"] == "five_hour")
+    assert (
+        five_hour["limit_value"],
+        five_hour["used_value"],
+        five_hour["remaining_value"],
+        five_hour["resets_at"],
+    ) == (None, None, None, None)
+    assert five_hour["measurement_confidence"] == "unknown"
+    assert five_hour["x_provider_state"] == "inactive_or_not_reported"
+
+
+def test_kimi_code_quota_preserves_zero_week_and_inactive_five_hour_window(monkeypatch):
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {
+                "usage": {
+                    "limit": 0,
+                    "used": 0,
+                    "remaining": 0,
+                    "resetTime": "2026-08-09T02:45:51.442531Z",
+                },
+                "limits": [{
+                    "window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                    "detail": {
+                        "limit": None,
+                        "used": None,
+                        "remaining": None,
+                        "resetTime": None,
+                    },
+                }],
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, headers): return Response()
+
+    monkeypatch.setattr("codex_usage_tracker.quota.httpx.Client", Client)
+    rows = collect_kimi_code_quota(
+        "private-key",
+        "ns:kimi-code",
+        observed_at="2026-08-02T05:25:00Z",
+    )
+
+    by_name = {row["quota_name"]: row for row in rows}
+    weekly = by_name["week"]
+    inactive = by_name["five_hour"]
+    assert (weekly["limit_value"], weekly["used_value"], weekly["remaining_value"]) == (
+        "0", "0", "0"
+    )
+    assert weekly["measurement_confidence"] == "exact"
+    assert (
+        inactive["limit_value"], inactive["used_value"], inactive["remaining_value"],
+        inactive["resets_at"],
+    ) == (None, None, None, None)
+    assert inactive["measurement_confidence"] == "unknown"
+    assert inactive["x_provider_state"] == "inactive_or_not_reported"
     assert "private-key" not in json.dumps(rows)
 
 
@@ -817,6 +1457,276 @@ def test_collect_all_loads_and_persists_kimi_code_quota_without_secret_leak(tmp_
     assert "private-kimi-key" not in json.dumps(result)
     assert "private-kimi-key" not in json.dumps(kimi_rows)
     assert "must-not-load" not in json.dumps(result)
+
+
+def test_quota_dotenv_allowlist_adds_only_exact_new_inputs(tmp_path):
+    dotenv = tmp_path / ".env"
+    expected = {
+        "OPENROUTER_API_KEY": "openrouter",
+        "DEEPSEEK_API_KEY": "deepseek",
+        "KIMI_CODING_API_KEY": "kimi",
+        "Z_AI_API_KEY": "z-ai-primary",
+        "ZAI_API_KEY": "z-ai-alias",
+        "OPENCODE_GO_WORKSPACE_ID": "workspace-private",
+        "OPENCODE_GO_AUTH_COOKIE": "cookie-private",
+    }
+    dotenv.write_text(
+        "".join(f"{key}={value}\n" for key, value in expected.items())
+        + "UNRELATED_SECRET=must-not-load\n",
+        encoding="utf-8",
+    )
+
+    loaded = collector_module.load_allowed_dotenv(dotenv, environ={})
+
+    assert loaded == expected
+    assert collector_module.ALLOWED_DOTENV_KEYS == frozenset(expected)
+
+
+def test_collect_all_prefers_exact_opencode_go_quota_when_both_credentials_exist(
+    tmp_path, monkeypatch
+):
+    workspace_id = "private-opencode-workspace"
+    auth_cookie = "private-opencode-cookie"
+    captured = {}
+
+    def collect_exact(workspace, cookie, namespace):
+        captured.update(workspace=workspace, cookie=cookie, namespace=namespace)
+        return _collector_quota_rows(
+            "opencode-go", "opencode_go_api", namespace, ("five_hour", "week", "month")
+        )
+
+    def forbid_estimate(*args, **kwargs):
+        raise AssertionError("estimated OpenCode Go fallback must not run")
+
+    monkeypatch.setattr(
+        collector_module,
+        "collect_exact_opencode_go_quota",
+        collect_exact,
+        raising=False,
+    )
+    monkeypatch.setattr(collector_module, "derive_opencode_go_quotas", forbid_estimate)
+    result, quota = _collect_quota_only(
+        tmp_path,
+        environment={
+            "OPENCODE_GO_WORKSPACE_ID": workspace_id,
+            "OPENCODE_GO_AUTH_COOKIE": auth_cookie,
+        },
+    )
+
+    facts = list(read_sqlite_facts(quota, fact_type="quota_observation_v1"))
+    opencode_rows = [row for row in facts if row["provider"] == "opencode-go"]
+    assert captured == {
+        "workspace": workspace_id,
+        "cookie": auth_cookie,
+        "namespace": "sol:opencode-go",
+    }
+    assert result["sources"]["opencode_go_quota"] == {"discovered": 3}
+    assert len(opencode_rows) == 3
+    assert all(
+        row["harness"] == "opencode_go_api"
+        and row["measurement_confidence"] == "exact"
+        for row in opencode_rows
+    )
+    serialized = json.dumps({"result": result, "facts": facts})
+    assert workspace_id not in serialized
+    assert auth_cookie not in serialized
+
+
+def test_collect_all_keeps_estimated_opencode_go_fallback_without_credentials(
+    tmp_path, monkeypatch
+):
+    exact_calls = []
+    local_fact = dict(
+        _usage_fact("opencode-go-local"),
+        provider="opencode-go",
+        harness="opencode",
+        occurred_at=datetime.now(timezone.utc).isoformat(),
+        x_opencode_quota_cost_usd="1.25",
+    )
+    monkeypatch.setattr(collector_module, "collect_opencode_usage", lambda *args: [local_fact])
+    monkeypatch.setattr(
+        collector_module,
+        "collect_exact_opencode_go_quota",
+        lambda *args, **kwargs: exact_calls.append(args),
+        raising=False,
+    )
+
+    result, quota = _collect_quota_only(tmp_path, environment={})
+
+    rows = [
+        row for row in read_sqlite_facts(quota, fact_type="quota_observation_v1")
+        if row["provider"] == "opencode-go"
+    ]
+    assert exact_calls == []
+    assert result["sources"]["opencode_go_quota"] == {"discovered": 3}
+    assert result["warnings"] == []
+    assert len(rows) == 3
+    assert all(
+        row["measurement_confidence"] == "estimated"
+        and row["x_coverage"]["status"] == "partial"
+        for row in rows
+    )
+
+
+@pytest.mark.parametrize(
+    ("partial_environment", "partial_secret"),
+    [
+        ({"OPENCODE_GO_WORKSPACE_ID": "partial-private-workspace"}, "partial-private-workspace"),
+        ({"OPENCODE_GO_AUTH_COOKIE": "partial-private-cookie"}, "partial-private-cookie"),
+    ],
+)
+def test_collect_all_uses_estimate_without_calling_network_for_partial_opencode_credentials(
+    tmp_path, monkeypatch, partial_environment, partial_secret
+):
+    exact_calls = []
+    monkeypatch.setattr(
+        collector_module,
+        "collect_exact_opencode_go_quota",
+        lambda *args, **kwargs: exact_calls.append(args),
+        raising=False,
+    )
+
+    result, quota = _collect_quota_only(tmp_path, environment=partial_environment)
+
+    rows = [
+        row for row in read_sqlite_facts(quota, fact_type="quota_observation_v1")
+        if row["provider"] == "opencode-go"
+    ]
+    assert exact_calls == []
+    assert result["sources"]["opencode_go_quota"] == {"discovered": 3}
+    assert result["warnings"] == []
+    assert len(rows) == 3
+    assert all(
+        row["measurement_confidence"] == "estimated"
+        and row["x_coverage"]["status"] == "partial"
+        for row in rows
+    )
+    assert partial_secret not in json.dumps({"result": result, "facts": rows})
+
+
+@pytest.mark.parametrize(
+    ("failure_mode", "expected_error"),
+    [("exception", "RuntimeError"), ("empty", "ValueError")],
+)
+def test_collect_all_falls_back_to_estimated_opencode_go_after_exact_failure(
+    tmp_path, monkeypatch, failure_mode, expected_error
+):
+    workspace_id = "private-opencode-workspace"
+    auth_cookie = "private-opencode-cookie"
+    local_fact = dict(
+        _usage_fact("opencode-go-exact-fallback"),
+        provider="opencode-go",
+        harness="opencode",
+        occurred_at=datetime.now(timezone.utc).isoformat(),
+        x_opencode_quota_cost_usd="1.25",
+    )
+
+    def fail_exact(*args, **kwargs):
+        if failure_mode == "exception":
+            raise RuntimeError(f"failed for {workspace_id} using {auth_cookie}")
+        return []
+
+    monkeypatch.setattr(collector_module, "collect_opencode_usage", lambda *args: [local_fact])
+    monkeypatch.setattr(
+        collector_module,
+        "collect_exact_opencode_go_quota",
+        fail_exact,
+        raising=False,
+    )
+
+    result, quota = _collect_quota_only(
+        tmp_path,
+        environment={
+            "OPENCODE_GO_WORKSPACE_ID": workspace_id,
+            "OPENCODE_GO_AUTH_COOKIE": auth_cookie,
+        },
+    )
+
+    rows = [
+        row for row in read_sqlite_facts(quota, fact_type="quota_observation_v1")
+        if row["provider"] == "opencode-go"
+    ]
+    assert result["sources"]["opencode_go_quota"] == {"discovered": 0}
+    assert result["sources"]["opencode_go_quota_estimated"] == {"discovered": 3}
+    assert result["warnings"] == [
+        {"source": "opencode_go_quota", "error": expected_error}
+    ]
+    assert len(rows) == 3
+    assert all(
+        row["measurement_confidence"] == "estimated"
+        and row["x_coverage"]["status"] == "partial"
+        for row in rows
+    )
+    assert workspace_id not in json.dumps({"result": result, "facts": rows})
+    assert auth_cookie not in json.dumps({"result": result, "facts": rows})
+
+
+def test_collect_all_strict_sources_still_raises_after_opencode_exact_fallback(
+    tmp_path, monkeypatch
+):
+    local_fact = dict(
+        _usage_fact("opencode-go-strict-fallback"),
+        provider="opencode-go",
+        harness="opencode",
+        occurred_at=datetime.now(timezone.utc).isoformat(),
+        x_opencode_quota_cost_usd="1.25",
+    )
+    monkeypatch.setattr(collector_module, "collect_opencode_usage", lambda *args: [local_fact])
+    monkeypatch.setattr(
+        collector_module,
+        "collect_exact_opencode_go_quota",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("private exact failure")),
+        raising=False,
+    )
+
+    with pytest.raises(
+        RuntimeError, match="collection incomplete under strict source policy"
+    ):
+        _collect_quota_only(
+            tmp_path,
+            environment={
+                "OPENCODE_GO_WORKSPACE_ID": "private-opencode-workspace",
+                "OPENCODE_GO_AUTH_COOKIE": "private-opencode-cookie",
+            },
+            strict_sources=True,
+        )
+
+    rows = [
+        row for row in read_sqlite_facts(
+            tmp_path / "quota.sqlite3", fact_type="quota_observation_v1"
+        )
+        if row["provider"] == "opencode-go"
+    ]
+    assert len(rows) == 3
+    assert all(row["measurement_confidence"] == "estimated" for row in rows)
+
+
+@pytest.mark.parametrize("key_name", ["Z_AI_API_KEY", "ZAI_API_KEY"])
+def test_collect_all_collects_exact_z_ai_quota_for_either_key_alias(
+    tmp_path, monkeypatch, key_name
+):
+    api_key = f"private-{key_name.lower()}"
+    captured = {}
+
+    def collect_z_ai(key, namespace):
+        captured.update(key=key, namespace=namespace)
+        return _collector_quota_rows(
+            "z-ai", "z_ai_api", namespace, ("five_hour", "week", "web_search_month")
+        )
+
+    monkeypatch.setattr(collector_module, "collect_z_ai_quota", collect_z_ai, raising=False)
+    result, quota = _collect_quota_only(tmp_path, environment={key_name: api_key})
+
+    facts = list(read_sqlite_facts(quota, fact_type="quota_observation_v1"))
+    z_ai_rows = [row for row in facts if row["provider"] == "z-ai"]
+    assert captured == {"key": api_key, "namespace": "sol:z-ai-quota"}
+    assert result["sources"]["z_ai_quota"] == {"discovered": 3}
+    assert len(z_ai_rows) == 3
+    assert all(
+        row["harness"] == "z_ai_api" and row["measurement_confidence"] == "exact"
+        for row in z_ai_rows
+    )
+    assert api_key not in json.dumps({"result": result, "facts": facts})
 
 
 def test_live_quota_failures_are_isolated_and_reported(tmp_path, monkeypatch):

@@ -72,6 +72,8 @@ _MAX_PRIVATE_API_DAYS = 36_500
 _MAX_UNIFIED_SERIES_HOURS = 168
 _UNIFIED_MODEL_SERIES_LIMIT = 5
 _PRIVATE_LEDGER_MAX_AGE_SECONDS = 3 * 60 * 60
+_QUOTA_PROVIDER_STATES = frozenset({"inactive_or_not_reported"})
+_QUOTA_COVERAGE_STATUSES = frozenset({"partial"})
 _ADDITIVE_TOKEN_FIELDS = (
     "input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens",
 )
@@ -754,8 +756,24 @@ def create_app(
                 continue
             seen.add(identity)
             latest.append(row)
+
         def project(row: dict[str, Any]) -> dict[str, Any]:
-            return {field: row.get(field) for field in QUOTA_RESPONSE_FIELDS}
+            projected = {field: row.get(field) for field in QUOTA_RESPONSE_FIELDS}
+            provider_state = row.get("x_provider_state")
+            projected["provider_state"] = (
+                provider_state
+                if isinstance(provider_state, str) and provider_state in _QUOTA_PROVIDER_STATES
+                else None
+            )
+            coverage = row.get("x_coverage")
+            coverage_status = coverage.get("status") if isinstance(coverage, dict) else None
+            projected["coverage_status"] = (
+                coverage_status
+                if isinstance(coverage_status, str)
+                and coverage_status in _QUOTA_COVERAGE_STATUSES
+                else None
+            )
+            return projected
 
         return jsonify(
             {

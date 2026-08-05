@@ -24,6 +24,8 @@ OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance"
 KIMI_CODING_USAGE_URL = "https://api.kimi.com/coding/v1/usages"
+Z_AI_QUOTA_URL = "https://api.z.ai/api/monitor/usage/quota/limit"
+OPENCODE_GO_QUOTA_URL = "https://opencode.ai/_server/"
 GO_WINDOWS: tuple[tuple[str, timedelta, Decimal], ...] = (
     ("five_hour", timedelta(hours=5), Decimal("12")),
     ("week", timedelta(days=7), Decimal("30")),
@@ -332,20 +334,335 @@ def collect_deepseek_quota(
     return rows
 
 
+def _z_ai_decimal(value: Any, field: str) -> Decimal:
+    try:
+        rendered = decimal_string(value, field)
+    except (TypeError, ValueError):
+        raise ValueError(f"Z.AI {field} is malformed") from None
+    if rendered is None:
+        raise ValueError(f"Z.AI {field} is missing")
+    return Decimal(rendered)
+
+
+def _z_ai_reset(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("Z.AI nextResetTime is malformed")
+    if isinstance(value, str) and ("T" in value or "t" in value):
+        try:
+            return canonical_timestamp(value)
+        except ValueError:
+            raise ValueError("Z.AI nextResetTime is malformed") from None
+    try:
+        milliseconds = Decimal(str(value))
+        if not milliseconds.is_finite() or milliseconds < 0:
+            raise ValueError
+        reset = datetime.fromtimestamp(float(milliseconds / 1000), timezone.utc)
+        return canonical_timestamp(reset.isoformat())
+    except (InvalidOperation, OSError, OverflowError, TypeError, ValueError):
+        raise ValueError("Z.AI nextResetTime is malformed") from None
+
+
+def _z_ai_limit_kind(entry: Mapping[str, Any]) -> tuple[str, int, int] | None:
+    labels = {
+        value
+        for field in ("type", "name")
+        if isinstance((value := entry.get(field)), str)
+        and value in {"TOKENS_LIMIT", "TIME_LIMIT"}
+    }
+    if len(labels) > 1:
+        raise ValueError("Z.AI limit type is ambiguous")
+    if not labels:
+        return None
+    label = next(iter(labels))
+    unit_value = _z_ai_decimal(entry.get("unit"), "unit")
+    number_value = _z_ai_decimal(entry.get("number"), "number")
+    if unit_value != unit_value.to_integral_value() or number_value != number_value.to_integral_value():
+        raise ValueError("Z.AI limit unit and number must be integers")
+    unit, number = int(unit_value), int(number_value)
+    recognized = {
+        ("TOKENS_LIMIT", 3, 5): "five_hour",
+        ("TOKENS_LIMIT", 6, 1): "week",
+        ("TIME_LIMIT", 5, 1): "web_search_month",
+    }
+    quota_name = recognized.get((label, unit, number))
+    if quota_name is None:
+        return None
+    return quota_name, unit, number
+
+
+def collect_z_ai_quota(
+    api_key: str,
+    source_namespace: str,
+    *,
+    observed_at: str | datetime | None = None,
+    timeout: float = 30.0,
+) -> list[dict[str, Any]]:
+    """Fetch exact Z.AI coding-plan and web-search quota counters."""
+    observed = _now(observed_at)
+    with httpx.Client(timeout=timeout) as client:
+        payload = _payload(
+            client.get(
+                Z_AI_QUOTA_URL,
+                headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
+            )
+        )
+    code = payload.get("code")
+    valid_code = (
+        not isinstance(code, bool)
+        and isinstance(code, (int, float, Decimal))
+        and Decimal(str(code)) == Decimal("200")
+    )
+    if payload.get("success") is not True or not valid_code:
+        raise ValueError("Z.AI quota response reported failure")
+    data = payload.get("data")
+    limits = data.get("limits") if isinstance(data, Mapping) else None
+    if not isinstance(limits, list):
+        raise ValueError("Z.AI quota response has no limits array")
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    required = {"five_hour", "week", "web_search_month"}
+    for entry in limits:
+        if not isinstance(entry, Mapping):
+            raise ValueError("Z.AI quota limit is malformed")
+        kind = _z_ai_limit_kind(entry)
+        if kind is None:
+            continue
+        quota_name, unit, number = kind
+        if quota_name in seen:
+            raise ValueError(f"Z.AI {quota_name} quota is ambiguous")
+        seen.add(quota_name)
+        extensions: dict[str, Any] = {
+            "x_source_surface": "z_ai_usage_quota",
+            "x_provider_unit": unit,
+            "x_provider_number": number,
+        }
+        if "level" in entry:
+            level = entry["level"]
+            if level is not None and not isinstance(level, (str, int, float, bool)):
+                raise ValueError(f"Z.AI {quota_name} level is malformed")
+            extensions["x_provider_level"] = level
+
+        if quota_name in {"five_hour", "week"}:
+            used = _z_ai_decimal(entry.get("percentage"), f"{quota_name} percentage")
+            if used > 100:
+                raise ValueError(f"Z.AI {quota_name} percentage exceeds 100")
+            rows.append(
+                _quota(
+                    namespace=source_namespace,
+                    observation_id=f"{observed}:{quota_name}",
+                    harness="z_ai_api",
+                    observed_at=observed,
+                    provider="z-ai",
+                    quota_name=quota_name,
+                    window_kind="rolling",
+                    unit="percent",
+                    limit=100,
+                    used=used,
+                    remaining=Decimal("100") - used,
+                    resets_at=_z_ai_reset(entry.get("nextResetTime")),
+                    **extensions,
+                )
+            )
+            continue
+
+        used = _z_ai_decimal(entry.get("currentValue"), "web_search_month currentValue")
+        limit = _z_ai_decimal(entry.get("usage"), "web_search_month usage")
+        if used > limit:
+            raise ValueError("Z.AI web_search_month used value exceeds its limit")
+        derived_remaining = limit - used
+        if entry.get("remaining") is None:
+            remaining = derived_remaining
+        else:
+            remaining = _z_ai_decimal(entry.get("remaining"), "web_search_month remaining")
+            if remaining != derived_remaining:
+                raise ValueError("Z.AI web_search_month quota values are inconsistent")
+        rows.append(
+            _quota(
+                namespace=source_namespace,
+                observation_id=f"{observed}:{quota_name}",
+                harness="z_ai_api",
+                observed_at=observed,
+                provider="z-ai",
+                quota_name=quota_name,
+                window_kind="fixed",
+                unit="requests",
+                limit=limit,
+                used=used,
+                remaining=remaining,
+                resets_at=_z_ai_reset(entry.get("nextResetTime")),
+                **extensions,
+            )
+        )
+    if seen != required:
+        missing = ", ".join(sorted(required - seen))
+        raise ValueError(f"Z.AI quota response omitted required limits: {missing}")
+    return rows
+
+
+_OPENCODE_GO_TEXT_LIMIT = 1024 * 1024
+_OPENCODE_GO_NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+
+
+def _opencode_go_text_payload(text: str) -> dict[str, dict[str, str]]:
+    """Extract only the two numeric fields from bounded server-function output."""
+    if len(text) > _OPENCODE_GO_TEXT_LIMIT:
+        raise ValueError("OpenCode Go quota response is too large")
+    payload: dict[str, dict[str, str]] = {}
+    for field in ("rollingUsage", "weeklyUsage", "monthlyUsage"):
+        object_pattern = re.compile(
+            rf"{field}\s*:\s*(?:\$R\[\d+\]\s*=\s*)?\{{([^{{}}]{{0,512}})\}}"
+        )
+        objects = object_pattern.findall(text)
+        if len(objects) != 1:
+            raise ValueError(f"OpenCode Go {field} window is missing or ambiguous")
+        body = objects[0]
+        values: dict[str, str] = {}
+        for value_field in ("usagePercent", "resetInSec"):
+            matches = re.findall(
+                rf"(?:^|,)\s*{value_field}\s*:\s*({_OPENCODE_GO_NUMBER})\s*(?=,|$)",
+                body,
+            )
+            if len(matches) != 1:
+                raise ValueError(
+                    f"OpenCode Go {field} {value_field} is missing or ambiguous"
+                )
+            values[value_field] = matches[0]
+        payload[field] = values
+    return payload
+
+
+def _opencode_go_decimal(value: Any, window: str, field: str) -> Decimal:
+    if isinstance(value, bool):
+        raise ValueError(f"OpenCode Go {window} {field} is malformed")
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError(f"OpenCode Go {window} {field} is malformed") from None
+    if not parsed.is_finite():
+        raise ValueError(f"OpenCode Go {window} {field} is malformed")
+    return parsed
+
+
+def collect_opencode_go_quota(
+    workspace_id: str,
+    auth_cookie: str,
+    source_namespace: str,
+    *,
+    observed_at: str | datetime | None = None,
+    timeout: float = 30.0,
+) -> list[dict[str, Any]]:
+    """Fetch exact rolling, weekly, and monthly OpenCode Go quota percentages."""
+    observed = _now(observed_at)
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(
+                OPENCODE_GO_QUOTA_URL,
+                params={"id": "lite.subscription.get", "args": json.dumps([workspace_id])},
+                headers={
+                    "Accept": "application/json",
+                    "Cookie": f"auth={auth_cookie}",
+                    "Referer": f"https://opencode.ai/workspace/{workspace_id}/go",
+                    "X-Server-Id": "lite.subscription.get",
+                    "X-Server-Instance": "codex-usage-tracker",
+                },
+            )
+            response.raise_for_status()
+            try:
+                payload = response.json()
+            except Exception:
+                text = getattr(response, "text", None)
+                if callable(text):
+                    text = text()
+                if not isinstance(text, str):
+                    raise ValueError("OpenCode Go quota response is not readable")
+                payload = _opencode_go_text_payload(text)
+        if not isinstance(payload, Mapping):
+            raise ValueError("OpenCode Go quota response is not an object")
+    except Exception:
+        raise ValueError("OpenCode Go quota request failed") from None
+
+    observed_dt = datetime.fromisoformat(observed.replace("Z", "+00:00"))
+    rows: list[dict[str, Any]] = []
+    windows = (
+        ("rollingUsage", "five_hour", "rolling"),
+        ("weeklyUsage", "week", "fixed"),
+        ("monthlyUsage", "month", "fixed"),
+    )
+    for response_name, quota_name, window_kind in windows:
+        window = payload.get(response_name)
+        if not isinstance(window, Mapping):
+            raise ValueError(f"OpenCode Go {quota_name} window is missing")
+        used = _opencode_go_decimal(window.get("usagePercent"), quota_name, "usagePercent")
+        reset_seconds = _opencode_go_decimal(
+            window.get("resetInSec"), quota_name, "resetInSec"
+        )
+        if used < 0 or used > 100:
+            raise ValueError(f"OpenCode Go {quota_name} usagePercent is outside [0, 100]")
+        if reset_seconds < 0:
+            raise ValueError(f"OpenCode Go {quota_name} resetInSec is negative")
+        try:
+            resets_at = _now(observed_dt + timedelta(seconds=float(reset_seconds)))
+        except (OverflowError, OSError, ValueError):
+            raise ValueError(f"OpenCode Go {quota_name} resetInSec is malformed") from None
+        rows.append(
+            _quota(
+                namespace=source_namespace,
+                observation_id=f"{observed}:{quota_name}",
+                harness="opencode_go_api",
+                observed_at=observed,
+                provider="opencode-go",
+                quota_name=quota_name,
+                window_kind=window_kind,
+                unit="percent",
+                limit=Decimal("100"),
+                used=used,
+                remaining=Decimal("100") - used,
+                resets_at=resets_at,
+                x_source_surface="opencode_go_server_function",
+            )
+        )
+    return rows
+
+
 def _kimi_quota_detail(detail: Any, label: str) -> tuple[str, str, str, str | None]:
     if not isinstance(detail, Mapping):
         raise ValueError(f"Kimi {label} quota detail is missing")
     limit = decimal_string(detail.get("limit"), "limit_value")
     used = decimal_string(detail.get("used"), "used_value")
     remaining = decimal_string(detail.get("remaining"), "remaining_value")
-    if limit is None or used is None:
-        raise ValueError(f"Kimi {label} quota requires limit and used values")
-    derived_remaining = max(Decimal("0"), Decimal(limit) - Decimal(used))
-    if remaining is None:
-        remaining = decimal_string(derived_remaining, "remaining_value")
-    elif Decimal(remaining) != derived_remaining:
+    if sum(value is not None for value in (limit, used, remaining)) < 2:
+        raise ValueError(f"Kimi {label} quota values are malformed or ambiguous")
+
+    limit_value = Decimal(limit) if limit is not None else None
+    used_value = Decimal(used) if used is not None else None
+    remaining_value = Decimal(remaining) if remaining is not None else None
+    if limit_value is not None and used_value is not None and used_value > limit_value:
+        raise ValueError(f"Kimi {label} quota used value exceeds its limit")
+    if (
+        limit_value is not None
+        and remaining_value is not None
+        and remaining_value > limit_value
+    ):
+        raise ValueError(f"Kimi {label} quota remaining value exceeds its limit")
+
+    if limit_value is None:
+        assert used_value is not None and remaining_value is not None
+        limit_value = used_value + remaining_value
+    elif used_value is None:
+        assert remaining_value is not None
+        used_value = limit_value - remaining_value
+    elif remaining_value is None:
+        remaining_value = limit_value - used_value
+    elif limit_value != used_value + remaining_value:
         raise ValueError(f"Kimi {label} quota values are inconsistent")
-    assert remaining is not None
+
+    limit = decimal_string(limit_value, "limit_value")
+    used = decimal_string(used_value, "used_value")
+    remaining = decimal_string(remaining_value, "remaining_value")
+    assert limit is not None and used is not None and remaining is not None
     return limit, used, remaining, _reset(detail.get("resetTime"))
 
 
@@ -392,9 +709,16 @@ def collect_kimi_code_quota(
     five_hour_detail = five_hour_windows[0].get("detail")
     if not isinstance(five_hour_detail, Mapping):
         raise ValueError("Kimi five-hour quota detail is missing")
-    five_limit, five_used, five_remaining, five_reset = _kimi_quota_detail(
-        five_hour_detail, "five-hour"
+    five_hour_inactive = all(
+        five_hour_detail.get(field) is None for field in ("limit", "used", "remaining")
     )
+    if five_hour_inactive:
+        five_limit = five_used = five_remaining = None
+        five_reset = _reset(five_hour_detail.get("resetTime"))
+    else:
+        five_limit, five_used, five_remaining, five_reset = _kimi_quota_detail(
+            five_hour_detail, "five-hour"
+        )
 
     return [
         _quota(
@@ -406,10 +730,16 @@ def collect_kimi_code_quota(
             quota_name="five_hour",
             window_kind="rolling",
             unit="provider_unit",
+            confidence="unknown" if five_hour_inactive else "exact",
             limit=five_limit,
             used=five_used,
             remaining=five_remaining,
             resets_at=five_reset,
+            **(
+                {"x_provider_state": "inactive_or_not_reported"}
+                if five_hour_inactive
+                else {}
+            ),
         ),
         _quota(
             namespace=source_namespace,
@@ -729,6 +1059,5 @@ def collect_claude_code_quota(
     return rows
 
 
-# Naming aliases used by collector integrations.
+# Naming alias used by collector integrations.
 collect_codex_quota = codex_quota_observations
-collect_opencode_go_quota = derive_opencode_go_quotas
