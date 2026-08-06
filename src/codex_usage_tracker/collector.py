@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from .claude_instances import ClaudeInstance, normalize_claude_instances
 from .canonical_ledger import (
     AppendResult,
     ConflictSummary,
@@ -386,7 +387,12 @@ def _reconcile_finalized_claude_rows(
 def collect_all(
     *,
     state_db: str | Path,
-    claude_root: str | Path,
+    claude_root: str | Path = "~/.claude/projects",
+    claude_instances: (
+        Iterable[ClaudeInstance | Mapping[str, Any] | tuple[Any, Any]]
+        | Mapping[str, Any]
+        | None
+    ) = None,
     opencode_dbs: Iterable[str | Path],
     codex_ledger: str | Path,
     usage_ledger: str | Path,
@@ -406,6 +412,12 @@ def collect_all(
     strict_sources: bool = False,
 ) -> dict[str, Any]:
     """Collect independently persistable usage and/or quota source batches."""
+    configured_claude_instances = normalize_claude_instances(claude_instances)
+    claude_usage_source_keys = (
+        {instance.source_key for instance in configured_claude_instances}
+        if configured_claude_instances
+        else {"claude_code"}
+    )
     if scope not in {"all", "usage", "quota"}:
         raise ValueError("scope must be one of: all, usage, quota")
     if codex_quota_history:
@@ -473,10 +485,10 @@ def collect_all(
         prepared_rows = list(rows)
         equivalent_fields = (
             frozenset({"occurred_at", "recorded_at"})
-            if source == "claude_code" and fact_type == "usage_event_v1"
+            if source in claude_usage_source_keys and fact_type == "usage_event_v1"
             else frozenset()
         )
-        if source == "claude_code" and fact_type == "usage_event_v1":
+        if source in claude_usage_source_keys and fact_type == "usage_event_v1":
             append_result, summaries, reconciliation = (
                 _append_canonical_ledger_quarantined_reconciled(
                     path,
@@ -489,7 +501,9 @@ def collect_all(
             )
             generated, resolutions = reconciliation
             generated_corrections += generated
-            stabilized_replays.extend(resolutions)
+            stabilized_replays.extend(
+                {**resolution, "source": source} for resolution in resolutions
+            )
         else:
             append_result, summaries = _append_canonical_ledger_quarantined(
                 path,
@@ -549,17 +563,40 @@ def collect_all(
             "hermes",
             lambda: collect_hermes_usage(state_db, f"{source_prefix}:hermes"),
         )
-        claude = collect_source(
-            "claude_code",
-            lambda: collect_claude_usage(claude_root, f"{source_prefix}:claude-code"),
-        )
+        claude_sources: list[tuple[str, list[dict[str, Any]]]] = []
+        if configured_claude_instances:
+            for instance in configured_claude_instances:
+                source = instance.source_key
+                rows = collect_source(
+                    source,
+                    lambda instance=instance: collect_claude_usage(
+                        Path(instance.config_dir) / "projects",
+                        instance.usage_namespace(source_prefix),
+                    ),
+                )
+                claude_sources.append((source, rows))
+        else:
+            claude_sources.append(
+                (
+                    "claude_code",
+                    collect_source(
+                        "claude_code",
+                        lambda: collect_claude_usage(
+                            claude_root, f"{source_prefix}:claude-code"
+                        ),
+                    ),
+                )
+            )
         opencode = collect_source(
             "opencode",
             lambda: collect_opencode_usage(opencode_dbs, f"{source_prefix}:opencode"),
         )
         usage_batches = [
             persist_source("hermes", usage_ledger, hermes, fact_type="usage_event_v1"),
-            persist_source("claude_code", usage_ledger, claude, fact_type="usage_event_v1"),
+            *(
+                persist_source(source, usage_ledger, rows, fact_type="usage_event_v1")
+                for source, rows in claude_sources
+            ),
             persist_source("opencode", usage_ledger, opencode, fact_type="usage_event_v1"),
         ]
         result["usage"] = _aggregate_append_results(usage_batches)
@@ -631,24 +668,48 @@ def collect_all(
 
             if live_quota:
                 if claude_quota_command and not dry_run:
-                    quota_sources.append(
-                        (
-                            "claude_code_quota",
-                            collect_source(
+                    if configured_claude_instances:
+                        for instance in configured_claude_instances:
+                            source = instance.quota_source_key
+                            quota_sources.append(
+                                (
+                                    source,
+                                    collect_source(
+                                        source,
+                                        lambda instance=instance: collect_claude_code_quota(
+                                            instance.quota_namespace(source_prefix),
+                                            claude_command=claude_quota_command,
+                                            probe_dir=instance.probe_dir(claude_probe_dir),
+                                            timeout=claude_quota_timeout,
+                                            claude_config_dir=instance.quota_config_dir,
+                                            account_ref=instance.account_ref,
+                                        ),
+                                    ),
+                                )
+                            )
+                    else:
+                        quota_sources.append(
+                            (
                                 "claude_code_quota",
-                                lambda: collect_claude_code_quota(
-                                    f"{source_prefix}:claude-code-quota",
-                                    claude_command=claude_quota_command,
-                                    probe_dir=claude_probe_dir,
-                                    timeout=claude_quota_timeout,
+                                collect_source(
+                                    "claude_code_quota",
+                                    lambda: collect_claude_code_quota(
+                                        f"{source_prefix}:claude-code-quota",
+                                        claude_command=claude_quota_command,
+                                        probe_dir=claude_probe_dir,
+                                        timeout=claude_quota_timeout,
+                                    ),
                                 ),
-                            ),
+                            )
                         )
-                    )
                 elif claude_quota_command:
                     # The Claude `/usage` capture creates a probe directory, lock,
                     # and tmux session; dry-run remains process/filesystem safe.
-                    sources["claude_code_quota"] = _source_result(0)
+                    if configured_claude_instances:
+                        for instance in configured_claude_instances:
+                            sources[instance.quota_source_key] = _source_result(0)
+                    else:
+                        sources["claude_code_quota"] = _source_result(0)
                 openrouter_key = env.get("OPENROUTER_API_KEY")
                 if openrouter_key:
                     quota_sources.append(

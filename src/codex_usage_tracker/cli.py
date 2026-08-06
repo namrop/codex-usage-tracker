@@ -13,9 +13,10 @@ import sys
 import time as time_module
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, Sequence
 
 from .canonical_ledger import audit_sqlite_ledger, export_sqlite_to_jsonl, migrate_jsonl_to_sqlite
+from .claude_instances import ClaudeInstance, parse_claude_instance_declaration
 from .fetcher import fetch_usage
 from .git_autocommit import commit_ledger
 from .ledger import append_row, reconcile_snapshot_windows
@@ -34,6 +35,32 @@ DEFAULT_UNIFIED_USAGE_LEDGER = "~/.local/state/codex-usage-tracker/usage_events.
 DEFAULT_QUOTA_LEDGER = "~/.local/state/codex-usage-tracker/quota_observations.sqlite3"
 DEFAULT_BILLING_LEDGER = "~/.local/state/codex-usage-tracker/billing_facts.sqlite3"
 CANONICAL_FACT_TYPES = ("usage_event_v1", "quota_observation_v1", "billing_fact_v1")
+
+
+class _ClaudeInstanceAction(argparse.Action):
+    """Parse repeatable declarations and reject duplicate stable suffixes."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[Any] | None,
+        option_string: str | None = None,
+    ) -> None:
+        if not isinstance(values, str):
+            parser.error(f"{option_string or self.dest}: expected one declaration")
+        try:
+            instance = parse_claude_instance_declaration(values)
+        except ValueError as exc:
+            parser.error(f"{option_string or self.dest}: {exc}")
+        current: list[ClaudeInstance] = list(getattr(namespace, self.dest, None) or [])
+        if any(item.source_suffix == instance.source_suffix for item in current):
+            parser.error(
+                f"{option_string or self.dest}: duplicate Claude source suffix: "
+                f"{instance.source_suffix}"
+            )
+        current.append(instance)
+        setattr(namespace, self.dest, current)
 
 
 def _resolve_ledger_path(atrium_root: str, cli_value: Optional[str]) -> str:
@@ -263,6 +290,7 @@ def cmd_collect_all(args: argparse.Namespace) -> int:
         result = collect_all(
             state_db=args.state_db,
             claude_root=args.claude_root,
+            claude_instances=args.claude_instances,
             opencode_dbs=opencode_dbs,
             codex_ledger=args.codex_ledger,
             usage_ledger=args.usage_ledger,
@@ -474,6 +502,18 @@ def main() -> int:
         help="Hermes state.db path",
     )
     collect_parser.add_argument("--claude-root", default="~/.claude/projects", help="Claude Code projects root")
+    collect_parser.add_argument(
+        "--claude-instance",
+        dest="claude_instances",
+        action=_ClaudeInstanceAction,
+        default=None,
+        metavar="SOURCE_SUFFIX=CONFIG_DIR",
+        help=(
+            "Claude Code config instance; repeat for multiple accounts. Each usage root is "
+            "CONFIG_DIR/projects. When omitted, --claude-root and --claude-probe-dir retain "
+            "legacy behavior"
+        ),
+    )
     collect_parser.add_argument(
         "--opencode-db",
         action="append",

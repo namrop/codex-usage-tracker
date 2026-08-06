@@ -14,7 +14,7 @@ from typing import Any
 from .canonical_ledger import MAX_SAFE_INTEGER, ValidationError, canonical_timestamp, query_sqlite_facts
 
 
-PUBLIC_PROJECTION_KIND = "namrop_public_usage_projection.v2"
+PUBLIC_PROJECTION_KIND = "namrop_public_usage_projection.v3"
 DEFAULT_PUBLIC_PROJECTION_SOURCE = "unified-usage-public-projection"
 DEFAULT_PUBLIC_PROJECTION_HOURS = 168
 MAX_PUBLIC_PROJECTION_HOURS = 168
@@ -30,7 +30,7 @@ _TOKEN_FIELDS = (
 )
 _TOP_LEVEL_KEYS = frozenset({
     "kind", "schema_version", "source", "generated_at", "bucket_minutes", "rows",
-    "provider_rows", "model_rows", "subscription_rows", "summary",
+    "provider_rows", "model_rows", "harness_rows", "summary",
 })
 _ROW_KEYS = frozenset({
     "window_start", "window_end", "input_tokens", "cache_read_tokens", "cache_write_tokens",
@@ -48,15 +48,18 @@ _MODEL_ROW_KEYS = frozenset({
     "provider_label", "model_label", "total_tokens", "request_attempts", "share_pct",
     "measurement_confidence",
 })
+_HARNESS_ROW_KEYS = frozenset({
+    "label", "total_tokens", "request_attempts", "share_pct", "measurement_confidence",
+})
 _CONFIDENCE_VALUES = frozenset({"exact", "reconstructed", "mixed", "unknown"})
 _PUBLIC_SOURCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _PUBLIC_PROVIDER_LABELS = frozenset({
-    "Codex", "Claude Code", "OpenAI", "OpenCode Go", "OpenCode", "OpenRouter",
-    "DeepSeek", "Local models", "LLM Gateway", "Other",
+    "Codex", "Anthropic", "OpenAI", "OpenCode Go", "OpenCode", "OpenRouter",
+    "DeepSeek", "Local models", "LLM Gateway", "Kimi Coding", "Z.AI", "Other",
 })
 _PUBLIC_PROVIDER_MAP = {
     "openai-codex": "Codex",
-    "anthropic": "Claude Code",
+    "anthropic": "Anthropic",
     "openai": "OpenAI",
     "harness-openai": "OpenAI",
     "opencode-go": "OpenCode Go",
@@ -66,7 +69,14 @@ _PUBLIC_PROVIDER_MAP = {
     "acubens-mlx": "Local models",
     "harness-acubens": "Local models",
     "llmgateway": "LLM Gateway",
+    "kimi-coding": "Kimi Coding",
+    "zai": "Z.AI",
 }
+_PUBLIC_HARNESS_MAP = {
+    "hermes": "Hermes",
+    "claude_code": "Claude Code",
+}
+_PUBLIC_HARNESS_LABELS = frozenset({*_PUBLIC_HARNESS_MAP.values(), "Other"})
 _PUBLIC_MODEL_MAP = {
     # OpenAI / Codex
     "gpt-5.6": "GPT-5.6",
@@ -77,6 +87,7 @@ _PUBLIC_MODEL_MAP = {
     # Anthropic
     "claude-sonnet-5": "Claude Sonnet 5",
     "claude-fable-5": "Claude Fable 5",
+    "claude-opus-5": "Claude Opus 5",
     "claude-opus-4-8": "Claude Opus 4.8",
     "claude-opus-4.8": "Claude Opus 4.8",
     "claude-opus-4-7": "Claude Opus 4.7",
@@ -94,6 +105,7 @@ _PUBLIC_MODEL_MAP = {
     "glm-5": "GLM 5",
     "glm-4.7": "GLM 4.7",
     "glm-4.6": "GLM 4.6",
+    "k3": "Kimi K3 Coding",
     "qwen3.7-plus": "Qwen 3.7 Plus",
     "qwen3.7-max": "Qwen 3.7 Max",
     "qwen3.6-plus": "Qwen 3.6 Plus",
@@ -174,6 +186,12 @@ def _public_provider_label(value: Any) -> str:
     return _PUBLIC_PROVIDER_MAP.get(value.casefold(), "Other")
 
 
+def _public_harness_label(value: Any) -> str:
+    if not isinstance(value, str):
+        return "Other"
+    return _PUBLIC_HARNESS_MAP.get(value.casefold(), "Other")
+
+
 def _public_model_label(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -193,19 +211,28 @@ def _fact_total_tokens(row: dict[str, Any]) -> int:
 
 
 def _add_comparison_fact(group: dict[str, Any], fact: dict[str, Any]) -> None:
-    group["total_tokens"] += _fact_total_tokens(fact)
+    fact_total = _fact_total_tokens(fact)
+    group["total_tokens"] += fact_total
     group["request_attempts"] += _request_attempts(fact)
     group["confidences"].add(str(fact.get("measurement_confidence") or "unknown"))
+    if fact.get("record_kind") == "correction" and fact_total != 0:
+        group["has_token_correction"] = True
 
 
 def _merge_comparison_groups(destination: dict[str, Any], source: dict[str, Any]) -> None:
     destination["total_tokens"] += source["total_tokens"]
     destination["request_attempts"] += source["request_attempts"]
     destination["confidences"].update(source["confidences"])
+    destination["has_token_correction"] |= source["has_token_correction"]
 
 
 def _empty_comparison_group() -> dict[str, Any]:
-    return {"total_tokens": 0, "request_attempts": 0, "confidences": set()}
+    return {
+        "total_tokens": 0,
+        "request_attempts": 0,
+        "confidences": set(),
+        "has_token_correction": False,
+    }
 
 
 def _share_pct(total_tokens: int, projection_total: int) -> float:
@@ -235,6 +262,11 @@ def _ratio_percentage(numerator: int, denominator: int) -> float:
 def _bounded_groups(
     groups: dict[Any, dict[str, Any]], *, other_key: Any, maximum: int
 ) -> list[tuple[Any, dict[str, Any]]]:
+    if any(
+        group["has_token_correction"] and group["total_tokens"] <= 0
+        for group in groups.values()
+    ):
+        raise ValueError("public comparison groups cannot represent correction arithmetic")
     positive = {key: value for key, value in groups.items() if value["total_tokens"] > 0}
     other = positive.get(other_key)
     named = sorted(
@@ -272,9 +304,10 @@ def _ranking_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
             fact.get("corrects_source_event_id"),
         ))
         if target is None:
-            continue
+            raise ValueError("correction target attribution is unavailable")
         attributed.append({
             **fact,
+            "harness": target.get("harness"),
             "provider": target.get("provider"),
             "model_requested": target.get("model_requested"),
             "model_reported": target.get("model_reported"),
@@ -321,6 +354,25 @@ def _build_model_rows(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "measurement_confidence": _bucket_confidence(group["confidences"]),
         }
         for key, group in bounded
+    ]
+
+
+def _build_harness_rows(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for fact in facts:
+        label = _public_harness_label(fact.get("harness"))
+        _add_comparison_fact(groups.setdefault(label, _empty_comparison_group()), fact)
+    bounded = _bounded_groups(groups, other_key="Other", maximum=4)
+    ranking_total = sum(group["total_tokens"] for _label, group in bounded)
+    return [
+        {
+            "label": label,
+            "total_tokens": group["total_tokens"],
+            "request_attempts": group["request_attempts"],
+            "share_pct": _share_pct(group["total_tokens"], ranking_total),
+            "measurement_confidence": _bucket_confidence(group["confidences"]),
+        }
+        for label, group in bounded
     ]
 
 
@@ -413,16 +465,14 @@ def build_unified_public_projection(
     ranking_facts = _ranking_facts(facts)
     payload = {
         "kind": PUBLIC_PROJECTION_KIND,
-        "schema_version": 2,
+        "schema_version": 3,
         "source": public_source,
         "generated_at": generated_at,
         "bucket_minutes": 60,
         "rows": buckets,
         "provider_rows": _build_provider_rows(ranking_facts),
         "model_rows": _build_model_rows(ranking_facts),
-        # Quota observations remain private. Publishing utilization percentages
-        # makes the shape of subscription caps publicly legible.
-        "subscription_rows": [],
+        "harness_rows": _build_harness_rows(ranking_facts),
         "summary": summary,
     }
     validate_unified_public_projection(payload)
@@ -442,9 +492,11 @@ def _require_safe_int(value: Any, location: str, *, nonnegative: bool = False) -
         raise ValueError(f"{location} must be nonnegative")
 
 
-def _require_percentage(value: Any, location: str) -> None:
+def _require_percentage(value: Any, location: str, *, nullable: bool = True) -> None:
     if value is None:
-        return
+        if nullable:
+            return
+        raise ValueError(f"{location} must be a percentage")
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
@@ -452,6 +504,11 @@ def _require_percentage(value: Any, location: str) -> None:
         or not 0 <= value <= 100
     ):
         raise ValueError(f"{location} must be null or a percentage")
+
+
+def _require_confidence(value: Any, location: str) -> None:
+    if not isinstance(value, str) or value not in _CONFIDENCE_VALUES:
+        raise ValueError(f"{location} is invalid")
 
 
 def _require_utc_timestamp(value: Any, location: str) -> datetime:
@@ -479,7 +536,7 @@ def validate_unified_public_projection(payload: Any) -> None:
     if (
         top["kind"] != PUBLIC_PROJECTION_KIND
         or isinstance(top["schema_version"], bool)
-        or top["schema_version"] != 2
+        or top["schema_version"] != 3
         or isinstance(top["bucket_minutes"], bool)
         or top["bucket_minutes"] != 60
     ):
@@ -505,8 +562,9 @@ def validate_unified_public_projection(payload: Any) -> None:
             _require_safe_int(row[field], f"rows[{index}].{field}")
         _require_safe_int(row["request_attempts"], f"rows[{index}].request_attempts", nonnegative=True)
         _require_percentage(row["cache_hit_pct"], f"rows[{index}].cache_hit_pct")
-        if row["measurement_confidence"] not in _CONFIDENCE_VALUES:
-            raise ValueError(f"rows[{index}].measurement_confidence is invalid")
+        _require_confidence(
+            row["measurement_confidence"], f"rows[{index}].measurement_confidence"
+        )
         expected_prompt = row["input_tokens"] + row["cache_read_tokens"] + row["cache_write_tokens"]
         if row["prompt_tokens"] != expected_prompt:
             raise ValueError(f"rows[{index}].prompt_tokens does not match its token buckets")
@@ -524,7 +582,7 @@ def validate_unified_public_projection(payload: Any) -> None:
         raise ValueError("provider_rows must be an array of at most 8 rows")
     for index, candidate in enumerate(provider_rows):
         row = _require_exact_keys(candidate, _PROVIDER_ROW_KEYS, f"provider_rows[{index}]")
-        if row["label"] not in _PUBLIC_PROVIDER_LABELS:
+        if not isinstance(row["label"], str) or row["label"] not in _PUBLIC_PROVIDER_LABELS:
             raise ValueError(f"provider_rows[{index}].label is invalid")
         _require_safe_int(row["total_tokens"], f"provider_rows[{index}].total_tokens")
         if row["total_tokens"] <= 0:
@@ -532,9 +590,12 @@ def validate_unified_public_projection(payload: Any) -> None:
         _require_safe_int(
             row["request_attempts"], f"provider_rows[{index}].request_attempts", nonnegative=True
         )
-        _require_percentage(row["share_pct"], f"provider_rows[{index}].share_pct")
-        if row["measurement_confidence"] not in _CONFIDENCE_VALUES:
-            raise ValueError(f"provider_rows[{index}].measurement_confidence is invalid")
+        _require_percentage(
+            row["share_pct"], f"provider_rows[{index}].share_pct", nullable=False
+        )
+        _require_confidence(
+            row["measurement_confidence"], f"provider_rows[{index}].measurement_confidence"
+        )
     if len({row["label"] for row in provider_rows}) != len(provider_rows):
         raise ValueError("provider_rows labels must be unique")
     if provider_rows != sorted(provider_rows, key=lambda row: (-row["total_tokens"], row["label"])):
@@ -545,9 +606,14 @@ def validate_unified_public_projection(payload: Any) -> None:
         raise ValueError("model_rows must be an array of at most 12 rows")
     for index, candidate in enumerate(model_rows):
         row = _require_exact_keys(candidate, _MODEL_ROW_KEYS, f"model_rows[{index}]")
-        if row["provider_label"] not in _PUBLIC_PROVIDER_LABELS:
+        if (
+            not isinstance(row["provider_label"], str)
+            or row["provider_label"] not in _PUBLIC_PROVIDER_LABELS
+        ):
             raise ValueError(f"model_rows[{index}].provider_label is invalid")
         model_label = row["model_label"]
+        if not isinstance(model_label, str):
+            raise ValueError(f"model_rows[{index}].model_label is invalid")
         if model_label == "Other":
             if row["provider_label"] != "Other":
                 raise ValueError("the model Other row must use provider_label Other")
@@ -559,9 +625,10 @@ def validate_unified_public_projection(payload: Any) -> None:
         _require_safe_int(
             row["request_attempts"], f"model_rows[{index}].request_attempts", nonnegative=True
         )
-        _require_percentage(row["share_pct"], f"model_rows[{index}].share_pct")
-        if row["measurement_confidence"] not in _CONFIDENCE_VALUES:
-            raise ValueError(f"model_rows[{index}].measurement_confidence is invalid")
+        _require_percentage(row["share_pct"], f"model_rows[{index}].share_pct", nullable=False)
+        _require_confidence(
+            row["measurement_confidence"], f"model_rows[{index}].measurement_confidence"
+        )
     model_identities = [(row["provider_label"], row["model_label"]) for row in model_rows]
     if len(set(model_identities)) != len(model_identities):
         raise ValueError("model_rows identities must be unique")
@@ -571,9 +638,27 @@ def validate_unified_public_projection(payload: Any) -> None:
     ):
         raise ValueError("model_rows must be sorted descending")
 
-    subscription_rows = top["subscription_rows"]
-    if subscription_rows != []:
-        raise ValueError("subscription_rows must be empty")
+    harness_rows = top["harness_rows"]
+    if not isinstance(harness_rows, list) or len(harness_rows) > 4:
+        raise ValueError("harness_rows must be an array of at most 4 rows")
+    for index, candidate in enumerate(harness_rows):
+        row = _require_exact_keys(candidate, _HARNESS_ROW_KEYS, f"harness_rows[{index}]")
+        if not isinstance(row["label"], str) or row["label"] not in _PUBLIC_HARNESS_LABELS:
+            raise ValueError(f"harness_rows[{index}].label is invalid")
+        _require_safe_int(row["total_tokens"], f"harness_rows[{index}].total_tokens")
+        if row["total_tokens"] <= 0:
+            raise ValueError(f"harness_rows[{index}].total_tokens must be positive")
+        _require_safe_int(
+            row["request_attempts"], f"harness_rows[{index}].request_attempts", nonnegative=True
+        )
+        _require_percentage(row["share_pct"], f"harness_rows[{index}].share_pct", nullable=False)
+        _require_confidence(
+            row["measurement_confidence"], f"harness_rows[{index}].measurement_confidence"
+        )
+    if len({row["label"] for row in harness_rows}) != len(harness_rows):
+        raise ValueError("harness_rows labels must be unique")
+    if harness_rows != sorted(harness_rows, key=lambda row: (-row["total_tokens"], row["label"])):
+        raise ValueError("harness_rows must be sorted descending")
 
     summary = _require_exact_keys(top["summary"], _SUMMARY_KEYS, "summary")
     _require_utc_timestamp(summary["updated_at"], "summary.updated_at")
@@ -599,8 +684,16 @@ def validate_unified_public_projection(payload: Any) -> None:
     for location, comparison_rows in (
         ("provider_rows", provider_rows),
         ("model_rows", model_rows),
+        ("harness_rows", harness_rows),
     ):
         ranking_total = sum(row["total_tokens"] for row in comparison_rows)
+        if ranking_total != summary["total_tokens"]:
+            raise ValueError(f"{location} total_tokens must match summary.total_tokens")
+        comparison_requests = sum(row["request_attempts"] for row in comparison_rows)
+        if comparison_requests > summary["request_attempts"]:
+            raise ValueError(
+                f"{location} request_attempts must not exceed summary.request_attempts"
+            )
         for index, row in enumerate(comparison_rows):
             expected_share = _share_pct(row["total_tokens"], ranking_total)
             if row["share_pct"] != expected_share:

@@ -69,10 +69,10 @@ def test_unified_projection_has_exact_allowlisted_schema_hourly_zeros_and_token_
 
     assert set(payload) == {
         "kind", "schema_version", "source", "generated_at", "bucket_minutes", "rows",
-        "provider_rows", "model_rows", "subscription_rows", "summary",
+        "provider_rows", "model_rows", "harness_rows", "summary",
     }
-    assert payload["kind"] == PUBLIC_PROJECTION_KIND == "namrop_public_usage_projection.v2"
-    assert payload["schema_version"] == 2 and payload["bucket_minutes"] == 60
+    assert payload["kind"] == PUBLIC_PROJECTION_KIND == "namrop_public_usage_projection.v3"
+    assert payload["schema_version"] == 3 and payload["bucket_minutes"] == 60
     assert payload["source"] == "test-public"
     assert len(payload["rows"]) == 3
     expected_row_keys = {
@@ -105,9 +105,22 @@ def test_unified_projection_has_exact_allowlisted_schema_hourly_zeros_and_token_
         "provider_label": "Other", "model_label": "Other", "total_tokens": 48,
         "request_attempts": 4, "share_pct": 100.0, "measurement_confidence": "mixed",
     }]
-    assert payload["subscription_rows"] == []
+    assert payload["harness_rows"] == [
+        {
+            "label": "Hermes", "total_tokens": 42, "request_attempts": 1,
+            "share_pct": 87.5, "measurement_confidence": "exact",
+        },
+        {
+            "label": "Other", "total_tokens": 6, "request_attempts": 3,
+            "share_pct": 12.5, "measurement_confidence": "reconstructed",
+        },
+    ]
+    assert "subscription_rows" not in payload
     serialized = json.dumps(payload)
-    for forbidden in ("private-provider", "private-model", "private:source", "never publish", "harness"):
+    for forbidden in (
+        "private-provider", "private-model", "private:source", "never publish", '"harness":',
+        "subscription_rows", "account_ref", "used_pct", "remaining_pct",
+    ):
         assert forbidden not in serialized
 
 
@@ -127,7 +140,7 @@ def test_unified_projection_never_publishes_subscription_usage_percentages(tmp_p
     )
     serialized = json.dumps(payload)
 
-    assert payload["subscription_rows"] == []
+    assert "subscription_rows" not in payload
     assert "used_pct" not in serialized
     assert "remaining_pct" not in serialized
     assert "private-account" not in serialized
@@ -159,6 +172,7 @@ def test_projection_validator_rejects_unknown_keys_at_every_level(tmp_path):
         {**payload, "rows": [{**payload["rows"][0], "x_private": "leak"}]},
         {**payload, "provider_rows": [{**payload["provider_rows"][0], "provider": "leak"}]},
         {**payload, "model_rows": [{**payload["model_rows"][0], "model": "leak"}]},
+        {**payload, "harness_rows": [{**payload["harness_rows"][0], "harness": "leak"}]},
         {**payload, "summary": {**payload["summary"], "cost_usd": "leak"}},
     ):
         with pytest.raises(ValueError, match="keys"):
@@ -193,6 +207,68 @@ def test_projection_validator_rejects_inconsistent_summary_and_noncanonical_wind
         validate_unified_public_projection({**payload, "rows": [shifted, payload["rows"][1]]})
 
 
+@pytest.mark.parametrize("section", ["provider_rows", "model_rows", "harness_rows"])
+def test_projection_validator_rejects_comparison_totals_that_disagree_with_summary(
+    tmp_path, section,
+):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage("seventy", "2026-07-13T03:10:00Z", input_tokens=70),
+    ], fact_type="usage_event_v1")
+    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+    assert payload["summary"]["total_tokens"] == 70
+    contradictory_rows = [{**payload[section][0], "total_tokens": 100, "share_pct": 100.0}]
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^{section} total_tokens must match summary.total_tokens$",
+    ):
+        validate_unified_public_projection({**payload, section: contradictory_rows})
+
+
+@pytest.mark.parametrize("section", ["provider_rows", "model_rows", "harness_rows"])
+def test_projection_validator_rejects_comparison_request_attempts_above_summary(
+    tmp_path, section,
+):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage("one", "2026-07-13T03:10:00Z", input_tokens=70),
+    ], fact_type="usage_event_v1")
+    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+    impossible_rows = [{**row} for row in payload[section]]
+    impossible_rows[0]["request_attempts"] += 1
+    assert sum(row["request_attempts"] for row in impossible_rows) > payload["summary"][
+        "request_attempts"
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^{section} request_attempts must not exceed summary.request_attempts$",
+    ):
+        validate_unified_public_projection({**payload, section: impossible_rows})
+
+
+def test_projection_validator_allows_omitted_zero_token_attempt_groups(tmp_path):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage(
+            "positive", "2026-07-13T03:10:00Z", harness="hermes", provider="openai",
+            model_requested="gpt-5.6", input_tokens=70,
+        ),
+        _usage(
+            "zero", "2026-07-13T03:20:00Z", harness="claude_code", provider="anthropic",
+            model_requested="claude-sonnet-5",
+        ),
+    ], fact_type="usage_event_v1")
+    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+
+    assert payload["summary"]["request_attempts"] == 2
+    for section in ("provider_rows", "model_rows", "harness_rows"):
+        assert sum(row["request_attempts"] for row in payload[section]) == 1
+        assert sum(row["total_tokens"] for row in payload[section]) == 70
+    validate_unified_public_projection(payload)
+
+
 def test_unified_projection_defaults_to_168_complete_hours(tmp_path):
     ledger = tmp_path / "usage.sqlite3"
     append_sqlite_facts(ledger, [], fact_type="usage_event_v1")
@@ -222,7 +298,7 @@ def test_provider_rows_use_explicit_mapping_grouping_sorting_and_bounded_other(t
         (row["total_tokens"] for row in rows), reverse=True
     )
     assert {row["label"] for row in rows} == {
-        "Codex", "Claude Code", "OpenAI", "OpenCode Go", "OpenCode", "OpenRouter",
+        "Codex", "Anthropic", "OpenAI", "OpenCode Go", "OpenCode", "OpenRouter",
         "DeepSeek", "Other",
     }
     assert next(row for row in rows if row["label"] == "OpenAI")["total_tokens"] == 70
@@ -232,6 +308,39 @@ def test_provider_rows_use_explicit_mapping_grouping_sorting_and_bounded_other(t
     } for row in rows)
     assert sum(row["total_tokens"] for row in rows) == sum(tokens for _, tokens in providers)
     assert "private-provider" not in json.dumps(rows)
+
+
+def test_current_provider_and_model_splits_do_not_collapse_to_other(tmp_path):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage(
+            "anthropic", "2026-07-13T03:10:00Z", provider="anthropic",
+            model_requested="claude-opus-5", input_tokens=90,
+        ),
+        _usage(
+            "kimi", "2026-07-13T03:20:00Z", provider="kimi-coding",
+            model_requested="k3", input_tokens=80,
+        ),
+        _usage(
+            "zai", "2026-07-13T03:30:00Z", provider="zai",
+            model_requested="glm-5.2", input_tokens=70,
+        ),
+    ], fact_type="usage_event_v1")
+
+    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+
+    assert [
+        (row["label"], row["total_tokens"]) for row in payload["provider_rows"]
+    ] == [("Anthropic", 90), ("Kimi Coding", 80), ("Z.AI", 70)]
+    assert [
+        (row["provider_label"], row["model_label"], row["total_tokens"])
+        for row in payload["model_rows"]
+    ] == [
+        ("Anthropic", "Claude Opus 5", 90),
+        ("Kimi Coding", "Kimi K3 Coding", 80),
+        ("Z.AI", "GLM 5.2", 70),
+    ]
+    assert "Other" not in json.dumps(payload["provider_rows"] + payload["model_rows"])
 
 
 def test_projection_percentages_use_exact_rational_half_even_rounding(tmp_path):
@@ -254,6 +363,72 @@ def test_projection_percentages_use_exact_rational_half_even_rounding(tmp_path):
     assert payload["rows"][0]["cache_hit_pct"] == 2.4
     assert [row["share_pct"] for row in payload["provider_rows"]] == [97.6, 2.4]
     assert [row["share_pct"] for row in payload["model_rows"]] == [97.6, 2.4]
+
+
+def test_harness_rows_map_finitely_conserve_tokens_and_aggregate_confidence(tmp_path):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage(
+            "hermes", "2026-07-13T03:10:00Z", harness="hermes", input_tokens=101,
+        ),
+        _usage(
+            "claude", "2026-07-13T03:20:00Z", harness="claude_code",
+            record_kind="historical_aggregate", reconstructed_call_count=3,
+            measurement_confidence="reconstructed", input_tokens=50,
+        ),
+        _usage(
+            "unknown", "2026-07-13T03:30:00Z", harness="private-harness", input_tokens=49,
+        ),
+    ], fact_type="usage_event_v1")
+
+    rows = build_unified_public_projection(ledger, hours=1, now=NOW)["harness_rows"]
+
+    assert rows == [
+        {
+            "label": "Hermes", "total_tokens": 101, "request_attempts": 1,
+            "share_pct": 50.5, "measurement_confidence": "exact",
+        },
+        {
+            "label": "Claude Code", "total_tokens": 50, "request_attempts": 3,
+            "share_pct": 25.0, "measurement_confidence": "reconstructed",
+        },
+        {
+            "label": "Other", "total_tokens": 49, "request_attempts": 1,
+            "share_pct": 24.5, "measurement_confidence": "exact",
+        },
+    ]
+    assert sum(row["total_tokens"] for row in rows) == 200
+    assert projection_module._public_harness_label(None) == "Other"
+    assert "private-harness" not in json.dumps(rows)
+
+
+def test_harness_row_validator_fails_closed_on_shape_labels_duplicates_order_limits_and_values(
+    tmp_path,
+):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage("hermes", "2026-07-13T03:10:00Z", harness="hermes", input_tokens=30),
+        _usage("claude", "2026-07-13T03:20:00Z", harness="claude_code", input_tokens=20),
+        _usage("other", "2026-07-13T03:30:00Z", harness="private", input_tokens=10),
+    ], fact_type="usage_event_v1")
+    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+    rows = payload["harness_rows"]
+    first = rows[0]
+    mutants = [
+        [{**first, "raw_harness": "private"}, *rows[1:]],
+        [{**first, "label": "Private"}, *rows[1:]],
+        [*rows, first],
+        list(reversed(rows)),
+        [first, first, first, first, first],
+        [{**first, "total_tokens": 0}, *rows[1:]],
+        [{**first, "share_pct": 100.1}, *rows[1:]],
+        [{**first, "measurement_confidence": "estimated"}, *rows[1:]],
+        [{**first, "measurement_confidence": []}, *rows[1:]],
+    ]
+
+    for harness_rows in mutants:
+        with pytest.raises(ValueError):
+            validate_unified_public_projection({**payload, "harness_rows": harness_rows})
 
 
 def test_model_rows_prefer_reported_sanitize_public_families_and_merge_bounded_other(tmp_path):
@@ -304,7 +479,7 @@ def test_model_rows_prefer_reported_sanitize_public_families_and_merge_bounded_o
         "request_attempts": 1, "share_pct": 19.2, "measurement_confidence": "exact",
     } in rows
     assert any(
-        row["provider_label"] == "Claude Code" and row["model_label"] == "Claude Sonnet 4"
+        row["provider_label"] == "Anthropic" and row["model_label"] == "Claude Sonnet 4"
         for row in rows
     )
     assert sum(row["model_label"] == "Other" for row in rows) == 1
@@ -378,11 +553,11 @@ def test_quota_ledger_input_is_ignored_at_the_public_projection_boundary(tmp_pat
         usage, quota_ledger_path=quota, hours=1, now=NOW
     )
 
-    assert payload["subscription_rows"] == []
+    assert "subscription_rows" not in payload
     assert "used_pct" not in json.dumps(payload)
 
 
-def test_validator_rejects_nonempty_subscription_rows(tmp_path):
+def test_validator_rejects_removed_subscription_rows_key(tmp_path):
     usage = tmp_path / "usage.sqlite3"
     append_sqlite_facts(usage, [], fact_type="usage_event_v1")
     payload = build_unified_public_projection(usage, hours=1, now=NOW)
@@ -396,7 +571,7 @@ def test_validator_rejects_nonempty_subscription_rows(tmp_path):
         "status": "current",
     }]
 
-    with pytest.raises(ValueError, match="subscription_rows must be empty"):
+    with pytest.raises(ValueError, match="keys"):
         validate_unified_public_projection(payload)
 
 
@@ -545,6 +720,7 @@ def test_write_public_usage_projection_cli_uses_separate_command(tmp_path, monke
     ("gpt-5.3-codex", "GPT-5.3 Codex"),
     ("claude-sonnet-5", "Claude Sonnet 5"),
     ("claude-fable-5", "Claude Fable 5"),
+    ("claude-opus-5", "Claude Opus 5"),
     ("claude-opus-4-8", "Claude Opus 4.8"),
     ("claude-opus-4.8", "Claude Opus 4.8"),
     ("claude-opus-4-7", "Claude Opus 4.7"),
@@ -554,6 +730,7 @@ def test_write_public_usage_projection_cli_uses_separate_command(tmp_path, monke
     ("deepseek-chat", "DeepSeek Chat"),
     ("glm-5.2", "GLM 5.2"),
     ("glm-5.1", "GLM 5.1"),
+    ("k3", "Kimi K3 Coding"),
     ("qwen/qwen3.6-plus", "Qwen 3.6 Plus"),
     ("gemma-4-31b-it", "Gemma 4 31B IT"),
     ("grok-4.20-reasoning", "Grok 4.20 Reasoning"),
@@ -589,15 +766,15 @@ def test_correction_rankings_use_corrected_event_dimensions_not_correction_dimen
     ledger = tmp_path / "usage.sqlite3"
     append_sqlite_facts(ledger, [
         _usage(
-            "openai-original", "2026-07-13T03:10:00Z", provider="openai",
+            "openai-original", "2026-07-13T03:10:00Z", harness="claude_code", provider="openai",
             model_requested="gpt-5.6", input_tokens=100,
         ),
         _usage(
-            "anthropic-original", "2026-07-13T03:11:00Z", provider="anthropic",
+            "anthropic-original", "2026-07-13T03:11:00Z", harness="hermes", provider="anthropic",
             model_requested="claude-sonnet-5", input_tokens=80,
         ),
         _usage(
-            "mismatched-correction", "2026-07-13T03:12:00Z", provider="anthropic",
+            "mismatched-correction", "2026-07-13T03:12:00Z", harness="hermes", provider="anthropic",
             model_requested="claude-sonnet-5", record_kind="correction", input_tokens=-40,
             corrects_source_namespace="private:source",
             corrects_source_event_id="openai-original",
@@ -607,46 +784,43 @@ def test_correction_rankings_use_corrected_event_dimensions_not_correction_dimen
     payload = build_unified_public_projection(ledger, hours=1, now=NOW)
 
     assert [(row["label"], row["total_tokens"], row["share_pct"]) for row in payload["provider_rows"]] == [
-        ("Claude Code", 80, 57.1), ("OpenAI", 60, 42.9),
+        ("Anthropic", 80, 57.1), ("OpenAI", 60, 42.9),
     ]
     assert [
         (row["provider_label"], row["model_label"], row["total_tokens"])
         for row in payload["model_rows"]
     ] == [
-        ("Claude Code", "Claude Sonnet 5", 80),
+        ("Anthropic", "Claude Sonnet 5", 80),
         ("OpenAI", "GPT-5.6", 60),
+    ]
+    assert [(row["label"], row["total_tokens"]) for row in payload["harness_rows"]] == [
+        ("Hermes", 80), ("Claude Code", 60),
     ]
 
 
-def test_unresolved_corrections_apply_hourly_but_are_excluded_from_rankings(tmp_path):
+def test_builder_rejects_correction_when_target_is_outside_selected_facts(tmp_path):
     ledger = tmp_path / "usage.sqlite3"
     append_sqlite_facts(ledger, [
         _usage(
-            "known", "2026-07-13T03:10:00Z", provider="openai",
-            model_requested="gpt-5.6", input_tokens=50,
+            "outside-window-target", "2026-07-13T02:59:00Z", provider="openai",
+            model_requested="gpt-5.6", input_tokens=100,
         ),
         _usage(
-            "missing-attribution", "2026-07-13T03:12:00Z", provider="private-provider",
+            "inside-window-correction", "2026-07-13T03:12:00Z", provider="private-provider",
             model_requested="private.host/gpt-5-8675309", record_kind="correction",
-            input_tokens=-100, corrects_source_namespace="private:missing",
-            corrects_source_event_id="not-queried",
+            input_tokens=-30, corrects_source_namespace="private:source",
+            corrects_source_event_id="outside-window-target",
         ),
     ], fact_type="usage_event_v1")
 
-    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
-
-    assert payload["summary"]["total_tokens"] == -50
-    assert payload["provider_rows"] == [{
-        "label": "OpenAI", "total_tokens": 50, "request_attempts": 1,
-        "share_pct": 100.0, "measurement_confidence": "exact",
-    }]
-    assert payload["model_rows"] == [{
-        "provider_label": "OpenAI", "model_label": "GPT-5.6", "total_tokens": 50,
-        "request_attempts": 1, "share_pct": 100.0, "measurement_confidence": "exact",
-    }]
+    with pytest.raises(ValueError) as exc_info:
+        build_unified_public_projection(ledger, hours=1, now=NOW)
+    assert str(exc_info.value) == "correction target attribution is unavailable"
+    assert "private:source" not in str(exc_info.value)
+    assert "outside-window-target" not in str(exc_info.value)
 
 
-def test_rankings_omit_nonpositive_groups_and_use_positive_ranking_denominator(tmp_path):
+def test_builder_rejects_nonpositive_comparison_group_from_correction_arithmetic(tmp_path):
     ledger = tmp_path / "usage.sqlite3"
     append_sqlite_facts(ledger, [
         _usage(
@@ -665,15 +839,10 @@ def test_rankings_omit_nonpositive_groups_and_use_positive_ranking_denominator(t
         ),
     ], fact_type="usage_event_v1")
 
-    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
-
-    assert payload["summary"]["total_tokens"] == 70
-    assert [(row["label"], row["total_tokens"], row["share_pct"]) for row in payload["provider_rows"]] == [
-        ("Claude Code", 100, 100.0),
-    ]
-    assert [(row["model_label"], row["total_tokens"], row["share_pct"]) for row in payload["model_rows"]] == [
-        ("Claude Sonnet 5", 100, 100.0),
-    ]
+    with pytest.raises(ValueError) as exc_info:
+        build_unified_public_projection(ledger, hours=1, now=NOW)
+    assert str(exc_info.value) == "public comparison groups cannot represent correction arithmetic"
+    assert "overcorrected" not in str(exc_info.value)
 
 
 def test_size_guard_measures_pretty_serialization_actually_written(tmp_path, monkeypatch):

@@ -722,20 +722,34 @@ def _build_subscription_time_series(
             identities_by_provider_quota.get((provider, quota_name), []),
             key=_quota_identity_sort_key,
         )
-        if len(primary_identities) == 1 and entries[primary_identities[0]]["chartable"]:
-            unified_series.append(
-                {
-                    **entries[primary_identities[0]]["payload"],
-                    "label": _QUOTA_PROVIDER_LABELS[provider],
+        chartable_identities = [
+            identity for identity in primary_identities if entries[identity]["chartable"]
+        ]
+        if chartable_identities:
+            series_count = len(chartable_identities)
+            for index, identity in enumerate(chartable_identities):
+                label = _QUOTA_PROVIDER_LABELS[provider]
+                series_payload = {
+                    **entries[identity]["payload"],
+                    "label": label,
                 }
-            )
+                if series_count > 1:
+                    series_payload.update(
+                        {
+                            "label": f"{label} · account {index + 1}",
+                            # Safe presentation metadata: the private identity
+                            # and account_ref never cross the API boundary.
+                            "provider_series_index": index,
+                            "provider_series_count": series_count,
+                        }
+                    )
+                unified_series.append(series_payload)
             continue
-        if len(primary_identities) > 1:
-            status = "ambiguous_primary_weekly_identity"
-        elif primary_identities:
-            status = "no_comparable_weekly_utilization"
-        else:
-            status = "primary_weekly_quota_not_reported"
+        status = (
+            "no_comparable_weekly_utilization"
+            if primary_identities
+            else "primary_weekly_quota_not_reported"
+        )
         no_data_providers.append(
             {
                 "provider": provider,

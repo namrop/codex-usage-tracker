@@ -61,6 +61,7 @@ def _quota(
     resets_at: Any = None,
     window_started_at: Any = None,
     window_ends_at: Any = None,
+    account_ref: str | None = None,
     **extensions: Any,
 ) -> dict[str, Any]:
     row: dict[str, Any] = {
@@ -82,6 +83,7 @@ def _quota(
         "used_value": decimal_string(used, "used_value"),
         "unit": unit,
         "measurement_confidence": confidence,
+        "account_ref": account_ref,
         "provider_payload_ref": None,
     }
     if any(not key.startswith("x_") for key in extensions):
@@ -892,13 +894,32 @@ def capture_claude_code_usage_screen(
     claude_command: str | Path = "claude",
     probe_dir: str | Path,
     timeout: float = 45.0,
+    claude_config_dir: str | Path | None = None,
+    account_ref: str | None = None,
 ) -> str:
     """Open Claude Code's authenticated TUI and capture its built-in ``/usage`` view.
 
     The probe runs in safe mode, performs no model turn, and reuses one stable
     session ID in a tracker-owned private directory so repeated collections do
-    not flood Claude Code's session history.
+    not flood Claude Code's session history. ``CLAUDE_CONFIG_DIR`` is attached
+    to the pane command itself so account selection does not depend on tmux's
+    inherited server environment.
     """
+    config_target: Path | None = None
+    if claude_config_dir is not None:
+        raw_config = os.fspath(claude_config_dir)
+        if not isinstance(raw_config, str) or not raw_config.strip() or "\x00" in raw_config:
+            raise ValueError("Claude config directory must be a nonempty path")
+        try:
+            config_target = Path(raw_config).expanduser()
+        except (KeyError, RuntimeError) as exc:
+            raise ValueError("Claude config directory could not be expanded") from exc
+        if not config_target.is_absolute():
+            raise ValueError("Claude config directory must be absolute or user-home expandable")
+        config_target = config_target.resolve(strict=False)
+    if account_ref is not None and (not isinstance(account_ref, str) or not account_ref):
+        raise ValueError("Claude quota account_ref must be a nonempty string")
+
     raw_target = Path(probe_dir).expanduser()
     if raw_target.is_symlink():
         raise ValueError("Claude Code probe directory must not be a symlink")
@@ -928,13 +949,22 @@ def capture_claude_code_usage_screen(
     if any(target.iterdir()):
         _unlock_close(lock_fd)
         raise ValueError("Claude Code probe directory must be empty")
-    stable_session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"codex-usage-tracker:{target}"))
+    stable_seed = f"codex-usage-tracker:{target}"
+    if config_target is not None or account_ref is not None:
+        stable_seed = f"{stable_seed}:{config_target or ''}:{account_ref or ''}"
+    stable_session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, stable_seed))
     tmux_session = f"claude-usage-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     command = [
         "tmux", "new-session", "-d", "-s", tmux_session,
         "-x", "140", "-y", "50", "-c", str(target),
-        str(claude_command), "--safe-mode", "--session-id", stable_session_id,
     ]
+    if config_target is not None:
+        # This assignment belongs to the pane command itself. Passing it only
+        # to subprocess.run would fail when tmux reuses an existing server.
+        command.extend(("env", f"CLAUDE_CONFIG_DIR={config_target}"))
+    command.extend(
+        (str(claude_command), "--safe-mode", "--session-id", stable_session_id)
+    )
     started = time.monotonic()
     usage_sent = False
     try:
@@ -1021,6 +1051,8 @@ def collect_claude_code_quota(
     probe_dir: str | Path,
     timeout: float = 45.0,
     observed_at: str | datetime | None = None,
+    claude_config_dir: str | Path | None = None,
+    account_ref: str | None = None,
 ) -> list[dict[str, Any]]:
     """Collect subscription limits from Claude Code CLI's own ``/usage`` view."""
     observed = _now(observed_at)
@@ -1031,6 +1063,8 @@ def collect_claude_code_quota(
         claude_command=claude_command,
         probe_dir=probe_dir,
         timeout=timeout,
+        claude_config_dir=claude_config_dir,
+        account_ref=account_ref,
     )
     rows: list[dict[str, Any]] = []
     values = _claude_usage_values(screen)
@@ -1053,6 +1087,7 @@ def collect_claude_code_quota(
                 used=used,
                 remaining=max(Decimal("0"), Decimal("100") - used),
                 resets_at=resets_at,
+                account_ref=account_ref,
                 x_source_surface="claude_code_cli_usage",
             )
         )

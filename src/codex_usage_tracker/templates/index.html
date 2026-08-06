@@ -1345,6 +1345,13 @@
         SERIES.input,
         SERIES.cacheWrite,
       ];
+      const SUBSCRIPTION_UNIFIED_PROVIDER_COLORS = Object.freeze({
+        "openai-codex": "#22D3EE",
+        "anthropic": "#FB923C",
+        "opencode-go": "#F472B6",
+        "z-ai-glm": "#A3E635",
+        "kimi-k3-coding": "#A78BFA",
+      });
       const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
       const state = {
@@ -2441,26 +2448,59 @@
           return Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
         });
         if (!values.some((value) => value !== null)) return null;
+        const providerSeriesCount = Number(series.provider_series_count);
+        const providerSeriesIndex = Number(series.provider_series_index);
         return {
           provider: String(series.provider || "unknown"),
           label: String(series.label || series.quota_name || "Quota"),
           quota_name: String(series.quota_name || "unknown"),
           harness: series.harness ? String(series.harness) : "",
           confidence_status: String(series.confidence_status || "unknown").toLowerCase(),
+          provider_series_count: Number.isSafeInteger(providerSeriesCount) && providerSeriesCount > 0
+            ? providerSeriesCount
+            : 1,
+          provider_series_index: Number.isSafeInteger(providerSeriesIndex)
+            && providerSeriesIndex >= 0
+            && providerSeriesIndex < providerSeriesCount
+            ? providerSeriesIndex
+            : 0,
           values,
         };
       }
 
-      function subscriptionQuotaDatasets(series) {
+      function genericSubscriptionQuotaColor(_row, index) {
+        return UNIFIED_MODEL_COLORS[index % UNIFIED_MODEL_COLORS.length];
+      }
+
+      function subscriptionUnifiedProviderColor(row, index) {
+        const provider = String(row && row.provider || "").trim().toLowerCase();
+        return SUBSCRIPTION_UNIFIED_PROVIDER_COLORS[provider]
+          || genericSubscriptionQuotaColor(row, index);
+      }
+
+      function subscriptionUnifiedQuotaDash(row) {
+        const status = String(row && row.confidence_status || "unknown").trim().toLowerCase();
+        const count = Number(row && row.provider_series_count);
+        const index = Number(row && row.provider_series_index);
+        if (!Number.isSafeInteger(count) || count <= 1 || !Number.isSafeInteger(index)) {
+          return quotaConfidenceDash(status);
+        }
+        const exactPatterns = [[], [2, 4], [10, 4], [10, 3, 2, 3]];
+        const uncertainPatterns = [[7, 5], [10, 3, 2, 3], [2, 3], [12, 3, 2, 3]];
+        const patterns = status === "exact" ? exactPatterns : uncertainPatterns;
+        return patterns[index % patterns.length];
+      }
+
+      function subscriptionQuotaDatasets(series, colorForRow = genericSubscriptionQuotaColor) {
         return series.map((row, index) => {
-          const color = UNIFIED_MODEL_COLORS[index % UNIFIED_MODEL_COLORS.length];
+          const color = colorForRow(row, index);
           const status = row.confidence_status;
           return {
             label: `${row.label} — ${quotaConfidenceLabel(status)} confidence`,
             data: row.values,
             borderColor: color,
             backgroundColor: color,
-            borderDash: quotaConfidenceDash(status),
+            borderDash: subscriptionUnifiedQuotaDash(row),
             borderWidth: 2.4,
             pointRadius: 0,
             pointHitRadius: 10,
@@ -2515,10 +2555,10 @@
         };
       }
 
-      function renderSubscriptionQuotaLabels(container, rows) {
+      function renderSubscriptionQuotaLabels(container, rows, colorForRow = genericSubscriptionQuotaColor) {
         container.textContent = "";
         rows.forEach((row, index) => {
-          const color = UNIFIED_MODEL_COLORS[index % UNIFIED_MODEL_COLORS.length];
+          const color = colorForRow(row, index);
           const statusText = `${quotaConfidenceLabel(row.confidence_status)} confidence`;
           const item = document.createElement("div");
           item.className = "direct-label";
@@ -2785,7 +2825,11 @@
           .filter((series) => series !== null);
         const summary = document.getElementById("subscriptionUnifiedSummary");
         const missingMessage = missingWeeklyQuotaMessage(unified.no_data_providers);
-        renderSubscriptionQuotaLabels(document.getElementById("subscriptionUnifiedLabels"), unifiedRows);
+        renderSubscriptionQuotaLabels(
+          document.getElementById("subscriptionUnifiedLabels"),
+          unifiedRows,
+          subscriptionUnifiedProviderColor,
+        );
         renderSubscriptionQuotaTable(
           document.getElementById("subscriptionUnifiedTableHead"),
           document.getElementById("subscriptionUnifiedTableBody"),
@@ -2795,7 +2839,10 @@
 
         let chartRendered = true;
         if (unifiedRows.length) {
-          chartRendered = buildOrUpdateSubscriptionUnifiedChart(labels, subscriptionQuotaDatasets(unifiedRows));
+          chartRendered = buildOrUpdateSubscriptionUnifiedChart(
+            labels,
+            subscriptionQuotaDatasets(unifiedRows, subscriptionUnifiedProviderColor),
+          );
           summary.textContent = `${unifiedRows.length} comparable primary weekly-equivalent provider series. ${missingMessage}`.trim();
         } else {
           if (subscriptionUnifiedChart) {

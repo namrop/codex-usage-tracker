@@ -964,10 +964,21 @@ def test_subscription_series_identity_and_equal_timestamp_ties_have_jsonl_sqlite
     assert next(row for row in payloads[0]["latest"] if row["quota_name"] == "month")[
         "used_value"
     ] == "95"
-    assert payloads[0]["time_series"]["unified_weekly"]["series"] == []
-    assert payloads[0]["time_series"]["unified_weekly"]["no_data_providers"][0][
-        "status"
-    ] == "ambiguous_primary_weekly_identity"
+    unified_week = payloads[0]["time_series"]["unified_weekly"]
+    openai_week = [
+        row for row in unified_week["series"] if row["provider"] == "openai-codex"
+    ]
+    assert [row["label"] for row in openai_week] == [
+        "OpenAI / Codex · account 1",
+        "OpenAI / Codex · account 2",
+    ]
+    assert [row["values"] for row in openai_week] == [[10.0], [80.0]]
+    assert [row["provider_series_index"] for row in openai_week] == [0, 1]
+    assert all(row["provider_series_count"] == 2 for row in openai_week)
+    assert not any(
+        row["provider"] == "openai-codex"
+        for row in unified_week["no_data_providers"]
+    )
 
     serialized = json.dumps(payloads[0]["time_series"])
     for private_value in (
@@ -1048,10 +1059,17 @@ def test_subscription_null_and_literal_default_accounts_remain_distinct_across_b
     assert all("account_ref" not in row for row in payload["latest"])
 
     unified = payload["time_series"]["unified_weekly"]
-    assert all(series["provider"] != "openai-codex" for series in unified["series"])
-    assert next(
-        row for row in unified["no_data_providers"] if row["provider"] == "openai-codex"
-    )["status"] == "ambiguous_primary_weekly_identity"
+    openai_unified = [
+        series for series in unified["series"] if series["provider"] == "openai-codex"
+    ]
+    assert [series["label"] for series in openai_unified] == [
+        "OpenAI / Codex · account 1",
+        "OpenAI / Codex · account 2",
+    ]
+    assert [series["values"] for series in openai_unified] == [[10.0], [90.0]]
+    assert not any(
+        row["provider"] == "openai-codex" for row in unified["no_data_providers"]
+    )
 
     serialized = json.dumps(payload)
     for private_value in (
@@ -1284,22 +1302,24 @@ def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_rat
     unified = chart["unified_weekly"]
     assert unified["label"] == "Unified weekly subscription utilization"
     assert [row["provider"] for row in unified["series"]] == [
+        "openai-codex",
+        "openai-codex",
         "anthropic",
         "z-ai-glm",
         "kimi-k3-coding",
     ]
     assert [row["quota_name"] for row in unified["series"]] == [
+        "week",
+        "week",
         "seven_day",
         "week",
         "week",
     ]
+    assert [row["label"] for row in unified["series"][:2]] == [
+        "OpenAI / Codex · account 1",
+        "OpenAI / Codex · account 2",
+    ]
     assert unified["no_data_providers"] == [
-        {
-            "provider": "openai-codex",
-            "label": "OpenAI / Codex",
-            "quota_name": "week",
-            "status": "ambiguous_primary_weekly_identity",
-        },
         {
             "provider": "opencode-go",
             "label": "OpenCode Go",
@@ -1433,6 +1453,57 @@ def test_subscription_quota_chart_ticks_are_responsive(tmp_path, monkeypatch):
         'maxTicksLimit: window.matchMedia("(max-width: 520px)").matches ? 3 : 9,'
         in options.group("body")
     )
+
+
+def test_unified_subscription_provider_palette_is_stable_contrasting_and_scoped(
+    tmp_path, monkeypatch
+):
+    html = _dashboard_root_html(tmp_path, monkeypatch)
+    palette_match = re.search(
+        r"const SUBSCRIPTION_UNIFIED_PROVIDER_COLORS = Object\.freeze\(\{"
+        r"(?P<colors>.*?)^      \}\);",
+        html,
+        re.DOTALL | re.MULTILINE,
+    )
+
+    assert palette_match is not None
+    palette = json.loads(
+        "{" + re.sub(r",\s*$", "", palette_match.group("colors")) + "}"
+    )
+    assert palette == {
+        "openai-codex": "#22D3EE",
+        "anthropic": "#FB923C",
+        "opencode-go": "#F472B6",
+        "z-ai-glm": "#A3E635",
+        "kimi-k3-coding": "#A78BFA",
+    }
+    assert len(set(palette.values())) == len(palette)
+
+    def relative_luminance(color):
+        channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [
+            channel / 12.92
+            if channel <= 0.04045
+            else ((channel + 0.055) / 1.055) ** 2.4
+            for channel in channels
+        ]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    background_match = re.search(r"--bg:\s*(#[0-9A-Fa-f]{6})\s*;", html)
+    assert background_match is not None
+    assert background_match.group(1).upper() == "#0B0F1A"
+    background_luminance = relative_luminance(background_match.group(1))
+    for color in palette.values():
+        color_luminance = relative_luminance(color)
+        contrast = (max(color_luminance, background_luminance) + 0.05) / (
+            min(color_luminance, background_luminance) + 0.05
+        )
+        assert contrast >= 3
+
+    assert "subscriptionQuotaDatasets(unifiedRows, subscriptionUnifiedProviderColor)" in html
+    assert "unifiedRows,\n          subscriptionUnifiedProviderColor," in html
+    assert "datasets: subscriptionQuotaDatasets(rows)" in html
+    assert "renderSubscriptionQuotaLabels(directLabels, rows);" in html
 
 
 def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_explicit(

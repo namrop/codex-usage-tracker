@@ -163,6 +163,10 @@ Optional args:
 The top-level **AI Usage** view loads unified usage, subscriptions, and billing
 independently, so one absent or unavailable private ledger does not hide the
 other panels. Request-cost estimates remain separate from posted billing facts.
+Multiple accounts for the same subscription provider remain independent in the
+private weekly chart as anonymized `account 1`, `account 2`, … lines; they are
+never summed, and repeated-provider lines retain the provider color while using
+different dash patterns. Raw account/source identities are not returned.
 The existing Codex charts and tables remain available under **Codex detail** as
 a compatibility view; `--ledger` still means the legacy Codex JSONL ledger and
 is not repurposed for canonical usage.
@@ -212,13 +216,26 @@ in the Atrium canon is read-only to this command. Every path can be overridden:
 ```bash
 codex-usage-tracker collect-all \
   --state-db /var/lib/hermes/primary/state.db \
-  --claude-root ~/.claude/projects \
+  --claude-instance claude-code=/home/luis/.claude \
+  --claude-instance claude-code-secondary=/home/luis/.claude-accounts/secondary \
   --opencode-db ~/.local/share/opencode/opencode-stable.db \
   --opencode-db ~/.local/share/opencode/opencode-local.db \
   --usage-ledger ~/.local/state/codex-usage-tracker/usage_events.sqlite3 \
   --quota-ledger ~/.local/state/codex-usage-tracker/quota_observations.sqlite3 \
   --billing-ledger ~/.local/state/codex-usage-tracker/billing_facts.sqlite3
 ```
+
+`--claude-instance SOURCE_SUFFIX=CONFIG_DIR` is repeatable. Suffixes must be
+`claude-code` or begin `claude-code-` and use lowercase alphanumeric
+hyphen-separated segments; config directories must be absolute or `~`-expandable.
+Each usage root is `CONFIG_DIR/projects`. The primary namespaces remain exactly
+`sol:claude-code` and `sol:claude-code-quota`; the declarations above add
+`sol:claude-code-secondary` and `sol:claude-code-secondary-quota`. Omitting every
+`--claude-instance` retains the legacy `--claude-root` and
+`--claude-probe-dir` behavior. The primary declaration selects its transcript
+root but leaves quota authentication on Claude Code's normal default layout
+(`~/.claude` plus the home-level `~/.claude.json`). Only non-primary instances
+set `CLAUDE_CONFIG_DIR` to their declared custom config directory.
 
 Use `--scope usage` or `--scope quota` to run the independently schedulable lanes.
 The usage scope reads and writes only usage sources/the usage ledger. The quota
@@ -274,7 +291,11 @@ tracker opens a short-lived safe-mode TUI in a private probe directory, invokes
 Claude Code's built-in `/usage` view, captures the displayed five-hour, weekly,
 and Fable-week percentages and reset times, and exits without making a model
 call. It reuses one deterministic probe session ID to avoid flooding Claude
-Code's session history. The probe requires `tmux`. Configure this boundary with
+Code's session history. Each configured instance gets a distinct deterministic
+probe directory (for example `claude-probe-secondary`). A non-primary instance's
+custom config directory is attached directly to the tmux pane command; the
+primary omits `CLAUDE_CONFIG_DIR` and preserves Claude Code's default account
+lookup. The probe requires `tmux`. Configure this boundary with
 `--claude-command`, `--claude-probe-dir`, and `--claude-quota-timeout`.
 
 The optional `--dotenv PATH` loader recognizes only the OpenRouter, DeepSeek,
@@ -347,19 +368,25 @@ codex-usage-tracker write-public-usage-projection \
   --public-projection-source sol-unified-usage
 ```
 
-By default the artifact contains exactly 168 complete UTC hourly buckets. Empty
-hours are represented by zero rows. It publishes only bucket boundaries, token
-buckets, derived prompt/total tokens and cache-hit percentage, aggregate request
-attempt counts, coarse measurement confidence, and a compact summary. Reasoning
-tokens remain diagnostic because canonical output already includes reasoning;
-they are not added to totals twice. An `api_attempt` counts as one request and a
-`historical_aggregate` contributes its `reconstructed_call_count`.
+The artifact uses the exact `namrop_public_usage_projection.v3` contract with
+`schema_version` 3 and, by default, contains exactly 168 complete UTC hourly
+buckets. Empty hours are represented by zero rows. It publishes only bucket
+boundaries, token buckets, derived prompt/total tokens and cache-hit percentage,
+aggregate request attempt counts, coarse measurement confidence, bounded
+public-safe `provider_rows`, `model_rows`, and `harness_rows`, and a compact
+summary. Harness labels use the finite `Hermes`, `Claude Code`, and `Other`
+allowlist. Reasoning tokens remain diagnostic because canonical output already
+includes reasoning; they are not added to totals twice. An `api_attempt` counts
+as one request and a `historical_aggregate` contributes its
+`reconstructed_call_count`.
 
-The writer accepts only a `usage_event_v1` SQLite input, validates the exact v1
-allowlist, and atomically replaces the destination. It excludes harness,
-provider, model, purpose, account/source identity, costs, prompts, transcripts,
-extension payloads, credentials, and local paths. **Do not publish** the source
-SQLite ledger or the private dashboard APIs.
+The writer accepts only a `usage_event_v1` SQLite input, validates the exact v3
+allowlist, and atomically replaces the destination. The compatibility
+`--quota-ledger` argument is accepted but ignored; v3 has no subscription or
+quota rows. It excludes raw harness/provider/model values, purpose,
+account/source identity, costs, prompts, transcripts, extension payloads,
+credentials, and local paths. **Do not publish** the source SQLite ledger or the
+private dashboard APIs.
 
 The older `write-public-projection` command remains a compatibility boundary for
 the legacy Codex snapshot/token-correlation chart. It is additive and is not
