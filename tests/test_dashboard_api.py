@@ -973,8 +973,10 @@ def test_subscription_series_identity_and_equal_timestamp_ties_have_jsonl_sqlite
         "OpenAI / Codex · account 2",
     ]
     assert [row["values"] for row in openai_week] == [[10.0], [80.0]]
-    assert [row["provider_series_index"] for row in openai_week] == [0, 1]
-    assert all(row["provider_series_count"] == 2 for row in openai_week)
+    assert [row["provider_account_index"] for row in openai_week] == [1, 2]
+    assert all(row["provider_account_count"] == 3 for row in openai_week)
+    assert month["provider_account_index"] == 3
+    assert month["provider_account_count"] == 3
     assert not any(
         row["provider"] == "openai-codex"
         for row in unified_week["no_data_providers"]
@@ -1285,6 +1287,8 @@ def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_rat
         "label": "five hour",
         "measurement_confidence": "exact",
         "observation_count": 1,
+        "provider_account_count": 1,
+        "provider_account_index": 1,
         "quota_name": "five_hour",
         "reason": "no_comparable_utilization",
         "sample_count": 0,
@@ -1316,9 +1320,11 @@ def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_rat
         "week",
     ]
     assert [row["label"] for row in unified["series"][:2]] == [
-        "OpenAI / Codex · account 1",
-        "OpenAI / Codex · account 2",
+        "OpenAI / Codex",
+        "OpenAI / Codex",
     ]
+    assert [row["provider_account_index"] for row in unified["series"][:2]] == [1, 1]
+    assert all(row["provider_account_count"] == 1 for row in unified["series"][:2])
     assert unified["no_data_providers"] == [
         {
             "provider": "opencode-go",

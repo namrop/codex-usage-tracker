@@ -2448,22 +2448,22 @@
           return Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
         });
         if (!values.some((value) => value !== null)) return null;
-        const providerSeriesCount = Number(series.provider_series_count);
-        const providerSeriesIndex = Number(series.provider_series_index);
+        const providerAccountCount = Number(series.provider_account_count);
+        const providerAccountIndex = Number(series.provider_account_index);
         return {
           provider: String(series.provider || "unknown"),
           label: String(series.label || series.quota_name || "Quota"),
           quota_name: String(series.quota_name || "unknown"),
           harness: series.harness ? String(series.harness) : "",
           confidence_status: String(series.confidence_status || "unknown").toLowerCase(),
-          provider_series_count: Number.isSafeInteger(providerSeriesCount) && providerSeriesCount > 0
-            ? providerSeriesCount
+          provider_account_count: Number.isSafeInteger(providerAccountCount) && providerAccountCount > 0
+            ? providerAccountCount
             : 1,
-          provider_series_index: Number.isSafeInteger(providerSeriesIndex)
-            && providerSeriesIndex >= 0
-            && providerSeriesIndex < providerSeriesCount
-            ? providerSeriesIndex
-            : 0,
+          provider_account_index: Number.isSafeInteger(providerAccountIndex)
+            && providerAccountIndex >= 1
+            && providerAccountIndex <= providerAccountCount
+            ? providerAccountIndex
+            : 1,
           values,
         };
       }
@@ -2480,15 +2480,15 @@
 
       function subscriptionUnifiedQuotaDash(row) {
         const status = String(row && row.confidence_status || "unknown").trim().toLowerCase();
-        const count = Number(row && row.provider_series_count);
-        const index = Number(row && row.provider_series_index);
+        const count = Number(row && row.provider_account_count);
+        const index = Number(row && row.provider_account_index);
         if (!Number.isSafeInteger(count) || count <= 1 || !Number.isSafeInteger(index)) {
           return quotaConfidenceDash(status);
         }
         const exactPatterns = [[], [2, 4], [10, 4], [10, 3, 2, 3]];
         const uncertainPatterns = [[7, 5], [10, 3, 2, 3], [2, 3], [12, 3, 2, 3]];
         const patterns = status === "exact" ? exactPatterns : uncertainPatterns;
-        return patterns[index % patterns.length];
+        return patterns[(index - 1) % patterns.length];
       }
 
       function subscriptionQuotaDatasets(series, colorForRow = genericSubscriptionQuotaColor) {
@@ -2555,7 +2555,12 @@
         };
       }
 
-      function renderSubscriptionQuotaLabels(container, rows, colorForRow = genericSubscriptionQuotaColor) {
+      function renderSubscriptionQuotaLabels(
+        container,
+        rows,
+        colorForRow = genericSubscriptionQuotaColor,
+        dashForRow = subscriptionUnifiedQuotaDash,
+      ) {
         container.textContent = "";
         rows.forEach((row, index) => {
           const color = colorForRow(row, index);
@@ -2565,7 +2570,8 @@
           const swatch = document.createElement("span");
           swatch.className = "swatch";
           swatch.style.setProperty("--series-color", color);
-          if (row.confidence_status !== "exact") {
+          const dashPattern = dashForRow(row);
+          if (Array.isArray(dashPattern) && dashPattern.length) {
             swatch.style.background = "transparent";
             swatch.style.borderTop = `2px dashed ${color}`;
           }
@@ -2671,11 +2677,73 @@
         providerGrid.appendChild(stateMessage);
       }
 
+      function subscriptionProviderAccountCards(provider) {
+        const providerLabel = String(provider && (provider.label || provider.provider) || "Unknown provider");
+        const series = Array.isArray(provider && provider.series) ? provider.series : [];
+        const unavailableSeries = Array.isArray(provider && provider.unavailable_series)
+          ? provider.unavailable_series
+          : [];
+        const allSeries = series.concat(unavailableSeries);
+        const accountMetadata = allSeries.map((row) => ({
+          count: Number(row && row.provider_account_count),
+          index: Number(row && row.provider_account_index),
+        }));
+        const accountCount = accountMetadata.length ? accountMetadata[0].count : 1;
+        const hasConsistentAccounts = Number.isSafeInteger(accountCount)
+          && accountCount > 0
+          && accountMetadata.every(({ count, index }) =>
+            Number.isSafeInteger(count)
+            && count === accountCount
+            && Number.isSafeInteger(index)
+            && index >= 1
+            && index <= accountCount
+          );
+        if (!hasConsistentAccounts || accountCount <= 1) {
+          return [{
+            ...provider,
+            label: providerLabel,
+            series,
+            unavailable_series: unavailableSeries,
+          }];
+        }
+
+        const accountIndices = Array.from(
+          new Set(accountMetadata.map(({ index }) => index)),
+        ).sort((left, right) => left - right);
+        return accountIndices.map((accountIndex) => {
+          const accountSeries = series.filter(
+            (row) => Number(row.provider_account_index) === accountIndex,
+          );
+          const accountUnavailableSeries = unavailableSeries.filter(
+            (row) => Number(row.provider_account_index) === accountIndex,
+          );
+          const observationCount = accountSeries.concat(accountUnavailableSeries).reduce(
+            (total, row) => {
+              const count = Number(row && row.observation_count);
+              return total + (Number.isFinite(count) && count > 0 ? count : 0);
+            },
+            0,
+          );
+          return {
+            ...provider,
+            label: `${providerLabel} · account ${accountIndex}`,
+            observation_count: observationCount,
+            provider_account_index: accountIndex,
+            provider_account_count: accountCount,
+            series: accountSeries,
+            unavailable_series: accountUnavailableSeries,
+          };
+        });
+      }
+
       function renderSubscriptionProviderCharts(timeSeries, bucketStarts, labels) {
         destroySubscriptionProviderCharts();
         const grid = document.getElementById("subscriptionProviderChartGrid");
         grid.textContent = "";
         const providers = Array.isArray(timeSeries.providers) ? timeSeries.providers : [];
+        const providerCards = providers.flatMap((provider) =>
+          subscriptionProviderAccountCards(provider)
+        );
         const truncation = timeSeries.truncation && typeof timeSeries.truncation === "object"
           ? timeSeries.truncation
           : {};
@@ -2700,7 +2768,7 @@
           return;
         }
 
-        providers.forEach((provider, cardIndex) => {
+        providerCards.forEach((provider, cardIndex) => {
           const providerLabel = String(provider && (provider.label || provider.provider) || "Unknown provider");
           const rows = (Array.isArray(provider && provider.series) ? provider.series : [])
             .map((series) => normalizedQuotaSeries(series, bucketStarts.length))

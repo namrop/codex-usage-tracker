@@ -521,7 +521,6 @@ def _quota_observation_order_key(
 
 def _quota_series_identity(row: dict[str, Any]) -> _QuotaSeriesIdentity:
     """Return the complete private identity used to prevent cross-account merging."""
-    account_ref = row.get("account_ref")
     return (
         _canonical_quota_provider(row.get("provider")),
         str(row.get("quota_name") or "unknown"),
@@ -529,8 +528,21 @@ def _quota_series_identity(row: dict[str, Any]) -> _QuotaSeriesIdentity:
         str(row.get("quota_scope") or "unknown"),
         str(row.get("window_kind") or "unknown"),
         str(row.get("unit") or "unknown"),
-        (account_ref is not None, str(account_ref or "")),
+        _quota_account_identity(row),
     )
+
+
+def _quota_account_identity(row: dict[str, Any]) -> _QuotaAccountIdentity:
+    """Keep the complete account reference private while distinguishing null from text."""
+    account_ref = row.get("account_ref")
+    return account_ref is not None, str(account_ref or "")
+
+
+def _quota_account_sort_key(
+    identity: _QuotaAccountIdentity,
+) -> tuple[bool, str, str]:
+    account_is_present, account_ref = identity
+    return account_is_present, account_ref.casefold(), account_ref
 
 
 def _quota_identity_sort_key(
@@ -539,7 +551,7 @@ def _quota_identity_sort_key(
     account_is_present, account_ref = identity[6]
     return (
         tuple((value.casefold(), value) for value in identity[:6]),
-        (account_is_present, account_ref.casefold(), account_ref),
+        _quota_account_sort_key((account_is_present, account_ref)),
     )
 
 
@@ -574,25 +586,30 @@ def _build_subscription_time_series(
     for identity in grouped:
         identities_by_provider_quota.setdefault(identity[:2], []).append(identity)
 
+    provider_account_indexes: dict[
+        str, dict[_QuotaAccountIdentity, int]
+    ] = {}
+    for provider in {identity[0] for identity in grouped}:
+        ordered_accounts = sorted(
+            {identity[6] for identity in grouped if identity[0] == provider},
+            key=_quota_account_sort_key,
+        )
+        provider_account_indexes[provider] = {
+            account_identity: index
+            for index, account_identity in enumerate(ordered_accounts, start=1)
+        }
+
     labels: dict[_QuotaSeriesIdentity, str] = {}
     for identities in identities_by_provider_quota.values():
         ordered = sorted(identities, key=_quota_identity_sort_key)
-        account_order = {
-            account_ref: index + 1
-            for index, account_ref in enumerate(
-                sorted(
-                    {identity[6] for identity in ordered},
-                    key=lambda value: (value[0], value[1].casefold(), value[1]),
-                )
-            )
-        }
         preliminary: dict[_QuotaSeriesIdentity, str] = {}
         for identity in ordered:
             quota_name = identity[1].replace("_", " ")
+            account_index = provider_account_indexes[identity[0]][identity[6]]
             preliminary[identity] = (
                 quota_name
                 if len(ordered) == 1
-                else f"{quota_name} · {identity[2]} · account {account_order[identity[6]]}"
+                else f"{quota_name} · {identity[2]} · account {account_index}"
             )
         duplicate_counts = {
             label: sum(candidate == label for candidate in preliminary.values())
@@ -607,6 +624,8 @@ def _build_subscription_time_series(
     for identity in sorted(grouped, key=_quota_identity_sort_key):
         provider, quota_name, harness, _quota_scope, _window_kind, unit, _account_ref = identity
         quota_rows = grouped[identity]
+        provider_account_index = provider_account_indexes[provider][_account_ref]
+        provider_account_count = len(provider_account_indexes[provider])
         bucket_rows: list[dict[str, Any] | None] = [None] * bucket_count
         for row in sorted(quota_rows, key=_quota_observation_order_key):
             observed_at = _fact_datetime(row.get("observed_at"))
@@ -643,6 +662,8 @@ def _build_subscription_time_series(
                 "confidence_status": _quota_series_confidence(valid_rows),
                 "sample_count": len(valid_rows),
                 "observation_count": len(quota_rows),
+                "provider_account_index": provider_account_index,
+                "provider_account_count": provider_account_count,
                 "values": values,
             }
             entries[identity] = {"chartable": True, "payload": payload}
@@ -657,6 +678,8 @@ def _build_subscription_time_series(
                 "confidence_status": _quota_series_confidence(selected_rows),
                 "sample_count": 0,
                 "observation_count": len(quota_rows),
+                "provider_account_index": provider_account_index,
+                "provider_account_count": provider_account_count,
                 "reason": "no_comparable_utilization",
             }
             entries[identity] = {"chartable": False, "payload": payload}
@@ -720,27 +743,27 @@ def _build_subscription_time_series(
         quota_name = _PRIMARY_WEEKLY_QUOTAS[provider]
         primary_identities = sorted(
             identities_by_provider_quota.get((provider, quota_name), []),
-            key=_quota_identity_sort_key,
+            key=lambda identity: (
+                provider_account_indexes[provider][identity[6]],
+                _quota_identity_sort_key(identity),
+            ),
         )
         chartable_identities = [
             identity for identity in primary_identities if entries[identity]["chartable"]
         ]
         if chartable_identities:
-            series_count = len(chartable_identities)
-            for index, identity in enumerate(chartable_identities):
+            account_count = len(provider_account_indexes[provider])
+            for identity in chartable_identities:
+                account_index = provider_account_indexes[provider][identity[6]]
                 label = _QUOTA_PROVIDER_LABELS[provider]
                 series_payload = {
                     **entries[identity]["payload"],
                     "label": label,
                 }
-                if series_count > 1:
+                if account_count > 1:
                     series_payload.update(
                         {
-                            "label": f"{label} · account {index + 1}",
-                            # Safe presentation metadata: the private identity
-                            # and account_ref never cross the API boundary.
-                            "provider_series_index": index,
-                            "provider_series_count": series_count,
+                            "label": f"{label} · account {account_index}",
                         }
                     )
                 unified_series.append(series_payload)

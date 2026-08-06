@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -170,7 +171,22 @@ def test_two_claude_usage_roots_keep_namespaces_and_pool_public_aggregates(tmp_p
             "measurement_confidence": "exact",
         }
     ]
-    serialized = json.dumps(projection)
+    time_series = dashboard_module._build_unified_time_series(
+        rows,
+        window_start=datetime(2026, 8, 5, 11, tzinfo=timezone.utc),
+        window_end=datetime(2026, 8, 5, 13, tzinfo=timezone.utc),
+        generated_at=datetime(2026, 8, 5, 13, 30, tzinfo=timezone.utc),
+    )
+    assert time_series["model_series"] == [
+        {
+            "provider": "anthropic",
+            "model": "claude-sonnet-5",
+            "label": "claude-sonnet-5 · anthropic",
+            "total_tokens": 52,
+            "values": [52, 0],
+        }
+    ]
+    serialized = json.dumps({"projection": projection, "time_series": time_series})
     assert "sol:claude-code" not in serialized
     assert "account_ref" not in serialized
 
@@ -514,7 +530,13 @@ def test_tmux_command_only_sets_claude_config_dir_for_custom_account(tmp_path, m
     assert not any("token" in str(part).casefold() for part in primary_tail + secondary_tail)
 
 
-def _quota_row(source_id: str, account_ref: str | None, used: int):
+def _quota_row(
+    source_id: str,
+    account_ref: str | None,
+    used: int,
+    *,
+    quota_name: str = "seven_day",
+):
     return normalize_fact(
         {
             "fact_type": "quota_observation_v1",
@@ -525,7 +547,7 @@ def _quota_row(source_id: str, account_ref: str | None, used: int):
             "observed_at": "2026-08-05T11:15:00Z",
             "provider": "anthropic",
             "account_ref": account_ref,
-            "quota_name": "seven_day",
+            "quota_name": quota_name,
             "quota_scope": "account",
             "window_kind": "rolling",
             "limit_value": "100",
@@ -566,8 +588,8 @@ def test_unified_weekly_keeps_two_anonymized_anthropic_accounts_independent(
         "Anthropic / Claude · account 2",
     ]
     assert [row["values"] for row in anthropic] == [[20.0], [80.0]]
-    assert [row["provider_series_index"] for row in anthropic] == [0, 1]
-    assert all(row["provider_series_count"] == 2 for row in anthropic)
+    assert [row["provider_account_index"] for row in anthropic] == [1, 2]
+    assert all(row["provider_account_count"] == 2 for row in anthropic)
     assert not any(
         row["provider"] == "anthropic" for row in unified["no_data_providers"]
     )
@@ -585,7 +607,101 @@ def test_unified_weekly_keeps_two_anonymized_anthropic_accounts_independent(
         assert private_value not in serialized
 
 
-def test_unified_weekly_single_account_label_and_template_provider_palette_stay_unchanged(
+def test_two_anthropic_accounts_have_stable_safe_metadata_across_every_quota_window(
+    tmp_path, monkeypatch
+):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 5, 12, 30, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    rows = [
+        _quota_row(
+            f"{private_source}-{quota_name}",
+            account_ref,
+            used,
+            quota_name=quota_name,
+        )
+        for private_source, account_ref, values in (
+            ("primary-private-source", None, (11, 22, 33)),
+            ("secondary-private-source", "claude-code-secondary", (61, 72, 83)),
+        )
+        for quota_name, used in zip(
+            ("five_hour", "seven_day", "seven_day_fable"), values, strict=True
+        )
+    ]
+    ledger = tmp_path / "quota.jsonl"
+    ledger.write_text(
+        "\n".join(canonical_json(row) for row in reversed(rows)) + "\n",
+        encoding="utf-8",
+    )
+
+    payload = create_app(quota_ledger=str(ledger)).test_client().get(
+        "/api/subscriptions?hours=1&history=0"
+    ).get_json()
+    provider = next(
+        row
+        for row in payload["time_series"]["providers"]
+        if row["provider"] == "anthropic"
+    )
+    assert len(provider["series"]) == 6
+    by_account = {
+        account_index: [
+            row
+            for row in provider["series"]
+            if row["provider_account_index"] == account_index
+        ]
+        for account_index in (1, 2)
+    }
+    assert all(
+        {row["quota_name"] for row in account_rows}
+        == {"five_hour", "seven_day", "seven_day_fable"}
+        for account_rows in by_account.values()
+    )
+    assert all(
+        row["provider_account_count"] == 2
+        for row in provider["series"] + provider["unavailable_series"]
+    )
+    assert {row["quota_name"]: row["values"] for row in by_account[1]} == {
+        "five_hour": [11.0],
+        "seven_day": [22.0],
+        "seven_day_fable": [33.0],
+    }
+    assert {row["quota_name"]: row["values"] for row in by_account[2]} == {
+        "five_hour": [61.0],
+        "seven_day": [72.0],
+        "seven_day_fable": [83.0],
+    }
+
+    anthropic_weekly = [
+        row
+        for row in payload["time_series"]["unified_weekly"]["series"]
+        if row["provider"] == "anthropic"
+    ]
+    assert [row["label"] for row in anthropic_weekly] == [
+        "Anthropic / Claude · account 1",
+        "Anthropic / Claude · account 2",
+    ]
+    assert [row["values"] for row in anthropic_weekly] == [[22.0], [72.0]]
+    assert [row["provider_account_index"] for row in anthropic_weekly] == [1, 2]
+    assert all(row["provider_account_count"] == 2 for row in anthropic_weekly)
+    assert [22.0 + 72.0] not in [row["values"] for row in anthropic_weekly]
+
+    serialized = json.dumps(payload)
+    for private_value in (
+        "primary-private-source",
+        "secondary-private-source",
+        "claude-code-secondary",
+        "account_ref",
+        "source_namespace",
+        "source_observation_id",
+        "/private/",
+    ):
+        assert private_value not in serialized
+
+
+def test_single_anthropic_account_preserves_labels_and_card_metadata(
     tmp_path, monkeypatch
 ):
     class FrozenDateTime(datetime):
@@ -605,12 +721,98 @@ def test_unified_weekly_single_account_label_and_template_provider_palette_stay_
         if row["provider"] == "anthropic"
     )
     assert anthropic["label"] == "Anthropic / Claude"
-    assert "provider_series_index" not in anthropic
-    assert "provider_series_count" not in anthropic
+    assert anthropic["provider_account_index"] == 1
+    assert anthropic["provider_account_count"] == 1
+
+    provider = next(
+        row
+        for row in payload["time_series"]["providers"]
+        if row["provider"] == "anthropic"
+    )
+    assert provider["series"][0]["label"] == "seven day"
+    assert provider["series"][0]["provider_account_index"] == 1
+    assert provider["series"][0]["provider_account_count"] == 1
 
     html = client.get("/").get_data(as_text=True)
     assert "subscriptionUnifiedProviderColor" in html
     assert "subscriptionUnifiedQuotaDash" in html
-    assert "provider_series_index" in html
-    assert "provider_series_count" in html
+    assert "provider_account_index" in html
+    assert "provider_account_count" in html
     assert "borderDash: subscriptionUnifiedQuotaDash(row)" in html
+
+
+def test_quota_history_account_card_helper_splits_accounts_without_interleaving(
+    tmp_path, monkeypatch
+):
+    html = create_app(
+        atrium_root=str(tmp_path / "atrium"),
+        ledger=str(tmp_path / "usage.jsonl"),
+    ).test_client().get("/").get_data(as_text=True)
+    start = html.index("function subscriptionProviderAccountCards(provider)")
+    end = html.index("\n\n      function renderSubscriptionProviderCharts", start)
+    helper = html[start:end]
+    fixture = {
+        "provider": "anthropic",
+        "label": "Anthropic / Claude",
+        "status": "available",
+        "observation_count": 6,
+        "series": [
+            {
+                "quota_name": quota_name,
+                "provider_account_index": account_index,
+                "provider_account_count": 2,
+                "observation_count": 1,
+            }
+            for account_index in (2, 1)
+            for quota_name in ("five_hour", "seven_day", "seven_day_fable")
+        ],
+        "unavailable_series": [],
+    }
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            (
+                f"{helper}\n"
+                f"const fixture = {json.dumps(fixture)};\n"
+                "const multi = subscriptionProviderAccountCards(fixture);\n"
+                "const single = subscriptionProviderAccountCards({"
+                "...fixture, observation_count: 3, "
+                "series: fixture.series.filter((row) => row.provider_account_index === 1)"
+                ".map((row) => ({...row, provider_account_count: 1}))"
+                "});\n"
+                "process.stdout.write(JSON.stringify({multi, single}));"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime = json.loads(result.stdout)
+    cards = runtime["multi"]
+
+    assert [card["label"] for card in cards] == [
+        "Anthropic / Claude · account 1",
+        "Anthropic / Claude · account 2",
+    ]
+    assert [card["provider_account_index"] for card in cards] == [1, 2]
+    assert all(card["provider_account_count"] == 2 for card in cards)
+    assert [
+        {series["provider_account_index"] for series in card["series"]}
+        for card in cards
+    ] == [{1}, {2}]
+    assert all(
+        {series["quota_name"] for series in card["series"]}
+        == {"five_hour", "seven_day", "seven_day_fable"}
+        for card in cards
+    )
+    assert len(runtime["single"]) == 1
+    assert runtime["single"][0]["label"] == "Anthropic / Claude"
+    assert {
+        series["quota_name"] for series in runtime["single"][0]["series"]
+    } == {"five_hour", "seven_day", "seven_day_fable"}
+    assert "patterns[(index - 1) % patterns.length]" in html
+    assert "const dashPattern = dashForRow(row);" in html
+    assert "account_ref" not in html
+    assert "source_namespace" not in html
+    assert "claude-code-secondary" not in html
