@@ -492,6 +492,11 @@ def test_subscription_chart_seeds_expected_providers_for_empty_and_partial_ledge
     assert all(provider["status"] == "no_observations" for provider in empty_chart["providers"])
     assert all(provider["series"] == [] for provider in empty_chart["providers"])
     assert all(provider["unavailable_series"] == [] for provider in empty_chart["providers"])
+    assert empty_chart["unified_five_hour"]["series"] == []
+    assert [
+        row["provider"]
+        for row in empty_chart["unified_five_hour"]["no_data_providers"]
+    ] == expected
 
     partial = tmp_path / "partial.jsonl"
     partial.write_text(
@@ -539,6 +544,16 @@ def test_quota_provider_aliases_are_the_complete_explicit_allowlist():
         "moonshot": "kimi-k3-coding",
         "moonshot-ai": "kimi-k3-coding",
     }
+
+
+def test_primary_five_hour_quota_mapping_is_explicit_and_excludes_openai():
+    assert dashboard_module._PRIMARY_FIVE_HOUR_QUOTAS == {
+        "anthropic": "five_hour",
+        "opencode-go": "five_hour",
+        "z-ai-glm": "five_hour",
+        "kimi-k3-coding": "five_hour",
+    }
+    assert "openai-codex" not in dashboard_module._PRIMARY_FIVE_HOUR_QUOTAS
 
 
 @pytest.mark.parametrize(
@@ -1347,6 +1362,196 @@ def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_rat
         assert private_value not in serialized
 
 
+def test_subscription_api_unifies_five_hour_quotas_without_substitution_or_account_pooling(
+    tmp_path, monkeypatch
+):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 5, 12, 30, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+
+    def observation(
+        source_id, provider, quota_name, used, *, account_ref: str | None = "account"
+    ):
+        return _quota_observation(
+            source_id,
+            quota_name,
+            observed_at="2026-08-05T11:15:00Z",
+            provider=provider,
+            account_ref=account_ref,
+            used_value=str(used),
+            remaining_value=str(100 - used),
+            limit_value="100",
+            measurement_confidence="exact",
+        )
+
+    rows = [
+        observation("codex-week", "openai-codex", "week", 91),
+        observation("codex-spark-week", "openai-codex", "spark_week", 13),
+        observation("claude-primary-five", "anthropic", "five_hour", 11, account_ref=None),
+        observation("claude-primary-week", "anthropic", "seven_day", 22, account_ref=None),
+        observation(
+            "claude-secondary-five",
+            "anthropic",
+            "five_hour",
+            61,
+            account_ref="private-secondary-account",
+        ),
+        observation(
+            "claude-secondary-week",
+            "anthropic",
+            "seven_day",
+            72,
+            account_ref="private-secondary-account",
+        ),
+        observation("go-five", "opencode-go", "five_hour", 33),
+        observation("go-week", "opencode-go", "week", 44),
+        observation("glm-five", "z-ai-glm", "five_hour", 55),
+        observation("glm-week", "z-ai-glm", "week", 66),
+        observation("kimi-five", "kimi-k3-coding", "five_hour", 77),
+        observation("kimi-week", "kimi-k3-coding", "week", 88),
+    ]
+    ledger = tmp_path / "quota.jsonl"
+    ledger.write_text(
+        "\n".join(canonical_json(row) for row in reversed(rows)) + "\n",
+        encoding="utf-8",
+    )
+
+    response = create_app(quota_ledger=str(ledger)).test_client().get(
+        "/api/subscriptions?hours=1&history=0"
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    five_hour = payload["time_series"]["unified_five_hour"]
+    assert five_hour["label"] == "Unified five-hour subscription utilization"
+    assert "weekly data is never substituted" in five_hour["description"]
+    assert [row["provider"] for row in five_hour["series"]] == [
+        "anthropic",
+        "anthropic",
+        "opencode-go",
+        "z-ai-glm",
+        "kimi-k3-coding",
+    ]
+    assert [row["quota_name"] for row in five_hour["series"]] == ["five_hour"] * 5
+    assert [row["label"] for row in five_hour["series"]] == [
+        "Anthropic / Claude · account 1",
+        "Anthropic / Claude · account 2",
+        "OpenCode Go",
+        "Z.AI / GLM",
+        "Kimi K3 Coding",
+    ]
+    assert [row["values"] for row in five_hour["series"]] == [
+        [11.0],
+        [61.0],
+        [33.0],
+        [55.0],
+        [77.0],
+    ]
+    assert [row["provider_account_index"] for row in five_hour["series"][:2]] == [1, 2]
+    assert all(row["provider_account_count"] == 2 for row in five_hour["series"][:2])
+    assert [72.0] not in [row["values"] for row in five_hour["series"]]
+    assert [11.0 + 61.0] not in [row["values"] for row in five_hour["series"]]
+    assert five_hour["no_data_providers"] == [
+        {
+            "provider": "openai-codex",
+            "label": "OpenAI / Codex",
+            "quota_name": None,
+            "status": "comparable_five_hour_quota_not_reported",
+        }
+    ]
+
+    weekly = payload["time_series"]["unified_weekly"]
+    assert [row["provider"] for row in weekly["series"]] == [
+        "openai-codex",
+        "anthropic",
+        "anthropic",
+        "opencode-go",
+        "z-ai-glm",
+        "kimi-k3-coding",
+    ]
+    assert [row["values"] for row in weekly["series"]] == [
+        [91.0],
+        [22.0],
+        [72.0],
+        [44.0],
+        [66.0],
+        [88.0],
+    ]
+
+    serialized = json.dumps(payload)
+    for private_value in (
+        "private-secondary-account",
+        "private:test-quota",
+        "source_namespace",
+        "source_observation_id",
+        "account_ref",
+        "provider_payload_ref",
+    ):
+        assert private_value not in serialized
+
+
+def test_unified_five_hour_handles_one_series_and_missing_or_invalid_primary_data():
+    rows = [
+        _quota_observation(
+            "single-go-five",
+            "five_hour",
+            provider="opencode-go",
+            observed_at="2026-08-05T11:15:00Z",
+            used_value="25",
+            remaining_value="75",
+            limit_value="100",
+        ),
+        _quota_observation(
+            "invalid-claude-five",
+            "five_hour",
+            provider="anthropic",
+            observed_at="2026-08-05T11:20:00Z",
+            used_value=None,
+            remaining_value=None,
+            limit_value="100",
+        ),
+    ]
+
+    result = dashboard_module._build_subscription_time_series(
+        rows,
+        window_start=datetime(2026, 8, 5, 11, tzinfo=timezone.utc),
+        window_end=datetime(2026, 8, 5, 12, tzinfo=timezone.utc),
+        generated_at=datetime(2026, 8, 5, 12, 30, tzinfo=timezone.utc),
+    )["unified_five_hour"]
+
+    assert [row["label"] for row in result["series"]] == ["OpenCode Go"]
+    assert result["series"][0]["values"] == [25.0]
+    assert result["no_data_providers"] == [
+        {
+            "provider": "openai-codex",
+            "label": "OpenAI / Codex",
+            "quota_name": None,
+            "status": "comparable_five_hour_quota_not_reported",
+        },
+        {
+            "provider": "anthropic",
+            "label": "Anthropic / Claude",
+            "quota_name": "five_hour",
+            "status": "no_comparable_five_hour_utilization",
+        },
+        {
+            "provider": "z-ai-glm",
+            "label": "Z.AI / GLM",
+            "quota_name": "five_hour",
+            "status": "primary_five_hour_quota_not_reported",
+        },
+        {
+            "provider": "kimi-k3-coding",
+            "label": "Kimi K3 Coding",
+            "quota_name": "five_hour",
+            "status": "primary_five_hour_quota_not_reported",
+        },
+    ]
+
+
 @pytest.mark.parametrize(
     ("used", "limit"),
     [
@@ -1506,10 +1711,9 @@ def test_unified_subscription_provider_palette_is_stable_contrasting_and_scoped(
         )
         assert contrast >= 3
 
-    assert "subscriptionQuotaDatasets(unifiedRows, subscriptionUnifiedProviderColor)" in html
-    assert "unifiedRows,\n          subscriptionUnifiedProviderColor," in html
-    assert "datasets: subscriptionQuotaDatasets(rows)" in html
-    assert "renderSubscriptionQuotaLabels(directLabels, rows);" in html
+    assert "subscriptionQuotaDatasets(rows)" in html
+    assert "const color = subscriptionUnifiedProviderColor(row, index);" in html
+    assert "subscriptionUnifiedQuotaDash(row)" in html
 
 
 def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_explicit(
@@ -1517,41 +1721,73 @@ def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_ex
 ):
     html = _dashboard_root_html(tmp_path, monkeypatch)
 
-    assert "Unified weekly subscription utilization" in html
-    assert "normalized 0–100% scale" in html
-    assert "does not compare tokens or dollars" in html
-    assert 'id="subscriptionUnifiedChart"' in html
-    assert 'aria-label="Unified weekly subscription quota utilization from 0 to 100 percent"' in html
-    assert 'role="img" aria-describedby="subscriptionUnifiedDescription subscriptionUnifiedSummary"' in html
-    assert 'id="subscriptionUnifiedDescription"' in html
-    assert 'canvas.setAttribute("role", "img")' in html
-    assert 'canvas.setAttribute("aria-describedby", descriptionId)' in html
-    assert "observationSummary.id = descriptionId" in html
-    assert 'id="subscriptionProviderChartGrid" class="subscription-provider-grid" aria-live="polite"' not in html
-    assert 'id="subscriptionProviderGrid" class="subscription-provider-grid" aria-live="polite"' not in html
-    assert 'id="subscriptionUnifiedTableHead"' in html
-    assert 'id="subscriptionUnifiedTableBody"' in html
-    assert "Provider quota history" in html
+    history = html.split('<section class="subscription-quota-history"', 1)[1].split(
+        '<div id="subscriptionProviderGrid"', 1
+    )[0]
+    assert len(re.findall(r"<canvas\b", history)) == 2
+    assert "Unified weekly subscription utilization" in history
+    assert "Unified five-hour subscription utilization" in history
+    assert "normalized 0–100% scale" in history
+    assert "does not compare tokens or dollars" in history
+    assert "weekly data is never substituted" in history
+    for prefix, period in (
+        ("subscriptionUnifiedWeekly", "weekly"),
+        ("subscriptionUnifiedFiveHour", "five-hour"),
+    ):
+        assert f'id="{prefix}Chart"' in history
+        assert (
+            f'aria-label="Unified {period} subscription quota utilization from 0 to 100 percent"'
+            in history
+        )
+        assert (
+            f'role="img" aria-describedby="{prefix}Description {prefix}Summary"'
+            in history
+        )
+        assert f'id="{prefix}Description"' in history
+        assert f'id="{prefix}Labels"' in history
+        assert f'id="{prefix}TableHead"' in history
+        assert f'id="{prefix}TableBody"' in history
+    assert "Provider quota history" not in html
+    assert "subscriptionProviderChartGrid" not in html
+    assert "subscriptionProviderChart-" not in html
+    assert "subscriptionProviderTableHead-" not in html
+    assert "subscriptionProviderTableBody-" not in html
+    assert "subscriptionProviderCharts" not in html
+    assert "destroySubscriptionProviderCharts" not in html
+    assert "renderSubscriptionProviderCharts" not in html
+    assert "subscriptionProviderAccountCards" not in html
+    assert ".subscription-provider-chart" not in html
+    assert 'id="subscriptionProviderGrid"' in html
+    assert 'id="subscriptionRawDetails"' in html
+    script = html.rsplit("<script>", 1)[1].split("</script>", 1)[0]
+    assert 'prefix: "subscriptionUnifiedWeekly"' in script
+    assert 'prefix: "subscriptionUnifiedFiveHour"' in script
+    assert "timeSeries.unified_weekly" in script
+    assert "timeSeries.unified_five_hour" in script
     assert 'fetch("/api/subscriptions?hours=168&history=0")' in html
     assert 'fetch("/api/subscriptions?days=30&history=0")' not in html
     assert "Historical contract only" not in html
-    assert "No comparable utilization ratio is reported for this provider." in html
-    assert "unavailable_series" in html
-    assert "Not charted:" in html
-    assert "no comparable utilization ratio" in html
-    assert "Chart response truncated:" in html
-    assert "providers_truncated" in html
-    assert "series_truncated" in html
     assert "No comparable primary weekly-equivalent data:" in html
+    assert "OpenAI / Codex reports no comparable five-hour quota" in html
     assert "quotaConfidenceDash" in html
     assert 'status === "exact" ? [] : [7, 5]' in html
     assert "spanGaps: false" in html
     assert "confidence_status" in html
-    assert "destroySubscriptionProviderCharts" in html
     assert ".destroy()" in html
     assert "animation: REDUCED_MOTION ? false" in html
     assert "min: 0" in html and "max: 100" in html
     assert "cdn.jsdelivr.net" not in html
+
+    responsive_grid_rule = re.search(
+        r"\.subscription-unified-history-grid\s*\{(?P<body>[^}]*)\}", html
+    )
+    assert responsive_grid_rule is not None
+    assert re.search(
+        r"grid-template-columns:\s*repeat\(auto-fit,\s*"
+        r"minmax\(min\(100%,\s*520px\),\s*1fr\)\)\s*;",
+        responsive_grid_rule.group("body"),
+    )
+    assert '<meta name="viewport" content="width=device-width, initial-scale=1.0" />' in html
 
     mobile_rule = re.search(
         r"@media \(max-width: 640px\).*?\.subscription-quota-chart-wrap\s*\{"

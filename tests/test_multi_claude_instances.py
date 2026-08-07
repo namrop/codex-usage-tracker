@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import subprocess
 
 import pytest
 
@@ -688,6 +687,20 @@ def test_two_anthropic_accounts_have_stable_safe_metadata_across_every_quota_win
     assert all(row["provider_account_count"] == 2 for row in anthropic_weekly)
     assert [22.0 + 72.0] not in [row["values"] for row in anthropic_weekly]
 
+    anthropic_five_hour = [
+        row
+        for row in payload["time_series"]["unified_five_hour"]["series"]
+        if row["provider"] == "anthropic"
+    ]
+    assert [row["label"] for row in anthropic_five_hour] == [
+        "Anthropic / Claude · account 1",
+        "Anthropic / Claude · account 2",
+    ]
+    assert [row["values"] for row in anthropic_five_hour] == [[11.0], [61.0]]
+    assert [row["provider_account_index"] for row in anthropic_five_hour] == [1, 2]
+    assert all(row["provider_account_count"] == 2 for row in anthropic_five_hour)
+    assert [11.0 + 61.0] not in [row["values"] for row in anthropic_five_hour]
+
     serialized = json.dumps(payload)
     for private_value in (
         "primary-private-source",
@@ -741,78 +754,21 @@ def test_single_anthropic_account_preserves_labels_and_card_metadata(
     assert "borderDash: subscriptionUnifiedQuotaDash(row)" in html
 
 
-def test_quota_history_account_card_helper_splits_accounts_without_interleaving(
-    tmp_path, monkeypatch
+def test_quota_history_removes_provider_small_multiples_and_account_partition_helper(
+    tmp_path,
 ):
     html = create_app(
         atrium_root=str(tmp_path / "atrium"),
         ledger=str(tmp_path / "usage.jsonl"),
     ).test_client().get("/").get_data(as_text=True)
-    start = html.index("function subscriptionProviderAccountCards(provider)")
-    end = html.index("\n\n      function renderSubscriptionProviderCharts", start)
-    helper = html[start:end]
-    fixture = {
-        "provider": "anthropic",
-        "label": "Anthropic / Claude",
-        "status": "available",
-        "observation_count": 6,
-        "series": [
-            {
-                "quota_name": quota_name,
-                "provider_account_index": account_index,
-                "provider_account_count": 2,
-                "observation_count": 1,
-            }
-            for account_index in (2, 1)
-            for quota_name in ("five_hour", "seven_day", "seven_day_fable")
-        ],
-        "unavailable_series": [],
-    }
-    result = subprocess.run(
-        [
-            "node",
-            "-e",
-            (
-                f"{helper}\n"
-                f"const fixture = {json.dumps(fixture)};\n"
-                "const multi = subscriptionProviderAccountCards(fixture);\n"
-                "const single = subscriptionProviderAccountCards({"
-                "...fixture, observation_count: 3, "
-                "series: fixture.series.filter((row) => row.provider_account_index === 1)"
-                ".map((row) => ({...row, provider_account_count: 1}))"
-                "});\n"
-                "process.stdout.write(JSON.stringify({multi, single}));"
-            ),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    runtime = json.loads(result.stdout)
-    cards = runtime["multi"]
 
-    assert [card["label"] for card in cards] == [
-        "Anthropic / Claude · account 1",
-        "Anthropic / Claude · account 2",
-    ]
-    assert [card["provider_account_index"] for card in cards] == [1, 2]
-    assert all(card["provider_account_count"] == 2 for card in cards)
-    assert [
-        {series["provider_account_index"] for series in card["series"]}
-        for card in cards
-    ] == [{1}, {2}]
-    assert all(
-        {series["quota_name"] for series in card["series"]}
-        == {"five_hour", "seven_day", "seven_day_fable"}
-        for card in cards
-    )
-    assert len(runtime["single"]) == 1
-    assert runtime["single"][0]["label"] == "Anthropic / Claude"
-    assert {
-        series["quota_name"] for series in runtime["single"][0]["series"]
-    } == {"five_hour", "seven_day", "seven_day_fable"}
+    assert "subscriptionProviderAccountCards" not in html
+    assert "renderSubscriptionProviderCharts" not in html
+    assert "subscriptionProviderCharts" not in html
+    assert "subscriptionProviderChartGrid" not in html
+    assert "Provider quota history" not in html
     assert "patterns[(index - 1) % patterns.length]" in html
-    assert "const dashPattern = dashForRow(row);" in html
+    assert "const dashPattern = subscriptionUnifiedQuotaDash(row);" in html
     assert "account_ref" not in html
     assert "source_namespace" not in html
     assert "claude-code-secondary" not in html

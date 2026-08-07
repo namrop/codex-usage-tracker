@@ -98,6 +98,12 @@ _PRIMARY_WEEKLY_QUOTAS = {
     "z-ai-glm": "week",
     "kimi-k3-coding": "week",
 }
+_PRIMARY_FIVE_HOUR_QUOTAS = {
+    "anthropic": "five_hour",
+    "opencode-go": "five_hour",
+    "z-ai-glm": "five_hour",
+    "kimi-k3-coding": "five_hour",
+}
 _QUOTA_PROVIDER_ALIASES = {
     "openai": "openai-codex",
     "openai-codex": "openai-codex",
@@ -555,6 +561,81 @@ def _quota_identity_sort_key(
     )
 
 
+def _build_primary_quota_projection(
+    *,
+    primary_quotas: dict[str, str],
+    period_name: str,
+    label: str,
+    description: str,
+    identities_by_provider_quota: dict[tuple[str, str], list[_QuotaSeriesIdentity]],
+    provider_account_indexes: dict[str, dict[_QuotaAccountIdentity, int]],
+    entries: dict[_QuotaSeriesIdentity, dict[str, Any]],
+    unmapped_status: str | None = None,
+) -> dict[str, Any]:
+    """Select one explicitly mapped quota family without merging account series."""
+    unified_series: list[dict[str, Any]] = []
+    no_data_providers: list[dict[str, Any]] = []
+    for provider in _QUOTA_PROVIDER_ORDER:
+        quota_name = primary_quotas.get(provider)
+        if quota_name is None:
+            no_data_providers.append(
+                {
+                    "provider": provider,
+                    "label": _QUOTA_PROVIDER_LABELS[provider],
+                    "quota_name": None,
+                    "status": unmapped_status or f"primary_{period_name}_quota_not_mapped",
+                }
+            )
+            continue
+
+        primary_identities = sorted(
+            identities_by_provider_quota.get((provider, quota_name), []),
+            key=lambda identity: (
+                provider_account_indexes[provider][identity[6]],
+                _quota_identity_sort_key(identity),
+            ),
+        )
+        chartable_identities = [
+            identity for identity in primary_identities if entries[identity]["chartable"]
+        ]
+        if chartable_identities:
+            account_count = len(provider_account_indexes[provider])
+            for identity in chartable_identities:
+                account_index = provider_account_indexes[provider][identity[6]]
+                provider_label = _QUOTA_PROVIDER_LABELS[provider]
+                series_payload = {
+                    **entries[identity]["payload"],
+                    "label": provider_label,
+                }
+                if account_count > 1:
+                    series_payload["label"] = (
+                        f"{provider_label} · account {account_index}"
+                    )
+                unified_series.append(series_payload)
+            continue
+
+        status = (
+            f"no_comparable_{period_name}_utilization"
+            if primary_identities
+            else f"primary_{period_name}_quota_not_reported"
+        )
+        no_data_providers.append(
+            {
+                "provider": provider,
+                "label": _QUOTA_PROVIDER_LABELS[provider],
+                "quota_name": quota_name,
+                "status": status,
+            }
+        )
+
+    return {
+        "label": label,
+        "description": description,
+        "series": unified_series,
+        "no_data_providers": no_data_providers,
+    }
+
+
 def _build_subscription_time_series(
     rows: list[dict[str, Any]],
     *,
@@ -737,50 +818,33 @@ def _build_subscription_time_series(
             }
         )
 
-    unified_series: list[dict[str, Any]] = []
-    no_data_providers: list[dict[str, str]] = []
-    for provider in _QUOTA_PROVIDER_ORDER:
-        quota_name = _PRIMARY_WEEKLY_QUOTAS[provider]
-        primary_identities = sorted(
-            identities_by_provider_quota.get((provider, quota_name), []),
-            key=lambda identity: (
-                provider_account_indexes[provider][identity[6]],
-                _quota_identity_sort_key(identity),
-            ),
-        )
-        chartable_identities = [
-            identity for identity in primary_identities if entries[identity]["chartable"]
-        ]
-        if chartable_identities:
-            account_count = len(provider_account_indexes[provider])
-            for identity in chartable_identities:
-                account_index = provider_account_indexes[provider][identity[6]]
-                label = _QUOTA_PROVIDER_LABELS[provider]
-                series_payload = {
-                    **entries[identity]["payload"],
-                    "label": label,
-                }
-                if account_count > 1:
-                    series_payload.update(
-                        {
-                            "label": f"{label} · account {account_index}",
-                        }
-                    )
-                unified_series.append(series_payload)
-            continue
-        status = (
-            "no_comparable_weekly_utilization"
-            if primary_identities
-            else "primary_weekly_quota_not_reported"
-        )
-        no_data_providers.append(
-            {
-                "provider": provider,
-                "label": _QUOTA_PROVIDER_LABELS[provider],
-                "quota_name": quota_name,
-                "status": status,
-            }
-        )
+    unified_weekly = _build_primary_quota_projection(
+        primary_quotas=_PRIMARY_WEEKLY_QUOTAS,
+        period_name="weekly",
+        label="Unified weekly subscription utilization",
+        description=(
+            "Each named provider's explicitly mapped primary weekly-equivalent quota "
+            "on a normalized 0–100% scale; this does not compare tokens or dollars."
+        ),
+        identities_by_provider_quota=identities_by_provider_quota,
+        provider_account_indexes=provider_account_indexes,
+        entries=entries,
+    )
+    unified_five_hour = _build_primary_quota_projection(
+        primary_quotas=_PRIMARY_FIVE_HOUR_QUOTAS,
+        period_name="five_hour",
+        label="Unified five-hour subscription utilization",
+        description=(
+            "Each named provider's explicitly mapped comparable five-hour quota on a "
+            "normalized 0–100% scale; this does not compare tokens or dollars. "
+            "OpenAI / Codex reports no comparable five-hour quota in the canonical "
+            "ledger, and weekly data is never substituted."
+        ),
+        identities_by_provider_quota=identities_by_provider_quota,
+        provider_account_indexes=provider_account_indexes,
+        entries=entries,
+        unmapped_status="comparable_five_hour_quota_not_reported",
+    )
 
     total_series_count = len(grouped)
     truncation = {
@@ -804,15 +868,8 @@ def _build_subscription_time_series(
         "bucket_starts": [_iso_z(value) for value in bucket_starts],
         "providers": providers,
         "truncation": truncation,
-        "unified_weekly": {
-            "label": "Unified weekly subscription utilization",
-            "description": (
-                "Each named provider's explicitly mapped primary weekly-equivalent quota "
-                "on a normalized 0–100% scale; this does not compare tokens or dollars."
-            ),
-            "series": unified_series,
-            "no_data_providers": no_data_providers,
-        },
+        "unified_weekly": unified_weekly,
+        "unified_five_hour": unified_five_hour,
     }
 
 
