@@ -7,8 +7,10 @@ explicit interchange format.
 
 ## What it does
 
-- Loads Codex credentials from `~/.hermes/auth.json`, refreshes expired access
-  tokens, and fetches `/backend-api/wham/usage` from `chatgpt.com`.
+- Loads Codex credentials **read-only** from `~/.hermes/auth.json` (or
+  `$HERMES_HOME/auth.json`) and fetches `/backend-api/wham/usage` from
+  `chatgpt.com`. It never refreshes or writes the token — see
+  [Credential ownership](#credential-ownership).
 - Preserves the legacy Codex JSONL snapshot daemon and public-safe projection.
 - Collects usage from Hermes, Claude Code, and OpenCode plus quota/account
   observations from Codex, Claude Code, Kimi Code, OpenRouter, DeepSeek, and
@@ -38,12 +40,35 @@ Usage endpoint used by this package:
 - Requires `Authorization: Bearer <access_token>`
 - Optional `ChatGPT-Account-Id` header (if available in auth payload)
 
-Token refresh flow:
+## Credential ownership
 
-- `POST https://auth.openai.com/oauth/token`
-- `grant_type=refresh_token`
-- `client_id=app_EMoamEEZ73f0CkXaXp7hrann`
-- `refresh_token=<refresh_token>`
+**Hermes owns the Codex OAuth token. This tracker is a read-only consumer and
+must never refresh or write `auth.json`.**
+
+Until 2026-08-15 this tracker did refresh the token, and it caused a live
+outage. `auth.json` holds two copies of the Codex credentials — the singleton
+at `providers.openai-codex.tokens` and a pool entry at
+`credential_pool.openai-codex` — and the pool copy is what serves Hermes's real
+API traffic. A refresh here rotated the singleton only, stranding the running
+gateway on a token that had just been invalidated; it failed with `HTTP 401:
+Provided authentication token is expired`. Writing both copies would not fix
+it either, because the gateway holds an *in-memory* pool snapshot. Only the
+process that owns the pool can refresh safely.
+
+The old implementation also took no lock and rewrote the whole file
+non-atomically, which could clobber the credentials of the eight other
+providers sharing it.
+
+Current behaviour when the access token is expired (or expiring within 60 s, or
+undecodable): log an error naming the cause and skip the poll, leaving a gap in
+the ledger. Hermes refreshes proactively 120 s before expiry whenever it next
+selects the Codex provider, so gaps are normally brief. **A persistent gap is a
+real signal** that Hermes-side auth needs attention — check `hermes auth
+status`, and re-authorize with `hermes auth add openai-codex` if needed.
+
+Full incident:
+`07_systems/hermes/incidents/hermes_codex_oauth_dual_uncoordinated_refreshers_auth_store_write_race_incident_2026-08-15.md`
+in the Atrium canon.
 
 ## Install
 
