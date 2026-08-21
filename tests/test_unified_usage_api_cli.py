@@ -1831,7 +1831,7 @@ def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independent
     package_data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["tool"]["setuptools"]["package-data"]
     assert "static/vendor/*.js" in package_data["codex_usage_tracker"]
     assert "Codex detail" in page
-    assert 'fetch("/api/unified-usage?hours=168")' in page
+    assert 'fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) })' in page
     assert 'id="modelTokenChart"' in page
     assert 'id="codexClaudeChart"' in page
     assert 'id="providerComparisonBars"' in page
@@ -1853,10 +1853,13 @@ def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independent
     assert "overflow-x: hidden" in page
     assert "overflow-wrap: anywhere" in page
     assert 'align: "inner"' in page
-    assert 'fetch("/api/subscriptions?hours=168&history=0")' in page
+    assert 'fetch("/api/subscriptions?hours=168&history=0", { signal: AbortSignal.timeout(30000) })' in page
     assert 'fetch("/api/subscriptions?days=30&history=0")' not in page
-    assert 'fetch("/api/billing?days=30")' in page
-    optional_script = page[page.index('fetch("/api/unified-usage?hours=168")'):]
+    assert 'fetch("/api/billing?days=30", { signal: AbortSignal.timeout(30000) })' in page
+    assert 'fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) })' in page
+    assert "Refresh failed — showing last good data." in page
+    assert "if (!document.hidden) hydrate();" in page
+    optional_script = page[page.index('fetch("/api/unified-usage?hours=168", { signal'):]
     assert "Promise.all([" not in optional_script
     assert "Unified usage unavailable" in page
     assert "No unified usage events" in page

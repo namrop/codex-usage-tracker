@@ -1764,7 +1764,7 @@ def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_ex
     assert 'prefix: "subscriptionUnifiedFiveHour"' in script
     assert "timeSeries.unified_weekly" in script
     assert "timeSeries.unified_five_hour" in script
-    assert 'fetch("/api/subscriptions?hours=168&history=0")' in html
+    assert 'fetch("/api/subscriptions?hours=168&history=0", { signal: AbortSignal.timeout(30000) })' in html
     assert 'fetch("/api/subscriptions?days=30&history=0")' not in html
     assert "Historical contract only" not in html
     assert "No comparable primary weekly-equivalent data:" in html

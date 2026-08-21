@@ -2365,7 +2365,7 @@
 
       async function loadUnifiedUsage() {
         try {
-          const response = await fetch("/api/unified-usage?hours=168");
+          const response = await fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) });
           if (!response.ok) throw new Error("unavailable");
           const data = await response.json();
           const freshness = data.freshness || {};
@@ -2411,6 +2411,13 @@
             document.getElementById("codexClaudeSummary").textContent = "Harness comparison unavailable; aggregate tables remain current.";
           }
         } catch (error) {
+          const content = document.getElementById("unifiedUsageContent");
+          if (content && !content.hidden) {
+            const status = document.getElementById("unifiedUsageState");
+            status.textContent = "Refresh failed — showing last good data.";
+            status.hidden = false;
+            return;
+          }
           showPanel("unifiedUsageState", "unifiedUsageContent", "Unified usage unavailable.");
         }
       }
@@ -2794,7 +2801,7 @@
 
       async function loadSubscriptions() {
         try {
-          const response = await fetch("/api/subscriptions?hours=168&history=0");
+          const response = await fetch("/api/subscriptions?hours=168&history=0", { signal: AbortSignal.timeout(30000) });
           if (!response.ok) throw new Error("unavailable");
           const data = await response.json();
           const freshness = data.freshness || {};
@@ -3100,13 +3107,20 @@
             renderSubscriptionQuotaCharts(data.time_series);
           }
         } catch (error) {
+          const content = document.getElementById("subscriptionsContent");
+          if (content && !content.hidden) {
+            const state = document.getElementById("subscriptionsState");
+            state.textContent = "Refresh failed — showing last good data.";
+            state.hidden = false;
+            return;
+          }
           renderUnavailableSubscriptionPlaceholders();
         }
       }
 
       async function loadBilling() {
         try {
-          const response = await fetch("/api/billing?days=30");
+          const response = await fetch("/api/billing?days=30", { signal: AbortSignal.timeout(30000) });
           if (!response.ok) throw new Error("unavailable");
           const data = await response.json();
           const rows = Array.isArray(data.transactions) ? data.transactions : [];
@@ -3131,6 +3145,13 @@
           ]));
           showPanel("billingState", "billingContent", "");
         } catch (error) {
+          const content = document.getElementById("billingContent");
+          if (content && !content.hidden) {
+            const state = document.getElementById("billingState");
+            state.textContent = "Refresh failed — showing last good data.";
+            state.hidden = false;
+            return;
+          }
           showPanel("billingState", "billingContent", "Billing data unavailable.");
         }
       }
@@ -3169,7 +3190,12 @@
 
       els.refresh.addEventListener("click", hydrate);
       hydrate();
-      setInterval(hydrate, 60000);
+      setInterval(() => {
+        if (!document.hidden) hydrate();
+      }, 60000);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) hydrate();
+      });
     </script>
   </body>
 </html>
