@@ -35,6 +35,27 @@ def _optional_text(value: Any) -> str | None:
     return text or None
 
 
+_HERMES_PURPOSE_MAP = {
+    "aux:vision": "vision",
+    "aux:compression": "compression",
+    "aux:approval": "x_aux_approval",
+    "aux:title_generation": "x_aux_title_generation",
+}
+
+
+def _hermes_purpose(value: Any, *, historical: bool) -> str:
+    """Translate the sidecar purpose vocabulary into the canonical contract set.
+
+    The Hermes sidecar records auxiliary lanes as ``aux:*``; the canonical
+    ledger contract only allows the fixed purpose set plus ``x_`` extension
+    names. Exact semantic matches map to their canonical bucket, everything
+    else becomes a named ``x_aux_*`` extension so no lane is silently
+    relabeled as something it is not.
+    """
+    purpose = _optional_text(value) or ("historical_backfill" if historical else "main")
+    return _HERMES_PURPOSE_MAP.get(purpose, purpose)
+
+
 def _base_event(*, namespace: str, event_id: str, harness: str, occurred: Any, recorded: Any, purpose: str="main") -> dict[str,Any]:
     return {
       "fact_type":"usage_event_v1","schema_version":1,"source_namespace":namespace,"source_event_id":event_id,
@@ -45,25 +66,50 @@ def _base_event(*, namespace: str, event_id: str, harness: str, occurred: Any, r
 
 
 def collect_hermes_usage(db_path: str | Path, source_namespace: str, *, batch_size: int=500) -> Iterator[dict[str,Any]]:
-    """Stream all Hermes event rows from SQLite opened with mode=ro."""
-    if not Path(db_path).expanduser().exists(): return
+    """Stream all Hermes event rows from SQLite opened with mode=ro.
+
+    Hermes moved usage events out of state.db into the sidecar ledger
+    (usage_events.db, table usage_events, keeper ruling 2026-08-24) and the
+    old state.db table was dropped when that Hermes generation retired.
+    Both layouts are supported: the sidecar is detected by its table, and a
+    database that exposes neither table yields zero rows (a missing source is
+    an empty lane, not a run-killing error under strict-sources).
+    """
+    expanded=Path(db_path).expanduser()
+    if not expanded.exists(): return
     con=_ro(db_path)
     try:
-        cursor=con.execute("SELECT rowid AS _immutable_rowid, * FROM llm_usage_events ORDER BY rowid")
+        tables={row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "usage_events" in tables:
+            cursor=con.execute("SELECT rowid AS _immutable_rowid, * FROM usage_events ORDER BY rowid")
+        elif "llm_usage_events" in tables:
+            cursor=con.execute("SELECT rowid AS _immutable_rowid, * FROM llm_usage_events ORDER BY rowid")
+        else:
+            return
         while True:
             batch=cursor.fetchmany(max(1,batch_size))
             if not batch: break
             for raw in batch:
                 r=dict(raw); historical=r.get("record_kind")=="historical_aggregate"
                 status=r.get("cost_status") or "unknown"
-                estimated=_cost(r.get("estimated_cost_usd")); actual=_cost(r.get("actual_cost_usd"))
+                if "cost_usd_micro" in r:
+                    micro=r.get("cost_usd_micro")
+                    cost_text=None if micro is None else f"{int(micro)/1_000_000:.6f}"
+                    if status=="included":
+                        estimated=actual=None
+                    elif cost_text is not None:
+                        estimated=cost_text; actual=None
+                    else:
+                        estimated=actual=None
+                else:
+                    estimated=_cost(r.get("estimated_cost_usd")); actual=_cost(r.get("actual_cost_usd"))
+                    if status=="reconstructed": status="estimated" if estimated is not None else ("actual" if actual is not None else "unknown")
                 if status=="included" or r.get("billing_mode") in {"subscription_included","subscription"}:
                     status="included"; estimated=actual=None
-                elif status=="reconstructed": status="estimated" if estimated is not None else ("actual" if actual is not None else "unknown")
                 event_id=str(r.get("event_uid") or f"sqlite-row:{r['_immutable_rowid']}")
                 occurred=_timestamp(r.get("timestamp"),r.get("created_at"))
                 recorded=_timestamp(r.get("created_at"),r.get("timestamp"))
-                row=_base_event(namespace=source_namespace,event_id=event_id,harness="hermes",occurred=occurred,recorded=recorded,purpose=r.get("purpose") or ("historical_backfill" if historical else "main"))
+                row=_base_event(namespace=source_namespace,event_id=event_id,harness="hermes",occurred=occurred,recorded=recorded,purpose=_hermes_purpose(r.get("purpose"), historical=historical))
                 row.update({
                   "event_uid":_optional_text(r.get("event_uid")),"surface":_optional_text(r.get("source")),"session_id":_optional_text(r.get("session_id")),
                   "provider":_optional_text(r.get("provider")),"model_requested":_optional_text(r.get("model")),"model_reported":None,
