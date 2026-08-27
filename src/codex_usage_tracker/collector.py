@@ -384,6 +384,21 @@ def _reconcile_finalized_claude_rows(
     return reconciled, (generated, resolutions)
 
 
+class StrictSourcesError(RuntimeError):
+    """Strict-source policy failure carrying sanitized lane diagnostics.
+
+    The CLI prints the exception type only for arbitrary failures because
+    exception messages can embed credentials and private paths. This
+    subclass carries the structured warnings payload (source names and
+    error type names) which is safe to surface: one journal line then
+    names the failing lane instead of a bare RuntimeError.
+    """
+
+    def __init__(self, warnings: list[dict[str, str]]):
+        super().__init__("collection incomplete under strict source policy")
+        self.warnings = warnings
+
+
 def collect_all(
     *,
     state_db: str | Path,
@@ -483,10 +498,19 @@ def collect_all(
     ) -> tuple[AppendResult, int]:
         nonlocal generated_corrections
         prepared_rows = list(rows)
+        hermes_sidecar_source = source == "hermes" and fact_type == "usage_event_v1"
         equivalent_fields = (
             frozenset({"occurred_at", "recorded_at"})
             if source in claude_usage_source_keys and fact_type == "usage_event_v1"
-            else frozenset()
+            else (
+                # The Hermes sidecar stores exact integer micro-USD; canonical
+                # rows ingested from the retired state.db layout carry
+                # full-precision floats. Sub-micro-dollar drift on the same
+                # identity is a unit rounding difference, not a content change.
+                frozenset({"estimated_cost_usd"})
+                if hermes_sidecar_source
+                else frozenset()
+            )
         )
         if source in claude_usage_source_keys and fact_type == "usage_event_v1":
             append_result, summaries, reconciliation = (
@@ -791,5 +815,5 @@ def collect_all(
         paths["billing_ledger"] = str(Path(billing_ledger).expanduser())
         result["billing"] = asdict(billing_result)
     if strict_sources and (warnings or conflicts):
-        raise RuntimeError("collection incomplete under strict source policy")
+        raise StrictSourcesError(warnings)
     return result

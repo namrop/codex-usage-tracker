@@ -1899,6 +1899,24 @@ def test_collect_all_cli_reports_sanitized_failure(monkeypatch, capsys):
     assert captured.err.strip() == "collect-all failed: RuntimeError"
 
 
+def test_collect_all_cli_names_failing_lanes_on_strict_failure(monkeypatch, capsys):
+    from codex_usage_tracker.collector import StrictSourcesError
+
+    def fail(**kwargs):
+        raise StrictSourcesError(
+            [{"source": "hermes", "error": "OperationalError"}]
+        )
+
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_all", fail)
+    monkeypatch.setattr("sys.argv", ["tracker", "collect-all", "--dry-run", "--no-live-quota"])
+    assert main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    lines = captured.err.strip().splitlines()
+    assert lines[0] == "collect-all failed: StrictSourcesError"
+    assert json.loads(lines[1]) == [{"source": "hermes", "error": "OperationalError"}]
+
+
 def _stub_collectors(monkeypatch, usage_rows):
     monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", lambda *args: list(usage_rows))
     monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", lambda *args: [])

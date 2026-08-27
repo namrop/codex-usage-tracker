@@ -310,6 +310,11 @@ def cmd_collect_all(args: argparse.Namespace) -> int:
         )
     except Exception as exc:
         print(f"collect-all failed: {type(exc).__name__}", file=sys.stderr)
+        warnings = getattr(exc, "warnings", None)
+        if isinstance(warnings, list) and warnings:
+            # Sanitized lane diagnostics: source names and error type names
+            # only — never raw exception messages (credential/path risk).
+            print(json.dumps(warnings, sort_keys=True), file=sys.stderr)
         return 1
     _print_compact_json(result)
     return 0
