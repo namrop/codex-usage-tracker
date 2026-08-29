@@ -1256,7 +1256,7 @@
           <table>
             <thead>
               <tr>
-                <th>Window</th>
+                <th>Window (local)</th>
                 <th>Δ Session</th>
                 <th>Δ Weekly</th>
                 <th>Calls</th>
@@ -1480,13 +1480,16 @@
         return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
       }
 
-      function formatTimestamp(ts, opts = {}) {
+      // Timezone policy: UTC-bucketed surfaces (anything headed "UTC hour") render
+      // through formatUtcHour; point-in-time sample timestamps render local through
+      // formatTimestamp, which always carries month and day so the frame is readable.
+      function formatTimestamp(ts) {
         if (!ts) return "—";
         const dt = new Date(ts);
         if (!Number.isFinite(dt.getTime())) return "—";
         return dt.toLocaleString([], {
-          month: opts.compact ? undefined : "short",
-          day: opts.compact ? undefined : "numeric",
+          month: "short",
+          day: "numeric",
           hour: "2-digit",
           minute: "2-digit",
         });
@@ -1872,7 +1875,8 @@
           const tableRow = document.createElement("tr");
           const rowHead = document.createElement("th");
           rowHead.scope = "row";
-          rowHead.textContent = startedAt;
+          // UTC-labelled bucket table: render it in UTC, not as a raw ISO string.
+          rowHead.textContent = formatUtcHour(startedAt);
           tableRow.appendChild(rowHead);
           rows.forEach((row) => {
             const cell = document.createElement("td");
@@ -2183,7 +2187,7 @@
         rows.forEach((row) => {
           const tr = document.createElement("tr");
           const values = [
-            `${formatTimestamp(row.window_start, { compact: true })} → ${formatTimestamp(row.window_end, { compact: true })}`,
+            `${formatTimestamp(row.window_start)} → ${formatTimestamp(row.window_end)}`,
             signedPercent(row.session_delta_pct), signedPercent(row.weekly_delta_pct), intFormat(row.api_calls),
             intFormat(row.input_tokens), intFormat(row.cache_read_tokens), intFormat(row.output_tokens),
             intFormat(row.reasoning_tokens), intFormat(row.total_tokens), percent(row.cache_hit_pct),
