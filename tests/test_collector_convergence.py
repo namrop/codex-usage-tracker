@@ -384,6 +384,35 @@ def test_lane_health_records_a_source_read_failure(tmp_path, monkeypatch):
     assert (tmp_path / "health" / "usage-collect.ok").exists()
 
 
+def test_a_read_only_feeder_lane_counts_as_healthy(tmp_path, monkeypatch):
+    """The quota scope reads opencode usage without ever persisting it."""
+    monkeypatch.setattr(
+        "codex_usage_tracker.collector.collect_opencode_usage",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "codex_usage_tracker.collector.codex_quota_observations",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "codex_usage_tracker.collector.derive_opencode_go_quotas",
+        lambda *args, **kwargs: [],
+    )
+    collect_all(
+        **dict(
+            _kwargs(tmp_path, tmp_path / "usage.sqlite3"),
+            quota_ledger=tmp_path / "quota.sqlite3",
+            scope="quota",
+            live_quota=False,
+        )
+    )
+
+    lanes = json.loads((tmp_path / "health" / "lanes-quota.json").read_text(encoding="utf-8"))
+    assert lanes["lanes"]["opencode"]["last_success_at"] == lanes["updated_at"]
+    assert (tmp_path / "health" / "quota-collect.ok").exists()
+    assert not (tmp_path / "health" / "usage-collect.ok").exists()
+
+
 def test_dry_run_writes_no_lane_health_or_heartbeat(tmp_path, monkeypatch):
     usage = tmp_path / "usage.jsonl"
     _stub_claude(monkeypatch, [])

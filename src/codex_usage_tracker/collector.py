@@ -764,6 +764,11 @@ def collect_all(
             return []
         sources[source] = _source_result(len(rows))
         lane["discovered"] = len(rows)
+        # A clean read is already a success for a lane that is only ever read:
+        # the quota scope reads opencode usage to derive opencode-go windows
+        # and never persists it, and that lane must not read as never-healthy.
+        lane["succeeded"] = True
+        lane["last_error_class"] = None
         return rows
 
     def persist_source(
@@ -823,7 +828,7 @@ def collect_all(
         lane["quarantined_count"] = len(quarantined)
         if quarantined:
             lane["last_error_class"] = "IdentityConflictError"
-        # A lane succeeded when it both read and persisted cleanly. A read
+        # A persisted lane succeeds only if it also wrote cleanly. A read
         # failure already recorded its error class and yielded no rows.
         lane["succeeded"] = not quarantined and lane["last_error_class"] is None
         if quarantined:
