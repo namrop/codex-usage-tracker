@@ -231,6 +231,77 @@ def test_opencode_current_legacy_reasoning_and_no_overlap(tmp_path):
     assert paid["estimated_cost_usd"]=="0.25" and paid["cost_source"]=="opencode-local-calculation"
 
 
+def _make_opencode_inflight(path, *, now_ms, completed=None, error=None):
+    """One assistant row shaped like an OpenCode generation in progress."""
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, agent TEXT,"
+        " time_created INTEGER, time_updated INTEGER)"
+    )
+    con.execute("INSERT INTO session VALUES (?,?,?,?,?)", ("root", None, "build", now_ms, now_ms))
+    con.execute(
+        "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER,"
+        " time_updated INTEGER, data TEXT)"
+    )
+    timing = {"created": now_ms}
+    if completed is not None:
+        timing["completed"] = completed
+    data = {
+        "role": "assistant",
+        "providerID": "anthropic",
+        "modelID": "claude",
+        "time": timing,
+        "tokens": {"input": 0, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+    }
+    if error is not None:
+        data["error"] = error
+    con.execute(
+        "INSERT INTO message VALUES (?,?,?,?,?)",
+        ("live", "root", now_ms, completed or now_ms, json.dumps(data)),
+    )
+    con.commit()
+    con.close()
+
+
+def test_opencode_defers_in_flight_rows_until_the_settle_window_elapses(tmp_path):
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    database = tmp_path / "stable.db"
+    _make_opencode_inflight(database, now_ms=now_ms)
+
+    assert list(collect_opencode_usage([database], "ns:oc")) == []
+    # The escape hatch: a row that never completes is still eventually recorded.
+    settled = list(collect_opencode_usage([database], "ns:oc", settle_seconds=0))
+    assert len(settled) == 1
+    assert settled[0]["source_event_id"] == "live"
+
+
+def test_opencode_projects_a_completed_row_immediately(tmp_path):
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    database = tmp_path / "stable.db"
+    _make_opencode_inflight(database, now_ms=now_ms, completed=now_ms + 1000)
+
+    facts = list(collect_opencode_usage([database], "ns:oc"))
+    assert len(facts) == 1
+    assert facts[0]["request_status"] == "ok"
+
+
+def test_opencode_settle_window_withholds_the_status_that_later_flips_to_error(tmp_path):
+    """The mid-generation snapshot is the one that poisons an identity forever."""
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    database = tmp_path / "stable.db"
+    _make_opencode_inflight(database, now_ms=now_ms)
+    assert list(collect_opencode_usage([database], "ns:oc")) == []
+
+    _make_opencode_inflight(
+        tmp_path / "settled.db",
+        now_ms=now_ms,
+        completed=now_ms + 44_000,
+        error={"name": "UnknownError"},
+    )
+    facts = list(collect_opencode_usage([tmp_path / "settled.db"], "ns:oc"))
+    assert [fact["request_status"] for fact in facts] == ["error"]
+
+
 def test_negative_correction_decimal_keeps_leading_zero():
     corrected = normalize_fact(
         event(

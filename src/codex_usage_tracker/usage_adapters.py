@@ -28,6 +28,25 @@ def _cost(value: Any) -> str | None:
     return decimal_string(value,"cost") if value is not None else None
 
 
+def _epoch_seconds(value: Any) -> float | None:
+    """Return epoch seconds for a numeric (s or ms) or ISO timestamp, else None."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        return numeric / 1000 if numeric > 10_000_000_000 else numeric
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
 def _optional_text(value: Any) -> str | None:
     if value is None:
         return None
@@ -239,7 +258,24 @@ def _message_candidates(con: sqlite3.Connection) -> Iterable[tuple[str,dict[str,
             if role=="assistant": yield str(r["id"]),{**r,"_data":data},sessions.get(session_id,{})
 
 
-def collect_opencode_usage(db_paths: Iterable[str | Path], source_namespace: str) -> Iterator[dict[str,Any]]:
+def collect_opencode_usage(
+    db_paths: Iterable[str | Path],
+    source_namespace: str,
+    *,
+    settle_seconds: float = 300.0,
+) -> Iterator[dict[str,Any]]:
+    """Project settled assistant messages only; in-flight rows are deferred.
+
+    OpenCode writes an assistant message row as soon as generation starts and
+    keeps rewriting it: tokens stay zero, ``time.completed`` is unset, and a
+    terminal error may only appear tens of seconds later. Projecting that
+    snapshot mints a canonical fact that the next collection pass contradicts,
+    which quarantines the identity forever. A row without a completion marker
+    is therefore provisional and is deferred to a later pass until its source
+    row has been quiet for ``settle_seconds`` (the same escape hatch the Claude
+    adapter uses, so a row that never completes is still eventually recorded).
+    """
+    now_timestamp = datetime.now(timezone.utc).timestamp()
     for db_path in db_paths:
         path=Path(db_path).expanduser()
         if not path.exists(): continue
@@ -248,6 +284,12 @@ def collect_opencode_usage(db_paths: Iterable[str | Path], source_namespace: str
             namespace=f"{source_namespace}:{path.stem}"
             for message_id,r,session in _message_candidates(con):
                 data=r["_data"]; tokens=data.get("tokens") or {}; cache=tokens.get("cache") or {}
+                timing=data.get("time") if isinstance(data.get("time"),dict) else {}
+                if not timing.get("completed"):
+                    touched=_epoch_seconds(r.get("time_updated"))
+                    if touched is None: touched=_epoch_seconds(r.get("time_created"))
+                    if touched is not None and now_timestamp-touched < settle_seconds:
+                        continue
                 reasoning=_usage_value(tokens,"reasoning"); output=_usage_value(tokens,"output")
                 canonical_output=None if output is None and reasoning is None else (output or 0)+(reasoning or 0)
                 model_data = data.get("model") if isinstance(data.get("model"), dict) else {}
