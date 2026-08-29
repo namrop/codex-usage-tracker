@@ -333,7 +333,11 @@ def test_heartbeat_is_touched_even_when_a_lane_quarantines(tmp_path, monkeypatch
 
     assert heartbeat.exists()
     assert heartbeat.stat().st_mode & 0o777 == 0o644
+    # A usage run must never touch the quota heartbeat: a cross-touch would let
+    # one healthy scope mask the other's dead collector from the watchdog.
+    assert not (tmp_path / "health" / "quota-collect.ok").exists()
     lanes = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
+    assert not (tmp_path / "health" / "lanes-quota.json").exists()
     assert lanes["schema_version"] == 1 and lanes["scope"] == "usage"
     assert lanes["lanes"]["claude_code"]["last_error_class"] == "IdentityConflictError"
     assert lanes["lanes"]["claude_code"]["quarantined_count"] == 1
