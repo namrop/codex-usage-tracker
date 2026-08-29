@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
@@ -1812,3 +1812,148 @@ def test_vendor_readme_records_bounded_bklit_design_provenance():
     assert "Chart.js" in provenance
     assert "Shai-Hulud" in provenance
     assert "universal" in provenance.lower()
+
+
+def _unified_usage_fact(source_event_id, **updates):
+    row = {
+        "fact_type": "usage_event_v1",
+        "schema_version": 1,
+        "source_namespace": "test:dashboard",
+        "source_event_id": source_event_id,
+        "harness": "hermes",
+        "surface": None,
+        "purpose": "main",
+        "record_kind": "api_attempt",
+        "occurred_at": "2026-07-12T12:00:00Z",
+        "recorded_at": "2026-07-12T12:00:00Z",
+        "session_id": None,
+        "logical_call_id": None,
+        "attempt_no": None,
+        "provider_request_id": None,
+        "upstream_provider": None,
+        "provider": "anthropic",
+        "model_requested": "claude",
+        "model_reported": None,
+        "api_mode": None,
+        "billing_mode": None,
+        "request_status": "ok",
+        "error_class": None,
+        "latency_ms": None,
+        "input_tokens": 10,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "output_tokens": 5,
+        "reasoning_tokens": 0,
+        "usage_source": "provider_reported",
+        "usage_completeness": "complete",
+        "measurement_confidence": "exact",
+        "missing_fields": [],
+        "attribution_gaps": [],
+        "estimated_cost_usd": None,
+        "actual_cost_usd": None,
+        "cost_status": "included",
+        "cost_source": None,
+        "pricing_version": None,
+        "reconstructed_call_count": None,
+        "corrects_source_namespace": None,
+        "corrects_source_event_id": None,
+    }
+    row.update(updates)
+    return row
+
+
+def test_api_data_defaults_to_a_bounded_row_limit(tmp_path, monkeypatch):
+    ledger = tmp_path / "usage.jsonl"
+    _write_usage_ledger(
+        ledger,
+        [
+            {
+                "fetched_at": (
+                    datetime(2026, 6, 4, tzinfo=timezone.utc) + timedelta(hours=hour)
+                ).isoformat(),
+                "weekly_used_pct": float(hour % 100),
+                "session_used_pct": None,
+                "weekly_reset_at": 1781137839,
+            }
+            for hour in range(250)
+        ],
+    )
+    monkeypatch.setenv("HERMES_STATE_DB_PATH", str(tmp_path / "missing.db"))
+    client = create_app(atrium_root=str(tmp_path / "atrium"), ledger=str(ledger)).test_client()
+
+    default_rows = client.get("/api/data").get_json()
+    assert len(default_rows) == 200
+    # Newest first, so the bound keeps the most recent samples.
+    assert default_rows[0]["fetched_at"] == "2026-06-14T09:00:00+00:00"
+
+    assert len(client.get("/api/data?limit=10").get_json()) == 10
+    assert len(client.get("/api/data?limit=0").get_json()) == 250
+    assert len(client.get("/api/data?limit=1000").get_json()) == 250
+
+    bad_limit = client.get("/api/data?limit=nope")
+    assert bad_limit.status_code == 400
+    assert bad_limit.get_json()["error"] == "limit must be an integer"
+    negative_limit = client.get("/api/data?limit=-1")
+    assert negative_limit.status_code == 400
+    assert negative_limit.get_json()["error"] == "limit must be nonnegative"
+
+
+def test_ledger_rows_are_parsed_once_until_the_file_changes(tmp_path, monkeypatch):
+    ledger = tmp_path / "usage.jsonl"
+    rows = [
+        {"fetched_at": "2026-06-04T01:00:00+00:00", "weekly_used_pct": 72.0, "weekly_reset_at": 1781137839},
+    ]
+    _write_usage_ledger(ledger, rows)
+    monkeypatch.setenv("HERMES_STATE_DB_PATH", str(tmp_path / "missing.db"))
+
+    parses = []
+    real_parse = dashboard_module._parse_rows
+
+    def counting_parse(path):
+        parses.append(str(path))
+        return real_parse(path)
+
+    monkeypatch.setattr(dashboard_module, "_parse_rows", counting_parse)
+    client = create_app(atrium_root=str(tmp_path / "atrium"), ledger=str(ledger)).test_client()
+
+    assert len(client.get("/api/data").get_json()) == 1
+    assert client.get("/api/summary").get_json()["total_rows"] == 1
+    assert client.get("/api/trend").status_code == 200
+    assert len(parses) == 1
+
+    rows.append({"fetched_at": "2026-06-04T02:00:00+00:00", "weekly_used_pct": 74.0, "weekly_reset_at": 1781137839})
+    _write_usage_ledger(ledger, rows)
+
+    assert client.get("/api/summary").get_json()["total_rows"] == 2
+    assert len(parses) == 2
+
+
+def test_unified_usage_totals_separate_priced_and_unpriced_events(tmp_path):
+    unified = tmp_path / "unified.jsonl"
+    unified.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in [
+                _unified_usage_fact(
+                    "priced-estimate", cost_status="estimated", estimated_cost_usd="0.25"
+                ),
+                _unified_usage_fact("priced-actual", cost_status="actual", actual_cost_usd="1.50"),
+                _unified_usage_fact("subscription-included-1"),
+                _unified_usage_fact("subscription-included-2"),
+                _unified_usage_fact("subscription-included-3"),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    client = create_app(
+        atrium_root=str(tmp_path),
+        ledger=str(tmp_path / "codex.jsonl"),
+        unified_usage_ledger=str(unified),
+    ).test_client()
+
+    totals = client.get("/api/unified-usage?days=36500").get_json()["totals"]
+    assert totals["priced_events"] == 2
+    assert totals["unpriced_events"] == 3
+    assert totals["estimated_cost_usd"] == "0.25"
+    assert totals["actual_cost_usd"] == "1.5"

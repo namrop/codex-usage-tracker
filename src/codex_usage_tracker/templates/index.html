@@ -2317,7 +2317,7 @@
           const [summaryRes, trendRes, dataRes, tokenLedgerRes, tokenChartRes] = await Promise.all([
             fetch("/api/summary"),
             fetch("/api/trend"),
-            fetch("/api/data"),
+            fetch("/api/data?limit=200"),
             fetch("/api/token-ledger"),
             fetch("/api/token-chart"),
           ]);

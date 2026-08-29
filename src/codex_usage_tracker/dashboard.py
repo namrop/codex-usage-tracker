@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import json
 import os
+import threading
 from typing import Any, Dict, List, Optional, TypeAlias
 
 from flask import Flask, jsonify, render_template, request
@@ -71,6 +72,11 @@ _PRIVATE_API_MAX_ROWS = 100_000
 _PRIVATE_API_MAX_JSONL_BYTES = 128 * 1024 * 1024
 _MAX_PRIVATE_API_DAYS = 36_500
 _MAX_UNIFIED_SERIES_HOURS = 168
+# /api/data feeds a 24-row table; returning the whole ledger cost ~4MB per refresh.
+_DEFAULT_DATA_ROW_LIMIT = 200
+_LEDGER_CACHE_MAX_ENTRIES = 8
+_LEDGER_CACHE_LOCK = threading.Lock()
+_LEDGER_CACHE: Dict[str, tuple[tuple[int, int], List[Dict[str, Any]]]] = {}
 _UNIFIED_MODEL_SERIES_LIMIT = 5
 _SUBSCRIPTION_CHART_PROVIDER_LIMIT = 32
 _SUBSCRIPTION_CHART_SERIES_PER_PROVIDER_LIMIT = 16
@@ -340,6 +346,21 @@ def _hours_argument() -> tuple[int | None, tuple[Any, int] | None]:
             400,
         )
     return hours, None
+
+
+def _limit_argument(default: int = _DEFAULT_DATA_ROW_LIMIT) -> tuple[int | None, tuple[Any, int] | None]:
+    """Parse ``?limit=``; ``None`` means "every row" and ``0`` requests it explicitly."""
+
+    limit_text = request.args.get("limit")
+    if limit_text is None:
+        return default, None
+    try:
+        limit = int(limit_text)
+    except ValueError:
+        return None, (jsonify({"error": "limit must be an integer"}), 400)
+    if limit < 0:
+        return None, (jsonify({"error": "limit must be nonnegative"}), 400)
+    return (None if limit == 0 else limit), None
 
 
 def _iso_z(value: datetime) -> str:
@@ -873,11 +894,7 @@ def _build_subscription_time_series(
     }
 
 
-def _load_rows(ledger_path: str) -> List[Dict[str, Any]]:
-    path = Path(ledger_path).expanduser()
-    if not path.exists():
-        return []
-
+def _parse_rows(path: Path) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as fp:
         for line in fp:
@@ -896,6 +913,33 @@ def _load_rows(ledger_path: str) -> List[Dict[str, Any]]:
 
     rows.sort(key=lambda row: _normalize_timestamp(row.get("fetched_at")), reverse=True)
     return rows
+
+
+def _load_rows(ledger_path: str) -> List[Dict[str, Any]]:
+    """Return newest-first ledger rows, reparsing only when the file changes.
+
+    The JSONL ledger is multi-megabyte and five endpoints read it per dashboard
+    refresh, so one parse is cached per (path, mtime, size) and shared. Callers
+    get their own list; the row dicts are shared and must be treated read-only
+    (every current consumer clones rows before annotating them).
+    """
+
+    path = Path(ledger_path).expanduser()
+    try:
+        stat = path.stat()
+    except OSError:
+        return []
+    signature = (stat.st_mtime_ns, stat.st_size)
+    key = str(path)
+    with _LEDGER_CACHE_LOCK:
+        cached = _LEDGER_CACHE.get(key)
+        if cached is not None and cached[0] == signature:
+            return list(cached[1])
+        rows = _parse_rows(path)
+        if key not in _LEDGER_CACHE and len(_LEDGER_CACHE) >= _LEDGER_CACHE_MAX_ENTRIES:
+            _LEDGER_CACHE.clear()
+        _LEDGER_CACHE[key] = (signature, rows)
+        return list(rows)
 
 
 def _latest_row(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -962,7 +1006,12 @@ def create_app(
 
     @app.route("/api/data")
     def api_data():
+        limit, limit_error = _limit_argument()
+        if limit_error is not None:
+            return limit_error
         rows = _load_ledger_rows()
+        if limit is not None:
+            rows = rows[:limit]
         return jsonify(rows)
 
     @app.route("/api/summary")
@@ -1161,6 +1210,13 @@ def create_app(
         # Canonical output includes reasoning when a harness reports both, so do
         # not count the diagnostic reasoning bucket a second time.
         totals["total_tokens"] = sum(totals[field] for field in token_fields if field != "reasoning_tokens")
+        # Most rows are subscription-included and carry no price at all; count
+        # them so the UI can say "$X across N priced events" instead of "$0".
+        priced_events = sum(
+            1 for row in rows if any(row.get(field) is not None for field in cost_fields)
+        )
+        totals["priced_events"] = priced_events
+        totals["unpriced_events"] = len(rows) - priced_events
         grouped: Dict[tuple[str, str], Dict[str, Any]] = {}
         by_harness: Dict[str, Dict[str, Any]] = {}
         for row in rows:
