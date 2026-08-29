@@ -2387,8 +2387,13 @@
           document.getElementById("unifiedWindow").textContent = `${formatTimestamp(data.window.first_occurred_at)} → ${formatTimestamp(data.window.last_occurred_at)}`;
           const coverage = data.coverage || {};
           document.getElementById("unifiedCoverage").textContent = `${intFormat(coverage.exact_events)} exact · ${intFormat(coverage.reconstructed_events)} reconstructed · ${intFormat(coverage.reconstructed_calls)} reconstructed calls`;
-          document.getElementById("unifiedEstimatedCost").textContent = `$${data.totals.estimated_cost_usd || "0"}`;
-          document.getElementById("unifiedActualCost").textContent = `Actual request cost: $${data.totals.actual_cost_usd || "0"}`;
+          const totals = data.totals || {};
+          const pricedEvents = Number(totals.priced_events || 0);
+          const unpricedEvents = Number(totals.unpriced_events || 0);
+          document.getElementById("unifiedEstimatedCost").textContent =
+            `$${totals.estimated_cost_usd || "0"} across ${intFormat(pricedEvents)} priced event${pricedEvents === 1 ? "" : "s"}`;
+          document.getElementById("unifiedActualCost").textContent =
+            `Actual request cost: $${totals.actual_cost_usd || "0"} · ${intFormat(unpricedEvents)} unpriced (subscription-included)`;
           const harnessBody = document.getElementById("harnessUsageBody");
           harnessBody.textContent = "";
           (data.by_harness || []).forEach((row) => appendTextRow(harnessBody, [
