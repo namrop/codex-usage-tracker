@@ -1044,6 +1044,48 @@ def _claude_reset_at(reset_text: str, observed: datetime) -> str | None:
     return None
 
 
+CLAUDE_USAGE_PROBE_ATTEMPTS = 3
+CLAUDE_USAGE_PROBE_RETRY_BACKOFF = 3.0
+
+
+def capture_claude_code_usage_screen_with_retry(
+    *,
+    claude_command: str | Path = "claude",
+    probe_dir: str | Path,
+    timeout: float = 45.0,
+    claude_config_dir: str | Path | None = None,
+    account_ref: str | None = None,
+    attempts: int = CLAUDE_USAGE_PROBE_ATTEMPTS,
+    backoff: float = CLAUDE_USAGE_PROBE_RETRY_BACKOFF,
+) -> str:
+    """Retry only the bounded-wait failure mode of the ``/usage`` TUI probe.
+
+    Probe durations are bimodal: a cold Claude Code TUI occasionally misses the
+    fixed window while a warm one settles in seconds, so a second attempt
+    converges where a longer single timeout only spends more wall clock. Only
+    ``TimeoutError`` retries — a probe-directory, lock, or tmux failure is a
+    real fault and must surface on its first occurrence.
+    """
+    total = max(1, int(attempts))
+    last: TimeoutError | None = None
+    for attempt in range(total):
+        try:
+            return capture_claude_code_usage_screen(
+                claude_command=claude_command,
+                probe_dir=probe_dir,
+                timeout=timeout,
+                claude_config_dir=claude_config_dir,
+                account_ref=account_ref,
+            )
+        except TimeoutError as exc:
+            last = exc
+            if attempt + 1 >= total:
+                break
+            time.sleep(max(0.0, backoff))
+    assert last is not None
+    raise last
+
+
 def collect_claude_code_quota(
     source_namespace: str,
     *,
@@ -1053,18 +1095,22 @@ def collect_claude_code_quota(
     observed_at: str | datetime | None = None,
     claude_config_dir: str | Path | None = None,
     account_ref: str | None = None,
+    attempts: int = CLAUDE_USAGE_PROBE_ATTEMPTS,
+    retry_backoff: float = CLAUDE_USAGE_PROBE_RETRY_BACKOFF,
 ) -> list[dict[str, Any]]:
     """Collect subscription limits from Claude Code CLI's own ``/usage`` view."""
     observed = _now(observed_at)
     observed_dt = _parse_dt(observed)
     if observed_dt is None:
         raise ValueError("observed_at must be a timezone-aware timestamp")
-    screen = capture_claude_code_usage_screen(
+    screen = capture_claude_code_usage_screen_with_retry(
         claude_command=claude_command,
         probe_dir=probe_dir,
         timeout=timeout,
         claude_config_dir=claude_config_dir,
         account_ref=account_ref,
+        attempts=attempts,
+        backoff=retry_backoff,
     )
     rows: list[dict[str, Any]] = []
     values = _claude_usage_values(screen)
