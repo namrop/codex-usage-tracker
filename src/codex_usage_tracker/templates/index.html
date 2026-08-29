@@ -1328,6 +1328,12 @@
         SERIES.input,
         SERIES.cacheWrite,
       ];
+      // renderRankBars shows up to ten rows; the six chart colours wrapped, so rows 1
+      // and 7 were the same colour. Ten hues, evenly spread, no near-duplicates.
+      const UNIFIED_RANK_COLORS = [
+        "#66E6FF", "#4C6FF0", "#9D4EDD", "#FF2F92", "#E1655B",
+        "#C46A2D", "#FFC857", "#A4F000", "#34C759", "#00B3A4",
+      ];
       const SUBSCRIPTION_UNIFIED_PROVIDER_COLORS = Object.freeze({
         "openai-codex": "#22D3EE",
         "anthropic": "#FB923C",
@@ -1394,6 +1400,9 @@
       let cacheHitChart;
       let subscriptionUnifiedWeeklyChart;
       let subscriptionUnifiedFiveHourChart;
+      // content.hidden cannot tell rendered observations from the "unavailable"
+      // placeholder cards, which are also visible; this flag can.
+      let subscriptionsHaveRenderedData = false;
 
       // Opt-in per chart: options.plugins.thresholdPlugin = { axis: "<scaleId>", value: 80 }.
       // Charts that leave it unset get no line, so token-count axes stop drawing "80%"
@@ -1917,7 +1926,7 @@
           const fill = document.createElement("div");
           fill.className = "rank-fill";
           fill.style.width = `${Math.max(0, total) / maximum * 100}%`;
-          fill.style.setProperty("--series-color", UNIFIED_MODEL_COLORS[index % UNIFIED_MODEL_COLORS.length]);
+          fill.style.setProperty("--series-color", UNIFIED_RANK_COLORS[index % UNIFIED_RANK_COLORS.length]);
           track.appendChild(fill);
           item.append(labelLine, track);
           container.appendChild(item);
@@ -2727,11 +2736,12 @@
         });
 
         document.getElementById("subscriptionsBody").textContent = "";
-        const state = document.getElementById("subscriptionsState");
+        const statusEl = document.getElementById("subscriptionsState");
         const content = document.getElementById("subscriptionsContent");
-        state.textContent = "Subscription data unavailable.";
-        state.hidden = false;
+        statusEl.textContent = "Subscription data unavailable.";
+        statusEl.hidden = false;
         content.hidden = false;
+        subscriptionsHaveRenderedData = false;
       }
 
       async function loadSubscriptions() {
@@ -3029,11 +3039,12 @@
             grid.appendChild(card);
           });
 
-          const state = document.getElementById("subscriptionsState");
+          const statusEl = document.getElementById("subscriptionsState");
           const content = document.getElementById("subscriptionsContent");
-          state.textContent = ledgerNotice;
-          state.hidden = !ledgerNotice;
+          statusEl.textContent = ledgerNotice;
+          statusEl.hidden = !ledgerNotice;
           content.hidden = false;
+          subscriptionsHaveRenderedData = true;
           if (freshness.status === "stale") {
             setSubscriptionChartsUnavailable("Subscription quota history is stale; charts are hidden until current observations arrive.");
           } else if (freshness.status === "empty") {
@@ -3042,11 +3053,10 @@
             renderSubscriptionQuotaCharts(data.time_series);
           }
         } catch (error) {
-          const content = document.getElementById("subscriptionsContent");
-          if (content && !content.hidden) {
-            const state = document.getElementById("subscriptionsState");
-            state.textContent = "Refresh failed — showing last good data.";
-            state.hidden = false;
+          if (subscriptionsHaveRenderedData) {
+            const statusEl = document.getElementById("subscriptionsState");
+            statusEl.textContent = "Refresh failed — showing last good data.";
+            statusEl.hidden = false;
             return;
           }
           renderUnavailableSubscriptionPlaceholders();
@@ -3082,9 +3092,9 @@
         } catch (error) {
           const content = document.getElementById("billingContent");
           if (content && !content.hidden) {
-            const state = document.getElementById("billingState");
-            state.textContent = "Refresh failed — showing last good data.";
-            state.hidden = false;
+            const statusEl = document.getElementById("billingState");
+            statusEl.textContent = "Refresh failed — showing last good data.";
+            statusEl.hidden = false;
             return;
           }
           showPanel("billingState", "billingContent", "Billing data unavailable.");
