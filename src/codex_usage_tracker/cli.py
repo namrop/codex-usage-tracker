@@ -315,9 +315,34 @@ def cmd_collect_all(args: argparse.Namespace) -> int:
             # Sanitized lane diagnostics: source names and error type names
             # only — never raw exception messages (credential/path risk).
             print(json.dumps(warnings, sort_keys=True), file=sys.stderr)
+        report_path = getattr(exc, "report_path", None)
+        if isinstance(report_path, str) and report_path:
+            print(f"collect-all report: {report_path}", file=sys.stderr)
         return 1
+    print(_collect_summary_line(result), file=sys.stderr)
     _print_compact_json(result)
     return 0
+
+
+def _collect_summary_line(result: dict[str, Any]) -> str:
+    """One journal-friendly line naming what this run converged or could not."""
+    counts = result.get("counts") or {}
+    usage = result.get("usage") or {}
+    quotas = result.get("quotas") or {}
+    fields = [
+        f"scope={result.get('scope', 'all')}",
+        f"appended={int(usage.get('appended', 0)) + int(quotas.get('appended', 0))}",
+        f"replayed={int(usage.get('replayed', 0)) + int(quotas.get('replayed', 0))}",
+        f"quarantined={counts.get('conflicts', 0)}",
+        f"corrections={result.get('generated_corrections', 0)}",
+        f"regressions={counts.get('resolutions', 0)}",
+        f"newly_adjudicated={counts.get('resolutions_recorded', 0)}",
+        f"warnings={counts.get('warnings', 0)}",
+    ]
+    report = (result.get("paths") or {}).get("report")
+    if report:
+        fields.append(f"report={report}")
+    return "collect-all: " + " ".join(fields)
 
 
 def cmd_daemon(args: argparse.Namespace) -> int:

@@ -6,9 +6,12 @@ canonical usage, quota, and optional billing ledgers supplied by the caller.
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 import hashlib
+import json
 import os
 from pathlib import Path
+import sqlite3
 from typing import Any, Iterable, Mapping
 
 from .claude_instances import ClaudeInstance, normalize_claude_instances
@@ -253,15 +256,125 @@ def _identity_sha256(row: Mapping[str, Any]) -> str:
     return hashlib.sha256(f"{namespace}\0{event_id}".encode("utf-8")).hexdigest()
 
 
+_ADJUDICATION_STORE_NAME = "adjudications.sqlite3"
+_HEALTH_DIR_NAME = "health"
+_ADJUDICATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS adjudications (
+    identity_sha256 TEXT NOT NULL,
+    incoming_sha256 TEXT NOT NULL,
+    source TEXT NOT NULL,
+    resolution TEXT NOT NULL,
+    existing_sha256 TEXT NOT NULL,
+    changed_fields TEXT NOT NULL,
+    first_recorded_at TEXT NOT NULL,
+    PRIMARY KEY (identity_sha256, incoming_sha256)
+)
+"""
+
+
+def _default_adjudication_store(ledger: str | Path) -> Path:
+    return Path(ledger).expanduser().parent / _ADJUDICATION_STORE_NAME
+
+
+def _default_report_dir(ledger: str | Path) -> Path:
+    return Path(ledger).expanduser().parent / _HEALTH_DIR_NAME
+
+
+def record_adjudications(
+    store: str | Path,
+    resolutions: list[dict[str, Any]],
+    *,
+    now: str | None = None,
+) -> list[dict[str, Any]]:
+    """Record each (identity, incoming sha) adjudication exactly once.
+
+    This is a tracker-private sidecar, deliberately outside the canonical
+    ledger schema: it holds no facts, only the durable statement that a
+    conflicting re-derivation was already adjudicated. It runs after the
+    canonical writer released its transaction so a rolled-back append can
+    never leave a phantom adjudication behind.
+    """
+    if not resolutions:
+        return []
+    target = Path(store).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    timestamp = now or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    connection = sqlite3.connect(target)
+    try:
+        os.chmod(target, 0o600)
+        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute("PRAGMA journal_mode = DELETE")
+        connection.execute(_ADJUDICATION_SCHEMA)
+        recorded: list[dict[str, Any]] = []
+        with connection:
+            for resolution in resolutions:
+                key = (
+                    str(resolution.get("identity_sha256")),
+                    str(resolution.get("incoming_sha256")),
+                )
+                existing = connection.execute(
+                    "SELECT first_recorded_at FROM adjudications"
+                    " WHERE identity_sha256 = ? AND incoming_sha256 = ?",
+                    key,
+                ).fetchone()
+                if existing is None:
+                    connection.execute(
+                        "INSERT INTO adjudications(identity_sha256, incoming_sha256, source,"
+                        " resolution, existing_sha256, changed_fields, first_recorded_at)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            *key,
+                            str(resolution.get("source") or ""),
+                            str(resolution.get("resolution") or ""),
+                            str(resolution.get("existing_sha256") or ""),
+                            json.dumps(list(resolution.get("changed_fields") or [])),
+                            timestamp,
+                        ),
+                    )
+                    first_recorded_at = timestamp
+                    newly_recorded = True
+                else:
+                    first_recorded_at = str(existing[0])
+                    newly_recorded = False
+                recorded.append(
+                    {
+                        **resolution,
+                        "first_recorded_at": first_recorded_at,
+                        "newly_recorded": newly_recorded,
+                    }
+                )
+        return recorded
+    finally:
+        connection.close()
+        if os.path.lexists(target):
+            os.chmod(target, 0o600)
+
+
+def write_collect_report(report_dir: str | Path, report: Mapping[str, Any]) -> Path:
+    """Persist one per-run collection diagnostic report atomically."""
+    directory = Path(report_dir).expanduser()
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    scope = str(report.get("scope") or "all")
+    target = directory / f"collect-{scope}-last.json"
+    temporary = directory / f".{target.name}.tmp"
+    temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, target)
+    return target
+
+
 def _reconcile_finalized_claude_rows(
     existing: list[dict[str, Any]],
     rows: Iterable[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], tuple[int, list[dict[str, Any]]]]:
-    """Convert safe monotonic Claude stream finalizations into signed corrections.
+    """Converge Claude stream re-derivations against the canonical snapshot.
 
     The caller supplies the complete canonical snapshot while holding the writer
-    boundary. The original attempt remains immutable; only one deterministic
-    signed token delta may be added. Differing incoming variants, decreases,
+    boundary. The original attempt remains immutable; monotonic growth is
+    expressed only as deterministic signed token deltas. A strictly poorer
+    re-derivation (a source regression, e.g. a transcript that lost its terminal
+    receipt to a torn write) keeps the canonical fact and is adjudicated instead
+    of quarantined. Differing incoming variants, mixed-direction changes,
     unrelated mutations, and non-generated corrections stay quarantined.
     """
     incoming = [normalize_fact(row) for row in rows]
@@ -308,32 +421,51 @@ def _reconcile_finalized_claude_rows(
             correction.get("x_claude_stream_finalization") is True
             for correction in target_corrections
         )
-        eligible = (
+        mutable = (
             bool(changed_fields)
             and set(changed_fields).issubset(_CLAUDE_FINALIZATION_MUTABLE_FIELDS)
             and baseline.get("harness") == "claude_code"
             and row.get("harness") == "claude_code"
-            and baseline.get("request_status") == "unknown"
-            and row.get("request_status") == "ok"
             and safe_generated_corrections
         )
+        # The effective state is the immutable baseline plus every generated
+        # delta correction already recorded against it.
         deltas: dict[str, int] = {}
-        if eligible:
-            for field in TOKEN_FIELDS:
-                effective = int(baseline.get(field) or 0) + sum(
-                    int(correction.get(field) or 0) for correction in target_corrections
-                )
-                current = int(row.get(field) or 0)
-                deltas[field] = current - effective
-                if current < effective:
-                    eligible = False
-                    break
-            # A prior generated finalization may prove idempotence, but it may
-            # not be incrementally extended. A later differing final total is
-            # ambiguous and remains quarantined.
-            if target_corrections and any(deltas.values()):
-                eligible = False
-        if not eligible:
+        for field in TOKEN_FIELDS:
+            effective = int(baseline.get(field) or 0) + sum(
+                int(correction.get(field) or 0) for correction in target_corrections
+            )
+            deltas[field] = int(row.get(field) or 0) - effective
+        effective_status = (
+            "ok"
+            if any(
+                correction.get("x_final_request_status") == "ok"
+                for correction in target_corrections
+            )
+            else baseline.get("request_status")
+        )
+        incoming_status = row.get("request_status")
+        tokens_grew = any(delta > 0 for delta in deltas.values())
+        tokens_shrank = any(delta < 0 for delta in deltas.values())
+        finalizing = (
+            mutable
+            and baseline.get("request_status") == "unknown"
+            and incoming_status == "ok"
+            and not tokens_shrank
+        )
+        # A source regression is strictly lesser AND unable to claim
+        # completion: nothing grew, the incoming row is not ``ok``, and either
+        # a token field shrank or a settled ``ok`` receipt was lost. Two
+        # differing rows that both claim ``ok`` are competing observations, not
+        # a regression, and stay quarantined.
+        regressing = (
+            mutable
+            and not finalizing
+            and not tokens_grew
+            and incoming_status != "ok"
+            and (tokens_shrank or effective_status == "ok")
+        )
+        if not (finalizing or regressing):
             reconciled.extend(variants)
             continue
 
@@ -341,11 +473,34 @@ def _reconcile_finalized_claude_rows(
         # generic writer preserves its discovered/replayed accounting.
         reconciled.extend([baseline] * len(variants))
         incoming_sha = _fact_sha256(row)
-        if not target_corrections:
+        if regressing:
+            # The canonical fact is richer than the source can now prove. Keep
+            # it, and let the caller adjudicate this (identity, incoming sha)
+            # once so the identity stops failing strict runs.
+            resolutions.append(
+                {
+                    "source": "claude_code",
+                    "resolution": "source_regression",
+                    "identity_sha256": _identity_sha256(row),
+                    "existing_sha256": _fact_sha256(baseline),
+                    "incoming_sha256": incoming_sha,
+                    "changed_fields": changed_fields,
+                }
+            )
+            continue
+        # A prior generated finalization proves idempotence when the incoming
+        # totals already match the effective state; only further monotonic
+        # growth earns an additional delta correction.
+        if not target_corrections or tokens_grew:
+            finalization_suffix = (
+                "stream-finalization"
+                if not target_corrections
+                else f"stream-finalization:{incoming_sha[:16]}"
+            )
             correction = dict(row)
             correction.update(
                 {
-                    "source_event_id": f"{row['source_event_id']}:stream-finalization",
+                    "source_event_id": f"{row['source_event_id']}:{finalization_suffix}",
                     "event_uid": None,
                     "logical_call_id": None,
                     "provider_request_id": None,
@@ -392,11 +547,16 @@ class StrictSourcesError(RuntimeError):
     subclass carries the structured warnings payload (source names and
     error type names) which is safe to surface: one journal line then
     names the failing lane instead of a bare RuntimeError.
+
+    ``report_path`` points at the per-run diagnostic report (conflict
+    identities, changed fields, and adjudications) so the journal line can
+    route an operator to the full detail without embedding it.
     """
 
-    def __init__(self, warnings: list[dict[str, str]]):
+    def __init__(self, warnings: list[dict[str, str]], *, report_path: str | None = None):
         super().__init__("collection incomplete under strict source policy")
         self.warnings = warnings
+        self.report_path = report_path
 
 
 def collect_all(
@@ -425,6 +585,8 @@ def collect_all(
     codex_quota_history: bool = False,
     codex_quota_history_since: str | None = None,
     strict_sources: bool = False,
+    adjudication_store: str | Path | None = None,
+    report_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Collect independently persistable usage and/or quota source batches."""
     configured_claude_instances = normalize_claude_instances(claude_instances)
@@ -470,6 +632,7 @@ def collect_all(
     warnings: list[dict[str, str]] = []
     conflicts: list[dict[str, Any]] = []
     stabilized_replays: list[dict[str, Any]] = []
+    resolutions: list[dict[str, Any]] = []
     generated_corrections = 0
 
     def collect_source(
@@ -523,11 +686,14 @@ def collect_all(
                     equivalent_changed_fields=equivalent_fields,
                 )
             )
-            generated, resolutions = reconciliation
+            generated, reconciled_resolutions = reconciliation
             generated_corrections += generated
-            stabilized_replays.extend(
-                {**resolution, "source": source} for resolution in resolutions
-            )
+            for resolution in reconciled_resolutions:
+                entry = {**resolution, "source": source}
+                if entry.get("resolution") == "source_regression":
+                    resolutions.append(entry)
+                else:
+                    stabilized_replays.append(entry)
         else:
             append_result, summaries = _append_canonical_ledger_quarantined(
                 path,
@@ -579,6 +745,7 @@ def collect_all(
         "warnings": warnings,
         "conflicts": conflicts,
         "stabilized_replays": stabilized_replays,
+        "resolutions": resolutions,
     }
     opencode: list[dict[str, Any]] | None = None
 
@@ -626,6 +793,16 @@ def collect_all(
         result["usage"] = _aggregate_append_results(usage_batches)
         result["generated_corrections"] = generated_corrections
         paths["usage_ledger"] = str(Path(usage_ledger).expanduser())
+        if resolutions and not dry_run:
+            store = (
+                Path(adjudication_store).expanduser()
+                if adjudication_store is not None
+                else _default_adjudication_store(usage_ledger)
+            )
+            # Record-once, then quiet: an identity whose incoming sha is already
+            # adjudicated stays visible in the report but never re-warns.
+            result["resolutions"] = resolutions = record_adjudications(store, resolutions)
+            paths["adjudication_store"] = str(store)
 
     if collect_quota_scope:
         quota_sources: list[tuple[str, list[dict[str, Any]]]] = []
@@ -814,6 +991,40 @@ def collect_all(
         )
         paths["billing_ledger"] = str(Path(billing_ledger).expanduser())
         result["billing"] = asdict(billing_result)
+
+    result["counts"] = {
+        "conflicts": len(conflicts),
+        "stabilized_replays": len(stabilized_replays),
+        "resolutions": len(resolutions),
+        "resolutions_recorded": sum(
+            1 for entry in resolutions if entry.get("newly_recorded")
+        ),
+        "warnings": len(warnings),
+    }
+    if not dry_run:
+        directory = (
+            Path(report_dir).expanduser()
+            if report_dir is not None
+            else _default_report_dir(
+                usage_ledger if collect_usage_scope else quota_ledger
+            )
+        )
+        try:
+            paths["report"] = str(
+                write_collect_report(
+                    directory,
+                    {
+                        "generated_at": datetime.now(timezone.utc)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                        **result,
+                    },
+                )
+            )
+        except OSError:
+            # A missing or read-only health directory must not turn a
+            # successful collection into a failed one.
+            pass
     if strict_sources and (warnings or conflicts):
-        raise StrictSourcesError(warnings)
+        raise StrictSourcesError(warnings, report_path=paths.get("report"))
     return result
