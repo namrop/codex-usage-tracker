@@ -2302,6 +2302,21 @@
         content.hidden = Boolean(message);
       }
 
+      function staleLaneSuffix(freshness) {
+        // Name the lane that stopped reporting. A bare "stale" badge sent an
+        // operator to the whole pipeline when one source was the problem.
+        const stale = Array.isArray(freshness.stale_lanes) ? freshness.stale_lanes : [];
+        if (!stale.length) return "";
+        const detail = Array.isArray(freshness.lanes) ? freshness.lanes : [];
+        const named = stale.map((name) => {
+          const lane = detail.find((entry) => entry.lane === name) || {};
+          if (lane.status === "never") return `${name} (no successful run on record)`;
+          if (lane.last_error_class) return `${name} (${lane.last_error_class})`;
+          return name;
+        });
+        return ` Stale lane${named.length > 1 ? "s" : ""}: ${named.join(", ")}.`;
+      }
+
       async function loadUnifiedUsage() {
         try {
           const response = await fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) });
@@ -2309,7 +2324,7 @@
           const data = await response.json();
           const freshness = data.freshness || {};
           if (freshness.status === "stale") {
-            showPanel("unifiedUsageState", "unifiedUsageContent", `Canonical usage is stale · last ledger write ${formatTimestamp(freshness.latest_at)}.`);
+            showPanel("unifiedUsageState", "unifiedUsageContent", `Canonical usage is stale · last ledger write ${formatTimestamp(freshness.latest_at)}.${staleLaneSuffix(freshness)}`);
             return;
           }
           if (freshness.status === "empty") {
@@ -2752,7 +2767,7 @@
           const freshness = data.freshness || {};
           let ledgerNotice = "";
           if (freshness.status === "stale") {
-            ledgerNotice = `Subscription observations are stale · last ledger write ${formatTimestamp(freshness.latest_at)}. Provider observations remain visible below.`;
+            ledgerNotice = `Subscription observations are stale · last ledger write ${formatTimestamp(freshness.latest_at)}.${staleLaneSuffix(freshness)} Provider observations remain visible below.`;
           }
           if (freshness.status === "empty") {
             ledgerNotice = "Subscription ledger freshness is unavailable. Provider observations remain visible when present.";

@@ -17,7 +17,7 @@ import pytest
 
 from codex_usage_tracker import quota as quota_module
 from codex_usage_tracker.canonical_ledger import append_sqlite_facts, read_sqlite_facts
-from codex_usage_tracker.collector import collect_all, record_adjudications
+from codex_usage_tracker.collector import StrictSourcesError, collect_all, record_adjudications
 
 
 def _claude_fact(source_event_id: str = "private-source-id", **overrides: Any) -> dict[str, Any]:
@@ -315,6 +315,116 @@ def test_collect_summary_line_tolerates_a_minimal_result():
     )
     assert "quarantined=0" in line and "regressions=3" in line
     assert "newly_adjudicated=1" in line and "report=/tmp/report.json" in line
+
+
+# --- 2a: per-lane health and heartbeat semantics ---------------------------
+
+
+def test_heartbeat_is_touched_even_when_a_lane_quarantines(tmp_path, monkeypatch):
+    """The heartbeat states that canonical writes landed, not that all is well."""
+    usage = tmp_path / "usage.sqlite3"
+    settled = _claude_fact(request_status="ok", output_tokens=100)
+    append_sqlite_facts(usage, [settled], fact_type="usage_event_v1")
+    _stub_claude(monkeypatch, [dict(settled, request_status="ok", output_tokens=41)])
+    heartbeat = tmp_path / "health" / "usage-collect.ok"
+
+    with pytest.raises(StrictSourcesError):
+        collect_all(**_kwargs(tmp_path, usage))
+
+    assert heartbeat.exists()
+    assert heartbeat.stat().st_mode & 0o777 == 0o644
+    lanes = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
+    assert lanes["schema_version"] == 1 and lanes["scope"] == "usage"
+    assert lanes["lanes"]["claude_code"]["last_error_class"] == "IdentityConflictError"
+    assert lanes["lanes"]["claude_code"]["quarantined_count"] == 1
+    assert lanes["lanes"]["claude_code"]["last_success_at"] is None
+    assert lanes["lanes"]["hermes"]["last_success_at"] == lanes["updated_at"]
+    assert "private-source-id" not in json.dumps(lanes)
+
+
+def test_lane_health_keeps_the_last_success_of_a_lane_that_later_fails(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.sqlite3"
+    settled = _claude_fact(request_status="ok", output_tokens=100)
+    _stub_claude(monkeypatch, [settled])
+    collect_all(**_kwargs(tmp_path, usage))
+    healthy = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
+    first_success = healthy["lanes"]["claude_code"]["last_success_at"]
+    assert first_success is not None
+    assert healthy["lanes"]["claude_code"]["rows_written"] == 1
+
+    _stub_claude(monkeypatch, [dict(settled, request_status="ok", output_tokens=41)])
+    with pytest.raises(StrictSourcesError):
+        collect_all(**_kwargs(tmp_path, usage))
+
+    degraded = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
+    lane = degraded["lanes"]["claude_code"]
+    assert lane["last_success_at"] == first_success
+    assert lane["last_run_at"] >= first_success
+    assert lane["last_error_class"] == "IdentityConflictError"
+
+
+def test_lane_health_records_a_source_read_failure(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.sqlite3"
+
+    def broken(*args, **kwargs):
+        raise OSError("private source path")
+
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", broken)
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", lambda *args: [])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+
+    with pytest.raises(StrictSourcesError):
+        collect_all(**_kwargs(tmp_path, usage))
+
+    lanes = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
+    assert lanes["lanes"]["hermes"]["last_error_class"] == "OSError"
+    assert lanes["lanes"]["hermes"]["last_success_at"] is None
+    assert lanes["lanes"]["opencode"]["last_success_at"] == lanes["updated_at"]
+    # The scope's canonical append still committed, so the heartbeat is honest.
+    assert (tmp_path / "health" / "usage-collect.ok").exists()
+
+
+def test_dry_run_writes_no_lane_health_or_heartbeat(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.jsonl"
+    _stub_claude(monkeypatch, [])
+    collect_all(
+        **dict(
+            _kwargs(tmp_path, usage),
+            quota_ledger=tmp_path / "quota.jsonl",
+            dry_run=True,
+            strict_sources=False,
+        )
+    )
+    assert not (tmp_path / "health").exists()
+
+
+def test_lane_health_survives_a_corrupt_previous_file(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.sqlite3"
+    health = tmp_path / "health"
+    health.mkdir()
+    (health / "lanes-usage.json").write_text("{ not json", encoding="utf-8")
+    _stub_claude(monkeypatch, [_claude_fact(request_status="ok", output_tokens=1)])
+
+    collect_all(**_kwargs(tmp_path, usage))
+
+    lanes = json.loads((health / "lanes-usage.json").read_text(encoding="utf-8"))
+    assert lanes["lanes"]["claude_code"]["last_success_at"] == lanes["updated_at"]
+
+
+def test_summary_line_names_the_degraded_lane():
+    from codex_usage_tracker.cli import _collect_summary_line
+
+    line = _collect_summary_line(
+        {
+            "scope": "usage",
+            "lanes": {
+                "hermes": {"succeeded": True},
+                "claude_code": {"succeeded": False},
+                "opencode": {"succeeded": True},
+            },
+        }
+    )
+    assert "lanes=2/3" in line and "degraded=claude_code" in line
 
 
 # --- 1d: bounded /usage probe retry ---------------------------------------

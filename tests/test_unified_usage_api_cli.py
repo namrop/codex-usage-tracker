@@ -1097,6 +1097,119 @@ def test_private_dashboard_uses_success_heartbeats_for_noop_collection_freshness
     assert client.get("/api/subscriptions?days=30&history=0").get_json()["freshness"] == expected
 
 
+def _freshness_client(tmp_path, monkeypatch, *, lane_health=None, heartbeat_at=None):
+    """A dashboard over one usage ledger, optionally with collector lane health."""
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, 0, 0, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    usage = tmp_path / "usage.jsonl"
+    usage.write_text(canonical_json(_usage_fact("old")) + "\n", encoding="utf-8")
+    old = datetime(2026, 7, 14, 1, 0, 0, tzinfo=timezone.utc).timestamp()
+    os.utime(usage, (old, old))
+    health = tmp_path / "health"
+    health.mkdir(exist_ok=True)
+    heartbeat = health / "usage-collect.ok"
+    heartbeat.touch()
+    stamp = (heartbeat_at or datetime(2026, 7, 14, 11, 30, 0, tzinfo=timezone.utc)).timestamp()
+    os.utime(heartbeat, (stamp, stamp))
+    if lane_health is not None:
+        (health / "lanes-usage.json").write_text(
+            json.dumps(lane_health), encoding="utf-8"
+        )
+    return create_app(unified_usage_ledger=str(usage)).test_client()
+
+
+def _lane_health(**last_success_at):
+    return {
+        "schema_version": 1,
+        "scope": "usage",
+        "updated_at": "2026-07-14T11:30:00Z",
+        "lanes": {
+            lane: {
+                "last_run_at": "2026-07-14T11:30:00Z",
+                "last_success_at": value,
+                "last_error_class": None if value else "IdentityConflictError",
+                "rows_written": 3,
+                "quarantined_count": 0 if value else 46,
+                "discovered": 12,
+            }
+            for lane, value in last_success_at.items()
+        },
+    }
+
+
+def test_freshness_reports_every_lane_when_health_is_present_and_current(tmp_path, monkeypatch):
+    client = _freshness_client(
+        tmp_path,
+        monkeypatch,
+        lane_health=_lane_health(
+            hermes="2026-07-14T11:30:00Z",
+            claude_code="2026-07-14T11:30:00Z",
+        ),
+    )
+
+    freshness = client.get("/api/unified-usage?hours=3").get_json()["freshness"]
+
+    assert freshness["status"] == "fresh"
+    assert freshness["stale_lanes"] == []
+    assert [lane["lane"] for lane in freshness["lanes"]] == ["claude_code", "hermes"]
+    assert all(lane["status"] == "fresh" for lane in freshness["lanes"])
+    assert freshness["lanes"][0]["age_seconds"] == 1800
+
+
+def test_freshness_names_the_stale_lane_behind_a_healthy_heartbeat(tmp_path, monkeypatch):
+    # The exact state the pipeline used to hide: writes land on schedule while
+    # one lane has not succeeded in days.
+    client = _freshness_client(
+        tmp_path,
+        monkeypatch,
+        lane_health=_lane_health(
+            hermes="2026-07-14T11:30:00Z",
+            claude_code_secondary=None,
+            opencode="2026-07-11T11:30:00Z",
+        ),
+    )
+
+    freshness = client.get("/api/unified-usage?hours=3").get_json()["freshness"]
+
+    assert freshness["status"] == "stale"
+    assert freshness["stale_lanes"] == ["claude_code_secondary", "opencode"]
+    by_lane = {lane["lane"]: lane for lane in freshness["lanes"]}
+    assert by_lane["claude_code_secondary"]["status"] == "never"
+    assert by_lane["claude_code_secondary"]["age_seconds"] is None
+    assert by_lane["claude_code_secondary"]["quarantined_count"] == 46
+    assert by_lane["claude_code_secondary"]["last_error_class"] == "IdentityConflictError"
+    assert by_lane["opencode"]["status"] == "stale"
+    assert by_lane["hermes"]["status"] == "fresh"
+
+
+def test_freshness_falls_back_to_the_heartbeat_when_lane_health_is_absent(tmp_path, monkeypatch):
+    client = _freshness_client(tmp_path, monkeypatch)
+
+    freshness = client.get("/api/unified-usage?hours=3").get_json()["freshness"]
+
+    assert freshness == {
+        "status": "fresh",
+        "latest_at": "2026-07-14T11:30:00Z",
+        "max_age_seconds": 10800,
+    }
+
+
+def test_freshness_ignores_unreadable_or_unknown_lane_health(tmp_path, monkeypatch):
+    client = _freshness_client(
+        tmp_path, monkeypatch, lane_health={"schema_version": 2, "lanes": {"x": {}}}
+    )
+    assert "lanes" not in client.get("/api/unified-usage?hours=3").get_json()["freshness"]
+
+    health = tmp_path / "health" / "lanes-usage.json"
+    health.write_text("{ not json", encoding="utf-8")
+    assert "lanes" not in client.get("/api/unified-usage?hours=3").get_json()["freshness"]
+
+
 def _chart_fact(source_id, occurred_at, *, harness, provider, model_requested, model_reported=None, **tokens):
     row = dict(
         _usage_fact(source_id),
@@ -2336,10 +2449,19 @@ def test_concurrent_claude_finalizations_cannot_double_count(tmp_path, monkeypat
 
     rows = read_sqlite_facts(usage, fact_type="usage_event_v1")
     corrections = [row for row in rows if row["record_kind"] == "correction"]
-    assert len(corrections) == 1
-    assert sum(int(row.get("output_tokens") or 0) for row in rows) in {100, 200}
-    assert sum(result["generated_corrections"] for result in results) == 1
-    assert sum(len(result["conflicts"]) for result in results) == 1
+    conflicts = sum(len(result["conflicts"]) for result in results)
+    # Both interleavings are legal and neither may double count. If the smaller
+    # receipt commits first the larger one earns a second monotonic delta; if
+    # the larger commits first the smaller is a shrink and is quarantined. The
+    # ledger therefore always settles on the largest observation, and each run
+    # accounts for itself exactly once, either as a correction or a conflict.
+    # (Asserting exactly one correction pinned one interleaving and made this
+    # test fail roughly half the time.)
+    assert sum(int(row.get("output_tokens") or 0) for row in rows) == 200
+    assert len(corrections) + conflicts == 2
+    assert sum(result["generated_corrections"] for result in results) == len(corrections)
+    assert len({row["source_event_id"] for row in corrections}) == len(corrections)
+    assert all(row["corrects_source_event_id"] == "private-source-id" for row in corrections)
 
 
 def test_collect_all_strict_sources_refuses_partial_success(tmp_path, monkeypatch):

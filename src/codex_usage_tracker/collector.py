@@ -350,17 +350,115 @@ def record_adjudications(
             os.chmod(target, 0o600)
 
 
+SCOPE_HEARTBEATS = {
+    "usage": "usage-collect.ok",
+    "quota": "quota-collect.ok",
+}
+LANE_HEALTH_SCHEMA_VERSION = 1
+
+
+def lane_health_name(scope: str) -> str:
+    return f"lanes-{scope}.json"
+
+
+def _write_health_json(directory: Path, name: str, payload: Mapping[str, Any]) -> Path:
+    target = directory / name
+    temporary = directory / f".{name}.tmp"
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, target)
+    return target
+
+
 def write_collect_report(report_dir: str | Path, report: Mapping[str, Any]) -> Path:
     """Persist one per-run collection diagnostic report atomically."""
     directory = Path(report_dir).expanduser()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     scope = str(report.get("scope") or "all")
-    target = directory / f"collect-{scope}-last.json"
-    temporary = directory / f".{target.name}.tmp"
-    temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(temporary, 0o644)
-    os.replace(temporary, target)
-    return target
+    return _write_health_json(directory, f"collect-{scope}-last.json", report)
+
+
+def update_lane_health(
+    report_dir: str | Path,
+    scope: str,
+    lanes: Mapping[str, Mapping[str, Any]],
+    *,
+    now: str | None = None,
+) -> Path:
+    """Merge this run's per-lane outcome into the durable lane health file.
+
+    The per-run report is overwritten every run, so a lane that failed today
+    would erase the record of when it last worked. Lane health is therefore
+    read-modify-write: ``last_success_at`` survives failing runs, and a lane
+    absent from this run (a source that is no longer configured) keeps its last
+    known state instead of silently disappearing.
+    """
+    directory = Path(report_dir).expanduser()
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    name = lane_health_name(scope)
+    timestamp = now or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    previous: dict[str, Any] = {}
+    try:
+        loaded = json.loads((directory / name).read_text(encoding="utf-8"))
+        if isinstance(loaded, dict) and isinstance(loaded.get("lanes"), dict):
+            previous = {
+                str(key): value
+                for key, value in loaded["lanes"].items()
+                if isinstance(value, dict)
+            }
+    except (OSError, ValueError):
+        previous = {}
+    merged: dict[str, Any] = dict(previous)
+    for lane, outcome in lanes.items():
+        prior = previous.get(lane) if isinstance(previous.get(lane), dict) else {}
+        succeeded = bool(outcome.get("succeeded"))
+        merged[lane] = {
+            "last_run_at": timestamp,
+            "last_success_at": (
+                timestamp if succeeded else prior.get("last_success_at")
+            ),
+            "last_error_class": outcome.get("last_error_class"),
+            "rows_written": int(outcome.get("rows_written") or 0),
+            "quarantined_count": int(outcome.get("quarantined_count") or 0),
+            "discovered": int(outcome.get("discovered") or 0),
+        }
+    return _write_health_json(
+        directory,
+        name,
+        {
+            "schema_version": LANE_HEALTH_SCHEMA_VERSION,
+            "scope": scope,
+            "updated_at": timestamp,
+            "lanes": merged,
+        },
+    )
+
+
+def touch_heartbeat(report_dir: str | Path, scope: str) -> list[Path]:
+    """Touch the ``.ok`` heartbeats for a scope whose canonical writes landed.
+
+    The heartbeat means "this scope's canonical ledger append completed", not
+    "every lane was perfect". A single quarantined identity used to suppress
+    the heartbeat for days because the nix runner only touched the file after a
+    zero exit, which made the watchdog and the dashboard report a dead pipeline
+    while every other lane was writing normally.
+    """
+    directory = Path(report_dir).expanduser()
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    names = (
+        list(SCOPE_HEARTBEATS.values())
+        if scope == "all"
+        else [SCOPE_HEARTBEATS[scope]] if scope in SCOPE_HEARTBEATS else []
+    )
+    touched: list[Path] = []
+    for name in names:
+        target = directory / name
+        with open(target, "a", encoding="utf-8"):
+            pass
+        os.utime(target, None)
+        os.chmod(target, 0o644)
+        touched.append(target)
+    return touched
 
 
 def _reconcile_finalized_claude_rows(
@@ -629,11 +727,24 @@ def collect_all(
         else {}
     )
     sources: dict[str, dict[str, int]] = {}
+    lanes: dict[str, dict[str, Any]] = {}
     warnings: list[dict[str, str]] = []
     conflicts: list[dict[str, Any]] = []
     stabilized_replays: list[dict[str, Any]] = []
     resolutions: list[dict[str, Any]] = []
     generated_corrections = 0
+
+    def _lane(source: str) -> dict[str, Any]:
+        return lanes.setdefault(
+            source,
+            {
+                "succeeded": False,
+                "last_error_class": None,
+                "rows_written": 0,
+                "quarantined_count": 0,
+                "discovered": 0,
+            },
+        )
 
     def collect_source(
         source: str,
@@ -641,6 +752,7 @@ def collect_all(
         *,
         require_rows: bool = False,
     ) -> list[dict[str, Any]]:
+        lane = _lane(source)
         try:
             rows = list(collect())
             if require_rows and not rows:
@@ -648,8 +760,10 @@ def collect_all(
         except Exception as exc:
             warnings.append({"source": source, "error": type(exc).__name__})
             sources[source] = _source_result(0)
+            lane["last_error_class"] = type(exc).__name__
             return []
         sources[source] = _source_result(len(rows))
+        lane["discovered"] = len(rows)
         return rows
 
     def persist_source(
@@ -704,6 +818,14 @@ def collect_all(
             )
         quarantined = [summary for summary in summaries if summary.resolution == "quarantined"]
         stabilized = [summary for summary in summaries if summary.resolution == "canonical_replay"]
+        lane = _lane(source)
+        lane["rows_written"] = append_result.appended
+        lane["quarantined_count"] = len(quarantined)
+        if quarantined:
+            lane["last_error_class"] = "IdentityConflictError"
+        # A lane succeeded when it both read and persisted cleanly. A read
+        # failure already recorded its error class and yielded no rows.
+        lane["succeeded"] = not quarantined and lane["last_error_class"] is None
         if quarantined:
             warnings.append(
                 {
@@ -992,6 +1114,7 @@ def collect_all(
         paths["billing_ledger"] = str(Path(billing_ledger).expanduser())
         result["billing"] = asdict(billing_result)
 
+    result["lanes"] = lanes
     result["counts"] = {
         "conflicts": len(conflicts),
         "stabilized_replays": len(stabilized_replays),
@@ -1009,18 +1132,25 @@ def collect_all(
                 usage_ledger if collect_usage_scope else quota_ledger
             )
         )
+        generated_at = (
+            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        )
         try:
             paths["report"] = str(
                 write_collect_report(
                     directory,
-                    {
-                        "generated_at": datetime.now(timezone.utc)
-                        .isoformat()
-                        .replace("+00:00", "Z"),
-                        **result,
-                    },
+                    {"generated_at": generated_at, **result},
                 )
             )
+            paths["lane_health"] = str(
+                update_lane_health(directory, scope, lanes, now=generated_at)
+            )
+            # Reached only after every in-scope canonical append committed, and
+            # deliberately before the strict-sources exit: the heartbeat states
+            # that canonical writes landed, not that every lane was perfect.
+            heartbeats = touch_heartbeat(directory, scope)
+            if heartbeats:
+                paths["heartbeats"] = [str(entry) for entry in heartbeats]
         except OSError:
             # A missing or read-only health directory must not turn a
             # successful collection into a failed one.

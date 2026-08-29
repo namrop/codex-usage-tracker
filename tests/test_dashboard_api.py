@@ -295,6 +295,19 @@ def test_subscription_provider_overview_and_raw_observation_details_exist(tmp_pa
     assert "No quota estimate is a billing fact." in html
 
 
+def test_stale_notices_name_the_failing_lane(tmp_path, monkeypatch):
+    html = _dashboard_root_html(tmp_path, monkeypatch)
+
+    assert "function staleLaneSuffix(freshness)" in html
+    assert "no successful run on record" in html
+    assert html.count("staleLaneSuffix(freshness)") == 3
+    for notice in (
+        "Canonical usage is stale",
+        "Subscription observations are stale",
+    ):
+        assert notice in html
+
+
 def test_subscription_provider_js_preserves_authority_and_freshness(tmp_path, monkeypatch):
     html = _dashboard_root_html(tmp_path, monkeypatch)
     script = html.split("async function loadSubscriptions()", 1)[1].split(

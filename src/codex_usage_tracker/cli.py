@@ -339,6 +339,16 @@ def _collect_summary_line(result: dict[str, Any]) -> str:
         f"newly_adjudicated={counts.get('resolutions_recorded', 0)}",
         f"warnings={counts.get('warnings', 0)}",
     ]
+    lanes = result.get("lanes") or {}
+    if lanes:
+        degraded = sorted(
+            name for name, lane in lanes.items() if not (lane or {}).get("succeeded")
+        )
+        fields.append(f"lanes={len(lanes) - len(degraded)}/{len(lanes)}")
+        if degraded:
+            # Name the lane, not just the count: a healthy heartbeat with one
+            # degraded lane is the exact state this pipeline used to hide.
+            fields.append("degraded=" + ",".join(degraded))
     report = (result.get("paths") or {}).get("report")
     if report:
         fields.append(f"report={report}")

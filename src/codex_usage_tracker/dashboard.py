@@ -225,14 +225,71 @@ def _datetime_rfc3339_order_key(value: datetime) -> tuple[datetime, Decimal] | N
     return _rfc3339_order_key(rendered)
 
 
+def _lane_freshness(
+    lane_health_path: Path,
+    *,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    """Project the collector's per-lane health file, or nothing if absent.
+
+    A single heartbeat answers "did canonical writes land"; it cannot answer
+    "which source stopped reporting". When the collector's lane health file is
+    reachable each lane is projected with its own age so the UI can name the
+    stale lane instead of condemning the whole ledger.
+    """
+    try:
+        loaded = json.loads(lane_health_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(loaded, dict) or loaded.get("schema_version") != 1:
+        return []
+    lanes = loaded.get("lanes")
+    if not isinstance(lanes, dict):
+        return []
+    projected: list[dict[str, Any]] = []
+    for name in sorted(str(key) for key in lanes):
+        lane = lanes.get(name)
+        if not isinstance(lane, dict):
+            continue
+        last_success_at = lane.get("last_success_at")
+        parsed = (
+            _fact_datetime(last_success_at) if isinstance(last_success_at, str) else None
+        )
+        if parsed is None or parsed == datetime.min.replace(tzinfo=timezone.utc):
+            status = "never"
+            age_seconds = None
+        else:
+            age_seconds = int((now - parsed).total_seconds())
+            status = "stale" if age_seconds > _PRIVATE_LEDGER_MAX_AGE_SECONDS else "fresh"
+        projected.append(
+            {
+                "lane": name,
+                "status": status,
+                "last_success_at": last_success_at if isinstance(last_success_at, str) else None,
+                "last_run_at": lane.get("last_run_at") if isinstance(lane.get("last_run_at"), str) else None,
+                "last_error_class": (
+                    lane.get("last_error_class")
+                    if isinstance(lane.get("last_error_class"), str)
+                    else None
+                ),
+                "rows_written": int(lane.get("rows_written") or 0),
+                "quarantined_count": int(lane.get("quarantined_count") or 0),
+                "age_seconds": age_seconds,
+            }
+        )
+    return projected
+
+
 def _ledger_freshness(
     ledger_path: str,
     *,
     now: datetime,
     heartbeat_name: str,
+    lane_health_name: str | None = None,
 ) -> dict[str, Any]:
     path = Path(ledger_path).expanduser()
-    heartbeat = path.parent / "health" / heartbeat_name
+    health_dir = path.parent / "health"
+    heartbeat = health_dir / heartbeat_name
     candidates = [heartbeat] if heartbeat.exists() else [path]
     wal = Path(f"{path}-wal")
     try:
@@ -240,23 +297,40 @@ def _ledger_freshness(
             candidates.append(wal)
     except OSError:
         pass
+    lanes = (
+        _lane_freshness(health_dir / lane_health_name, now=now)
+        if lane_health_name
+        else []
+    )
+    stale_lanes = [lane["lane"] for lane in lanes if lane["status"] != "fresh"]
     try:
         latest = max(
             datetime.fromtimestamp(candidate.stat().st_mtime, timezone.utc).replace(microsecond=0)
             for candidate in candidates
         )
     except (OSError, ValueError, OverflowError):
-        return {
+        payload: dict[str, Any] = {
             "status": "empty",
             "latest_at": None,
             "max_age_seconds": _PRIVATE_LEDGER_MAX_AGE_SECONDS,
         }
+        if lanes:
+            payload["lanes"] = lanes
+            payload["stale_lanes"] = stale_lanes
+        return payload
     age_seconds = (now - latest).total_seconds()
-    return {
-        "status": "stale" if age_seconds > _PRIVATE_LEDGER_MAX_AGE_SECONDS else "fresh",
+    status = "stale" if age_seconds > _PRIVATE_LEDGER_MAX_AGE_SECONDS else "fresh"
+    payload = {
+        # Writes can land on schedule while one lane has been silently dead for
+        # days, so a stale lane makes the whole surface stale.
+        "status": "stale" if (status == "stale" or stale_lanes) else "fresh",
         "latest_at": latest.isoformat().replace("+00:00", "Z"),
         "max_age_seconds": _PRIVATE_LEDGER_MAX_AGE_SECONDS,
     }
+    if lanes:
+        payload["lanes"] = lanes
+        payload["stale_lanes"] = stale_lanes
+    return payload
 
 
 def _private_facts(
@@ -1280,6 +1354,7 @@ def create_app(
                 resolved_unified_usage,
                 now=generated_at,
                 heartbeat_name="usage-collect.ok",
+                lane_health_name="lanes-usage.json",
             ),
             "totals": totals,
             "coverage": coverage,
@@ -1401,6 +1476,7 @@ def create_app(
                 resolved_quota_ledger,
                 now=generated_at,
                 heartbeat_name="quota-collect.ok",
+                lane_health_name="lanes-quota.json",
             ),
             "latest": [project(row) for row in latest],
             "observations": [project(row) for row in rows] if include_history else [],
