@@ -1395,14 +1395,23 @@
       let subscriptionUnifiedWeeklyChart;
       let subscriptionUnifiedFiveHourChart;
 
+      // Opt-in per chart: options.plugins.thresholdPlugin = { axis: "<scaleId>", value: 80 }.
+      // Charts that leave it unset get no line, so token-count axes stop drawing "80%"
+      // at eighty tokens.
       const thresholdPlugin = {
         id: "thresholdPlugin",
-        afterDraw(chart) {
-          const yScale = chart.scales.y;
+        defaults: { axis: null, value: 80 },
+        afterDraw(chart, _args, opts) {
+          const axisId = opts && opts.axis;
+          if (!axisId) return;
+          const yScale = chart.scales[axisId];
           const area = chart.chartArea;
           if (!yScale || !area) return;
+          const threshold = Number(opts.value);
+          if (!Number.isFinite(threshold)) return;
           const ctx = chart.ctx;
-          const y = yScale.getPixelForValue(80);
+          const y = yScale.getPixelForValue(threshold);
+          if (!Number.isFinite(y) || y < area.top || y > area.bottom) return;
           ctx.save();
           ctx.beginPath();
           ctx.setLineDash([5, 6]);
@@ -1416,15 +1425,17 @@
           ctx.globalAlpha = 0.75;
           ctx.fillStyle = SERIES.warning;
           ctx.font = "11px Rajdhani, Avenir Next, sans-serif";
-          ctx.fillText("80%", area.right - 30, y - 6);
+          ctx.fillText(`${threshold}%`, area.right - 30, y - 6);
           ctx.restore();
         },
       };
 
+      // Opt-in per chart: options.plugins.endpointLabelPlugin = { enabled: true }.
       const endpointLabelPlugin = {
         id: "endpointLabelPlugin",
-        afterDatasetsDraw(chart) {
-          if (chart.canvas.id !== "weekChart") return;
+        defaults: { enabled: false },
+        afterDatasetsDraw(chart, _args, opts) {
+          if (!opts || opts.enabled !== true) return;
           const ctx = chart.ctx;
           const area = chart.chartArea;
           const labels = [];
@@ -1463,7 +1474,7 @@
         },
       };
 
-      if (typeof Chart !== "undefined") Chart.register(thresholdPlugin);
+      if (typeof Chart !== "undefined") Chart.register(thresholdPlugin, endpointLabelPlugin);
 
       function getCss(name) {
         return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1632,6 +1643,8 @@
             },
           },
           plugins: {
+            thresholdPlugin: { axis: "y", value: 80 },
+            endpointLabelPlugin: { enabled: Boolean(endpointLabels) },
             legend: {
               display: legend && !endpointLabels,
               labels: { color: getCss("--text"), usePointStyle: true, boxWidth: 8 },
@@ -1715,6 +1728,7 @@
             },
           },
           plugins: {
+            thresholdPlugin: { axis: "yUsage", value: 80 },
             legend: { display: true, labels: { color: getCss("--text"), usePointStyle: true, boxWidth: 8 } },
             tooltip: {
               displayColors: true,
@@ -2031,7 +2045,7 @@
           lineDataset("Spark weekly", rows.map((row) => row.spark_weekly_used_pct), SERIES.sparkWeekly),
         ];
 
-        const options = percentageChartOptions({ legend: false });
+        const options = percentageChartOptions({ endpointLabels: true });
         if (!weekChart) {
           weekChart = new Chart(canvases.week, { type: "line", data: { labels, datasets }, options });
           return;
