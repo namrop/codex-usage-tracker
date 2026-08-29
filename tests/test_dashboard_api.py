@@ -409,9 +409,11 @@ def test_subscription_unavailable_path_renders_expected_provider_placeholders(
     assert 'grid.textContent = ""' in helper
     assert '"Unknown freshness"' in helper
     assert '"No quota windows available for this provider."' in helper
-    assert 'state.textContent = "Subscription data unavailable."' in helper
-    assert "state.hidden = false" in helper
+    assert 'statusEl.textContent = "Subscription data unavailable."' in helper
+    assert "statusEl.hidden = false" in helper
     assert "content.hidden = false" in helper
+    # Placeholders are visible content, so they must not be mistaken for real data.
+    assert "subscriptionsHaveRenderedData = false;" in helper
     assert "document.createElement" in helper
     assert ".textContent" in helper
     assert ".innerHTML" not in helper
@@ -421,6 +423,9 @@ def test_subscription_unavailable_path_renders_expected_provider_placeholders(
     )[1]
     assert "renderUnavailableSubscriptionPlaceholders();" in catch_branch
     assert "showPanel(" not in catch_branch
+    # "showing last good data" is gated on a real render, never on content.hidden.
+    assert "if (subscriptionsHaveRenderedData) {" in catch_branch
+    assert "content.hidden" not in catch_branch
 
 
 @pytest.mark.parametrize(
@@ -1957,3 +1962,22 @@ def test_unified_usage_totals_separate_priced_and_unpriced_events(tmp_path):
     assert totals["unpriced_events"] == 3
     assert totals["estimated_cost_usd"] == "0.25"
     assert totals["actual_cost_usd"] == "1.5"
+
+
+def test_dashboard_page_retires_session_surfaces_and_bounds_its_data_fetch(tmp_path, monkeypatch):
+    ledger = tmp_path / "usage.jsonl"
+    _write_usage_ledger(
+        ledger,
+        [{"fetched_at": "2026-06-04T02:00:00+00:00", "weekly_used_pct": 74.0, "weekly_reset_at": 1781137839}],
+    )
+    monkeypatch.setenv("HERMES_STATE_DB_PATH", str(tmp_path / "missing.db"))
+    client = create_app(atrium_root=str(tmp_path / "atrium"), ledger=str(ledger)).test_client()
+
+    page = client.get("/")
+    assert page.status_code == 200
+    markup = page.data.decode("utf-8")
+    assert "Session window retired upstream (2026-07-12)" in markup
+    for retired in ('id="sessionChart"', 'id="sessionBarChart"', 'id="currentSession"', 'id="sessionPeak"'):
+        assert retired not in markup
+    # The page renders 24 rows; it must not pull the whole ledger to do it.
+    assert 'fetch("/api/data?limit=200")' in markup
