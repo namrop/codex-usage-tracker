@@ -2,9 +2,9 @@
   "schema": "governed-cognition/tokens",
   "version": "0.2.0",
   "spec_uid": "01a04ecd-8c2c-75ef-808c-c26c95de3a7f",
-  "doctrine": "Color is not decoration; hues are quarantined to meaning. A theme assigns hues TO roles; remapping preserves roles. Legibility of governance semantics survives any palette swap \u2014 that sentence is the system's reason.",
+  "doctrine": "Color is not decoration; hues are quarantined to meaning. A theme assigns hues TO roles; remapping preserves roles. Legibility of governance semantics survives any palette swap — that sentence is the system's reason.",
   "layers": {
-    "comment": "The semantic schema has THREE layers (keeper-raised and RATIFIED 2026-08-29 ~15:00 \u2014 role/set/modifier with per-kind invariants: identity/distinctness/direction): (1) roles \u2014 closed-ish, estate-universal; (2) categorical sets \u2014 app-declared categories whose meaning is distinctness-from-siblings, not absolute semantics; (3) state modifiers \u2014 systematic transforms (highlighted/dim/...) declared once and applied to roles and set-members alike, derived by default, theme-tunable, per-token overridable.",
+    "comment": "The semantic schema has THREE layers (keeper-raised and RATIFIED 2026-08-29 ~15:00 — role/set/modifier with per-kind invariants: identity/distinctness/direction): (1) roles — closed-ish, estate-universal; (2) categorical sets — app-declared categories whose meaning is distinctness-from-siblings, not absolute semantics; (3) state modifiers — systematic transforms (highlighted/dim/...) declared once and applied to roles and set-members alike, derived by default, theme-tunable, per-token overridable.",
     "order": [
       "roles",
       "sets",
@@ -21,14 +21,14 @@
       "intent"
     ],
     "closed_ish": true,
-    "growing_by_pressure": "Keeper-ruled 2026-08-29 ~14:44: 'the roles are a closed-ish set, like the language, the memory system, and the atrium. growing by pressure.' Not open accretion, not frozen \u2014 a new role must force its way in by real signal the existing six cannot carry. Adding a role is a schema change, ratified against the spec (uid above), never an ad-hoc theme-file invention.",
+    "growing_by_pressure": "Keeper-ruled 2026-08-29 ~14:44: 'the roles are a closed-ish set, like the language, the memory system, and the atrium. growing by pressure.' Not open accretion, not frozen — a new role must force its way in by real signal the existing six cannot carry. Adding a role is a schema change, ratified against the spec (uid above), never an ad-hoc theme-file invention.",
     "doctrine": {
-      "structure": "Structure / focus \u2014 structural highlight, borders, rings, the skeleton of the surface. (April: Signal Teal.)",
-      "info": "The information channel \u2014 keys, links-at-rest, quiet data. (April: System Cyan.)",
-      "stability": "Convergence / ok / success \u2014 the system at rest and correct. (April: Convergence Green.)",
-      "threshold": "Rare and consequential \u2014 commits, gates, warnings at the edge. Threshold colors are never routine. (April: Commit Gold.)",
-      "violation": "Sacred, never decorative \u2014 integrity breach, error, the broken invariant. (April: Integrity Red.)",
-      "intent": "The human hand \u2014 invocation, ownvoice, deliberate human action. (April: Intent Magenta.)"
+      "structure": "Structure / focus — structural highlight, borders, rings, the skeleton of the surface. (April: Signal Teal.)",
+      "info": "The information channel — keys, links-at-rest, quiet data. (April: System Cyan.)",
+      "stability": "Convergence / ok / success — the system at rest and correct. (April: Convergence Green.)",
+      "threshold": "Rare and consequential — commits, gates, warnings at the edge. Threshold colors are never routine. (April: Commit Gold.)",
+      "violation": "Sacred, never decorative — integrity breach, error, the broken invariant. (April: Integrity Red.)",
+      "intent": "The human hand — invocation, ownvoice, deliberate human action. (April: Intent Magenta.)"
     }
   },
   "sets": {
@@ -56,7 +56,7 @@
           "rank-9",
           "rank-10"
         ],
-        "note": "Keeper amendment to the ai-usage kintsugi akasan, 2026-08-29 ~22:47, verbatim: 'the extra colors are acceptable for dealing with multiple lines in a graph. however those surplus colors should still be defined in governed cognition.' A model wears its rank's color; unbounded series (including substitution rows minted mid-window by model_reported) draw from these ten declared slots. The default theme seeds its values from the tracker's proven UNIFIED_RANK_COLORS literal array \u2014 provenance, not invention."
+        "note": "Keeper amendment to the ai-usage kintsugi akasan, 2026-08-29 ~22:47, verbatim: 'the extra colors are acceptable for dealing with multiple lines in a graph. however those surplus colors should still be defined in governed cognition.' A model wears its rank's color; unbounded series (including substitution rows minted mid-window by model_reported) draw from these ten declared slots. The default theme seeds its values from the tracker's proven UNIFIED_RANK_COLORS literal array — provenance, not invention."
       },
       "diadem.session-type": {
         "members": [
@@ -69,7 +69,7 @@
     }
   },
   "modifiers": {
-    "doctrine": "A state modifier is a systematic transform for state variants (highlighted/not, ...). It is declared ONCE here, applied to roles and set-members alike at generate time, DERIVED by default (a lightness shift in HLS space), theme-tunable (a theme may set its own shift \u2014 light themes typically darken where dark themes lighten), and per-token overridable (a theme may pin an explicit value for one derived token). The keeper's session-type observation \u2014 'technically 6 colors because of highlighted/not' \u2014 is 3 set-members x 1 modifier, not 6 free choices.",
+    "doctrine": "A state modifier is a systematic transform for state variants (highlighted/not, ...). It is declared ONCE here, applied to roles and set-members alike at generate time, DERIVED by default (a lightness shift in HLS space), theme-tunable (a theme may set its own shift — light themes typically darken where dark themes lighten), and per-token overridable (a theme may pin an explicit value for one derived token). The keeper's session-type observation — 'technically 6 colors because of highlighted/not' — is 3 set-members x 1 modifier, not 6 free choices.",
     "declared": {
       "hi": {
         "meaning": "highlighted / active / selected emphasis of the base token",
@@ -124,7 +124,7 @@
           "panel-raised": "surface.panel",
           "fg-soft": "surface.muted"
         },
-        "scrollbar_doctrine": "Keeper-ruled 2026-08-29 (v0.1 browse feedback): scrollbars are quiet structure with little semantic value \u2014 they get a muted/dim value, never an accent. The odysseus-inherited amber scrollbar was a doctrine violation the governed doctrine itself rules against: color is quarantined to meaning."
+        "scrollbar_doctrine": "Keeper-ruled 2026-08-29 (v0.1 browse feedback): scrollbars are quiet structure with little semantic value — they get a muted/dim value, never an accent. The odysseus-inherited amber scrollbar was a doctrine violation the governed doctrine itself rules against: color is quarantined to meaning."
       },
       "syntax": {
         "optional": [
@@ -159,6 +159,7 @@
     "shape": {
       "native": [
         "rounded",
+        "hard",
         "slanted"
       ],
       "radius": {
@@ -180,10 +181,28 @@
           "xs": "12px",
           "pill": "7px"
         },
-        "note": "The namrop slant grammar verbatim: clip-path polygons, keeper-tuned cut scale 28/24/18/14/12 mapped to size tiers; diagonal family for cards and bubbles, octagon for pills. Carried by the shape-slant overlay; shape is orthogonal to color \u2014 any theme x either shape, though a theme may declare a native shape. The pill tier (7px, the namrop octagon chip cut) joins the scale so pill consumers need not derive half-cuts. A mirrored diagonal template (--gc-clip-diagonal-mirror, opposite corner pair) preserves paired-surface asymmetry under slant."
+        "note": "The namrop slant grammar verbatim: clip-path polygons, keeper-tuned cut scale 28/24/18/14/12 mapped to size tiers; diagonal family for cards and bubbles, octagon for pills. Carried by the shape-slant overlay; shape is orthogonal to color — any theme x either shape, though a theme may declare a native shape. The pill tier (7px, the namrop octagon chip cut) joins the scale so pill consumers need not derive half-cuts. A mirrored diagonal template (--gc-clip-diagonal-mirror, opposite corner pair) preserves paired-surface asymmetry under slant."
       },
-      "lift": "per-theme color used when the slant overlay swaps hairline borders for background lifts (ruled)",
-      "rule": "slant swaps hairline borders for background lifts: under the overlay --gc-card-border goes transparent and --gc-card-lift carries the theme's lift color"
+      "lift": "per-theme color used by the lift line treatment (the default) when the slant overlay swaps hairline borders for background lifts (ruled)",
+      "rule": "line treatment under slant is a CHOICE — lift (default) | border | both, selected with data-gc-line-treatment. lift is the April ruling unchanged: --gc-card-lift carries the theme's lift color. border paints the edge instead, via the --gc-cut-border-{diagonal,diagonal-mirror,octagon} composites. --gc-card-border stays transparent under every treatment — a real border is exactly what the clip-path eats, which is why the edge must be painted. (2026-08-30)",
+      "border": {
+        "tokens": [
+          "--gc-cut-border-width",
+          "--gc-cut-border-inset",
+          "--gc-cut-border-color",
+          "--gc-cut-border-diagonal-half-width",
+          "--gc-cut-border-diagonal",
+          "--gc-cut-border-diagonal-mirror",
+          "--gc-cut-border-octagon"
+        ],
+        "note": "The painted edge: straight background strips inset to clear each cut, plus one 45-degree stripe per cut corner. One composite per clip family, declared on * beside the clip templates because they read var(--gc-cut). Donor: namrop --cut-border-all (the octagon); the two diagonal composites are new. Consumed either by the gc-cut-border-{diagonal,mirror,octagon} drop-in classes GC ships, or by placing background: var(--gc-cut-border-<family>) on an app-owned ::after."
+      },
+      "shapes": {
+        "rounded": "the theme's own radius scale; no overlay file",
+        "hard": "every radius 0, no cuts — shape-hard.css",
+        "slanted": "every radius 0 plus the clip-path cuts — shape-slant.css"
+      },
+      "pair": "hard and slanted are a first-class pair (2026-08-30): both are 'not round', and slanted is hard plus the cuts. rounded is the odd one out — it is the only shape whose look depends on the theme's own geometry. A theme whose radius scale is zero at every tier is natively hard: its rounded and its hard render identically, so it offers hard and slanted only. Declared in the theme file and cross-checked against the radius scale by conformance.py — a theme cannot call itself hard while carrying a radius scale, or carry a zero scale and call itself rounded."
     },
     "motion": {
       "timings": {
@@ -205,7 +224,7 @@
       },
       "invariants": [
         "Information channels are theme-tunable, NEVER theme-removable: every duration > 0, every amplitude > 0. Hush is a value, not a code path.",
-        "prefers-reduced-motion outranks every theme \u2014 the reader's own directive beats any theme's aesthetics, including the keeper's. The generator bakes the clamp into every emitted theme file."
+        "prefers-reduced-motion outranks every theme — the reader's own directive beats any theme's aesthetics, including the keeper's. The generator bakes the clamp into every emitted theme file."
       ]
     },
     "type": {
@@ -233,7 +252,7 @@
           "prose"
         ]
       },
-      "webfonts": "optional per-theme list of @font-face descriptors (family/style/weight/src) \u2014 src is a relative fonts/ path vendored in this repo and copied into dist/, so it resolves both origin-served and app-vendored. LOCAL files only, no CDN ever."
+      "webfonts": "optional per-theme list of @font-face descriptors (family/style/weight/src) — src is a relative fonts/ path vendored in this repo and copied into dist/, so it resolves both origin-served and app-vendored. LOCAL files only, no CDN ever."
     }
   }
 }

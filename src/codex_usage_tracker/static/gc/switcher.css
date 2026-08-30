@@ -1,31 +1,123 @@
 /* Governed Cognition — switcher styles. Token-pure: zero literals, only
- * var(--gc-*) references; verified by `python3 conformance.py css switcher.css`. */
+ * var(--gc-*) references; verified by `python3 conformance.py css switcher.css`.
+ *
+ * The standard estate picker (2026-08-30): a small gear button that expands a
+ * panel. Inside the panel the shape toggle sits BESIDE the theme list (ruled),
+ * so the panel is a row, not a stack. */
 
 .gc-switcher {
-  display: flex;
-  gap: var(--gc-fs-sm);
-  align-items: flex-start;
+  position: relative;
+  display: inline-block;
   font-size: var(--gc-fs-sm);
   line-height: var(--gc-lh-base);
   color: var(--gc-fg);
 }
 
-.gc-switcher fieldset {
-  margin: 0;
+/* --- the gear ------------------------------------------------------------ */
+
+.gc-switcher-gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--gc-fs-xs) / 2);
+  color: var(--gc-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-pill);
+  --gc-cut: var(--gc-cut-pill);
+  clip-path: var(--gc-clip-octagon);
+  cursor: pointer;
+  font: inherit;
+  transition: color var(--gc-t-med), background var(--gc-t-med);
+}
+
+.gc-switcher-gear:hover,
+.gc-switcher-gear:focus-visible {
+  color: var(--gc-fg);
+  background: var(--gc-shade);
+}
+
+.gc-switcher-gear[aria-expanded="true"] {
+  color: var(--gc-role-structure);
+  background: var(--gc-shade);
+}
+
+.gc-switcher-gear-icon {
+  display: block;
+  width: var(--gc-fs-base);
+  height: var(--gc-fs-base);
+  /* the gear turns only on the way open — the panel is the event, the spin
+   * is its acknowledgement. Amplitude is theme-tunable, never removable. */
+  transition: transform var(--gc-t-slide);
+}
+
+.gc-switcher-gear[aria-expanded="true"] .gc-switcher-gear-icon {
+  transform: rotate(60deg);
+}
+
+/* --- the panel ----------------------------------------------------------- */
+
+/* The panel is portaled to <body>, so it is NOT a descendant of .gc-switcher
+ * and must carry its own type and color rather than inheriting the mount
+ * host's. It lives outside because under slant the picker's natural home is a
+ * clipped bar, and a clip-path clips its descendants — a nested panel is cut
+ * away the moment it extends past the bar. JS sets top/left from the gear's
+ * rect; the gap below the gear stays here, as a token. */
+.gc-switcher-panel {
+  position: fixed;
+  z-index: var(--gc-switcher-z, 2000);
+  margin-top: calc(var(--gc-fs-xs) / 2);
+  display: flex;
+  gap: var(--gc-fs-sm);
+  align-items: flex-start;
   padding: var(--gc-fs-xs);
+  font-size: var(--gc-fs-sm);
+  line-height: var(--gc-lh-base);
+  color: var(--gc-fg);
   background: var(--gc-panel);
   border: 1px solid var(--gc-card-border);
   background-image: linear-gradient(var(--gc-card-lift), var(--gc-card-lift));
   border-radius: var(--gc-radius-md);
-  clip-path: var(--gc-clip-diagonal);
   --gc-cut: var(--gc-cut-sm);
+  clip-path: var(--gc-clip-diagonal);
 }
 
-.gc-switcher legend {
+.gc-switcher-panel[hidden] {
+  display: none;
+}
+
+/* GC's own picker is a consumer like any other: under the border line
+ * treatment its hairline is transparent (a clip-path eats a real border) and
+ * the lift is retired, so the panel paints its own edge. Scoped to the two
+ * treatments that ask for one — under lift the panel keeps the lift and draws
+ * nothing here. */
+[data-gc-line-treatment="border"] .gc-switcher-panel::after,
+[data-gc-line-treatment="both"] .gc-switcher-panel::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: var(--gc-cut-border-inset);
+  pointer-events: none;
+  background: var(--gc-cut-border-diagonal);
+}
+
+/* No border on the groups: the panel already draws one, and three nested
+ * boxes is more chrome than a four-item list earns. The legend carries the
+ * grouping on its own. */
+.gc-switcher-panel fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.gc-switcher-panel legend {
   padding: 0 var(--gc-fs-xs);
+  margin-bottom: calc(var(--gc-fs-xs) / 2);
   color: var(--gc-muted);
+  font-size: var(--gc-fs-xs);
   text-transform: lowercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
 }
 
 .gc-switcher-option {
@@ -34,7 +126,9 @@
   align-items: center;
   cursor: pointer;
   padding: calc(var(--gc-fs-xs) / 4) var(--gc-fs-xs);
+  white-space: nowrap;
   border-radius: var(--gc-radius-pill);
+  --gc-cut: var(--gc-cut-pill);
   clip-path: var(--gc-clip-octagon);
   transition: background var(--gc-t-med);
 }

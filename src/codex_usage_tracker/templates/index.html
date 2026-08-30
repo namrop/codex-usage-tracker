@@ -16,9 +16,14 @@
         fallback: "/static/gc",
       };
     </script>
-    <script src="/static/gc/loader.js"></script>
-    <link rel="stylesheet" href="/static/gc/switcher.css" />
-    <script src="/static/gc/switcher.js"></script>
+    <!-- Governed Cognition. loader.js is the only GC file this page names:
+         it is the bootstrap (it IS the origin -> snapshot fallback, so it
+         cannot be delivered by it). Everything else — themes, the shape
+         overlays, the picker itself — comes down the wire from the origin
+         with static/gc/ as the snapshot. data-gc-fallback was missing before
+         this, which meant an origin outage rendered the page unstyled rather
+         than falling back at all. -->
+    <script src="/static/gc/loader.js" data-gc-fallback="/static/gc"></script>
     <script src="/static/vendor/chart.umd.min.js"></script>
     <style>
       /* Governed Cognition adapter — the obedience layer (kintsugi render,
@@ -3960,13 +3965,11 @@
           hydrate();
         });
       }
-      if (globalThis.GovernedCognitionSwitcher) {
-        try {
-          GovernedCognitionSwitcher.mount("#gcSwitcher");
-        } catch (error) {
-          /* switcher is optional chrome; theming works without it */
-        }
-      }
+      /* The shared estate picker: a gear that expands. mountSwitcher fetches
+         it (css + js) through the same origin -> snapshot hops, so this page
+         always gets whatever GC ships rather than a copy frozen at vendor
+         time. Optional chrome — theming works if it never arrives. */
+      GovernedCognition.mountSwitcher("#gcSwitcher").catch(() => {});
 
       setInterval(() => {
         if (!document.hidden) hydrate();

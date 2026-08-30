@@ -41,6 +41,12 @@
       "name": "governed-cognition",
       "title": "Governed Cognition",
       "native_shape": "rounded",
+      "hard_edged": false,
+      "shapes": [
+        "rounded",
+        "hard",
+        "slanted"
+      ],
       "css": "theme-governed-cognition.css",
       "tokens": "tokens/governed-cognition.json"
     },
@@ -48,13 +54,24 @@
       "name": "johannah",
       "title": "Johannah",
       "native_shape": "rounded",
+      "hard_edged": false,
+      "shapes": [
+        "rounded",
+        "hard",
+        "slanted"
+      ],
       "css": "theme-johannah.css",
       "tokens": "tokens/johannah.json"
     },
     {
       "name": "neo-andean",
       "title": "Neo-Andean",
-      "native_shape": "rounded",
+      "native_shape": "hard",
+      "hard_edged": true,
+      "shapes": [
+        "hard",
+        "slanted"
+      ],
       "css": "theme-neo-andean.css",
       "tokens": "tokens/neo-andean.json"
     }
@@ -65,9 +82,20 @@
       "css": null
     },
     {
+      "name": "hard",
+      "css": "shape-hard.css"
+    },
+    {
       "name": "slanted",
       "css": "shape-slant.css"
     }
   ],
-  "default_theme": "governed-cognition"
+  "default_theme": "governed-cognition",
+  "runtime": {
+    "loader": "loader.js",
+    "switcher": {
+      "js": "switcher.js",
+      "css": "switcher.css"
+    }
+  }
 }

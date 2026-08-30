@@ -132,8 +132,8 @@
   --gc-extra-solar-gold: #FFC857;
   --gc-extra-stone-shadow: #1A2233;
 
-  /* -- shape (native: rounded; the slant overlay, loaded after, overrides) -- */
-  --gc-shape: rounded;
+  /* -- shape (native: hard; the slant overlay, loaded after, overrides) -- */
+  --gc-shape: hard;
   --gc-radius-xs: 0px;
   --gc-radius-sm: 0px;
   --gc-radius-md: 0px;

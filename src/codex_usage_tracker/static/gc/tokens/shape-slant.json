@@ -2,7 +2,7 @@
   "name": "shape-slant",
   "overlay": "shape",
   "mode": "slanted",
-  "description": "The orthogonal shape overlay — the namrop grammar verbatim: clip-path polygons, the keeper-tuned cut scale 28/24/18/14/12 mapped to size tiers; diagonal family for cards and bubbles, octagon for pills. Ruled: slant swaps hairline borders for background lifts. Loaded AFTER a theme file; any theme x either shape.",
+  "description": "The orthogonal shape overlay — the namrop grammar verbatim: clip-path polygons, the keeper-tuned cut scale 28/24/18/14/12 mapped to size tiers; diagonal family for cards and bubbles, octagon for pills. Line treatment is a CHOICE (lift | border | both), defaulting to the ruled lift; the border treatment paints the edge as background layers so it survives the clip. Loaded AFTER a theme file; any theme x either shape.",
   "cut": {
     "xl": "28px",
     "lg": "24px",
@@ -12,12 +12,28 @@
     "pill": "7px"
   },
   "line_treatment": "lift",
+  "line_treatments": [
+    "lift",
+    "border",
+    "both"
+  ],
+  "border": {
+    "width": "1px",
+    "inset": "0px",
+    "color": "var(--gc-line)",
+    "diagonal_half_width": "calc(var(--gc-cut-border-width) / 1.41421356)"
+  },
   "notes": {
     "grammar": "From namrop-site app/globals.css (READ-ONLY donor): the diagonal family is the 6-point polygon cutting the top-left and bottom-right corners; the octagon family is the 8-point polygon cutting all four. Cut sizes 28/24/18/14/12 are the keeper-tuned scale for hero/large/medium/small/mobile tiers.",
     "lift": "Under this overlay --gc-card-border goes transparent and --gc-card-lift takes the theme's own lift color (--gc-lift-color, declared per theme so light papers darken while dark cockpits lighten).",
     "radius": "All radius tokens go to 0 under slant — clip-path carries the shape.",
     "pill_tier": "--gc-cut-pill 7px: the namrop octagon chip cut (protocol-chips/language-option family) — pills are ~half a card's height, so the card scale's 12px floor over-cuts them; consumers were each deriving calc(xs/2). Published as its own tier (consumer-seam feedback, diadem slant lane, 2026-08-29).",
     "per_element": "The clip templates are declared on * (not :root): custom properties substitute var() at the declaring element, so a :root-declared template freezes --gc-cut at the root value and per-element tier cuts can never work through it. On * each element composes the polygon from its own --gc-cut. (consumer-seam feedback, diadem slant lane)",
-    "mirror": "--gc-clip-diagonal-mirror cuts the opposite corner pair (top-right + bottom-left) so paired surfaces — e.g. user/assistant chat bubbles — keep their tail asymmetry under slant by alternating the two diagonal templates."
+    "mirror": "--gc-clip-diagonal-mirror cuts the opposite corner pair (top-right + bottom-left) so paired surfaces — e.g. user/assistant chat bubbles — keep their tail asymmetry under slant by alternating the two diagonal templates.",
+    "line_treatment_choice": "Keeper-ruled 2026-08-30: the April ruling 'slant swaps hairline borders for background lifts' becomes the DEFAULT rather than the only option. lift (default, unchanged for every existing consumer) | border (edge painted, lift retired) | both. Selected per app or subtree with data-gc-line-treatment on the element; --gc-card-border stays transparent in every treatment because a real border is what the clip eats.",
+    "border_composite": "A clip-path removes a real border at each cut corner. The border treatment therefore PAINTS the edge: straight background strips inset to clear each cut, plus one 45-degree stripe per cut corner. Donor: namrop --cut-border-all (app/globals.css), which covers the octagon only — namrop draws its diagonal cards with a DOM sandwich (.cut-frame) instead. The two diagonal composites here are new: at an UNCUT corner the two edges run full length, so the diagonal families use calc(100% - cut) spans where the octagon uses calc(100% - cut - cut).",
+    "border_half_width": "--gc-cut-border-diagonal-half-width is derived (width / sqrt(2)) rather than declared independently as in the donor (4px width / 2.8px half): a 45-degree stripe of visual thickness B needs half-width B/sqrt(2). Deriving it means overriding --gc-cut-border-width alone keeps the corners matching the edges.",
+    "border_placement": "The composites are declared on * for the same reason as the clip templates — they read var(--gc-cut), which must resolve at the consuming element. Two consumption paths: add a gc-cut-border-{diagonal,mirror,octagon} class (GC ships the ::after; zero app CSS), or place background: var(--gc-cut-border-<family>) on an ::after the app owns (needed when the element already uses ::after, or when the app must control stacking).",
+    "border_inset": "--gc-cut-border-inset is 0px, NOT the donor's -1px. namrop's negative inset overshoots the clip boundary to bury its antialiasing seam, which is safe at namrop's 4px frame (3px survives the clip) but ERASES a hairline: the parent's clip-path cuts everything above y=0, so a 1px strip pushed to y=-1 is clipped away entirely and the border renders as nothing. Caught in render 2026-08-30. At 0px the strips sit flush inside the clip at every width. The token stays tunable — a heavy border may overshoot, but the overhang must stay smaller than --gc-cut-border-width or the edge disappears."
   }
 }
