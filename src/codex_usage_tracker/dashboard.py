@@ -671,6 +671,79 @@ def _build_unified_time_series(
     }
 
 
+# ── Provider status feeds (keeper-ruled 2026-08-30: API liveness comes from
+# the provider's own status API, not inferred from the ledger; the observed
+# cells remain as a secondary "what our calls saw" line). Statuspage v2
+# summary endpoints, verified live 2026-08-30; anthropic redirects to
+# status.claude.com. Providers without a public feed are honestly feedless.
+_PROVIDER_STATUS_FEEDS: dict[str, str] = {
+    "anthropic": "https://status.claude.com/api/v2/summary.json",
+    "openai": "https://status.openai.com/api/v2/summary.json",
+    "openai-codex": "https://status.openai.com/api/v2/summary.json",
+    "kimi-coding": "https://status.moonshot.cn/api/v2/summary.json",
+}
+_PROVIDER_STATUS_TTL_SECONDS = 120.0
+_provider_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_provider_status_lock = threading.Lock()
+
+
+def _fetch_status_feed(url: str, *, timeout: float = 6.0) -> dict[str, Any]:
+    """One GET against a public statuspage summary endpoint. No credentials
+    leave the box; failures degrade to an explicit unreachable marker rather
+    than an inferred status."""
+    import urllib.request
+
+    request_obj = urllib.request.Request(
+        url, headers={"User-Agent": "codex-usage-tracker/private-dashboard"}
+    )
+    with urllib.request.urlopen(request_obj, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _provider_status_snapshot(
+    now: float,
+    fetcher=None,
+) -> dict[str, dict[str, Any]]:
+    """Per-URL cached (TTL 120s) statuspage reads, projected per provider."""
+    if fetcher is None:
+        fetcher = _fetch_status_feed
+    by_url: dict[str, dict[str, Any]] = {}
+    for url in set(_PROVIDER_STATUS_FEEDS.values()):
+        with _provider_status_lock:
+            cached = _provider_status_cache.get(url)
+        if cached is not None and now - cached[0] < _PROVIDER_STATUS_TTL_SECONDS:
+            by_url[url] = cached[1]
+            continue
+        try:
+            raw = fetcher(url)
+            status = raw.get("status") or {}
+            incidents = [
+                str(item.get("name"))
+                for item in (raw.get("incidents") or [])
+                if item.get("name")
+            ]
+            entry = {
+                "indicator": str(status.get("indicator") or "unknown"),
+                "description": str(status.get("description") or ""),
+                "incidents": incidents[:5],
+                "unreachable": False,
+            }
+        except Exception as exc:  # noqa: BLE001 — any transport/parse failure
+            entry = {
+                "indicator": "unknown",
+                "description": f"status feed unreachable ({type(exc).__name__})",
+                "incidents": [],
+                "unreachable": True,
+            }
+        with _provider_status_lock:
+            _provider_status_cache[url] = (now, entry)
+        by_url[url] = entry
+    return {
+        provider: {**by_url[url], "feed_url": url}
+        for provider, url in _PROVIDER_STATUS_FEEDS.items()
+    }
+
+
 def _canonical_quota_provider(value: Any) -> str:
     raw = "unknown" if value is None else str(value).strip()
     if not raw:
@@ -1541,6 +1614,23 @@ def create_app(
                 generated_at=generated_at,
             )
         return jsonify(payload)
+
+    @app.route("/api/provider-status")
+    def api_provider_status():
+        import time as _time
+
+        return jsonify(
+            {
+                "providers": _provider_status_snapshot(_time.time()),
+                "feedless": sorted(
+                    provider
+                    for provider in (
+                        "zai", "deepseek", "openrouter", "opencode-go",
+                    )
+                    if provider not in _PROVIDER_STATUS_FEEDS
+                ),
+            }
+        )
 
     @app.route("/api/subscriptions")
     def api_subscriptions():

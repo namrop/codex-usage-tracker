@@ -578,6 +578,21 @@
         flex: 0 0 auto;
       }
 
+      .status-badge {
+        margin-left: auto;
+        padding: 1px 8px;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        border: 1px solid var(--line-soft);
+        border-radius: 999px;
+        color: var(--muted);
+      }
+
+      .status-badge.role-stability { color: var(--ok); border-color: var(--ok); }
+      .status-badge.role-threshold { color: var(--warning); border-color: var(--warning); }
+      .status-badge.role-violation { color: var(--danger); border-color: var(--danger); }
+      .status-badge.state-idle { opacity: 0.6; }
+
       .status-cells {
         display: flex;
         gap: 2px;
@@ -1328,7 +1343,8 @@
           .subscription-badge,
           .toggle,
           .refresh-btn,
-          .fold-cols
+          .fold-cols,
+          .status-badge
         ) {
         --gc-cut: var(--gc-cut-pill);
         clip-path: var(--gc-clip-octagon);
@@ -1423,7 +1439,7 @@
           <div class="window-pair">
             <section class="window-card" aria-labelledby="fiveHourDonutTitle">
               <h3 id="fiveHourDonutTitle">Five-hour throughput by provider</h3>
-              <p class="caption">Accounted tokens over the last five complete UTC hours, split by provider and, within each provider, by cached versus fresh. Quota percentages in the legend are that provider’s own cap — they are not shares of one pool and are never drawn as slices.</p>
+              <p class="caption">Accounted tokens over the last five complete UTC hours, split by provider; each provider’s cache share rides its legend line. Quota percentages in the legend are that provider’s own cap — they are not shares of one pool and are never drawn as slices.</p>
               <p id="fiveHourDonutSummary" class="chart-summary" aria-live="polite">Loading five-hour throughput…</p>
               <div class="donut-layout">
                 <svg id="fiveHourDonut" class="donut" viewBox="0 0 200 200" role="img" aria-describedby="fiveHourDonutSummary"></svg>
@@ -1450,7 +1466,7 @@
             </section>
             <section class="window-card" aria-labelledby="providerStatusTitle">
               <h3 id="providerStatusTitle">Provider API status · 48 hours</h3>
-              <p class="caption">One cell per complete UTC hour per provider, read off the request outcome recorded on every usage event. A dim cell carried no traffic — that is an absence of evidence, not a clean hour.</p>
+              <p class="caption">The badge is the provider’s own status API (statuspage feeds, polled server-side); providers without a public feed say so. The cells beneath are what our calls observed per complete UTC hour — a dim cell carried no traffic, an absence of evidence, not a clean hour.</p>
               <p id="providerStatusSummary" class="chart-summary" aria-live="polite">Loading provider status…</p>
               <div id="providerStatusRows" class="status-rows"></div>
               <ul class="status-key" aria-hidden="true">
@@ -2956,20 +2972,20 @@
         let cursor = 0;
         providers.forEach((row, index) => {
           const color = subscriptionUnifiedProviderColor({ provider: row.provider_canonical }, index);
-          // Two arcs per provider: fresh at full strength, cached lighter —
-          // same hue so the pair reads as one provider (the namrop anatomy).
-          [["fresh_tokens", 1], ["cached_tokens", 0.45]].forEach(([field, opacity]) => {
-            const span = Number(row[field] || 0) / windowTotal;
-            if (span <= 0) return;
+          // One SOLID arc per provider (keeper-ruled 2026-08-30: the same-hue
+          // fresh/cached pair read as a confusing two-tone). Cache share lives
+          // in the legend text; the ring answers only "who ate the window."
+          const span = Number(row.total_tokens) / windowTotal;
+          if (span > 0) {
             const arc = document.createElementNS(ns, "path");
-            arc.setAttribute("d", donutArcPath(100, 100, 74, cursor, Math.min(cursor + span, 0.99999)));
+            const gap = providers.length > 1 ? 0.004 : 0;
+            arc.setAttribute("d", donutArcPath(100, 100, 74, cursor + gap, Math.min(cursor + span - gap, 0.99999)));
             arc.setAttribute("fill", "none");
             arc.setAttribute("stroke", color);
-            arc.setAttribute("stroke-opacity", String(opacity));
             arc.setAttribute("stroke-width", "30");
             svg.appendChild(arc);
             cursor += span;
-          });
+          }
           const item = document.createElement("li");
           const swatch = document.createElement("span");
           swatch.className = "swatch-dot";
@@ -3003,7 +3019,7 @@
         centreCaption.setAttribute("class", "donut-centre-caption");
         centreCaption.textContent = "tokens";
         svg.append(centre, centreCaption);
-        summary.textContent = `${compactIntFormat(windowTotal)} accounted tokens across ${providers.length} provider${providers.length === 1 ? "" : "s"}; lighter arc segments are cache reads.`;
+        summary.textContent = `${compactIntFormat(windowTotal)} accounted tokens across ${providers.length} provider${providers.length === 1 ? "" : "s"}.`;
       }
 
       function renderDonuts() {
@@ -3095,10 +3111,41 @@
         });
       }, 1000);
 
+      const STATUS_INDICATOR_ROLE = {
+        none: ["role-stability", "operational"],
+        minor: ["role-threshold", "degraded"],
+        major: ["role-violation", "major outage"],
+        critical: ["role-violation", "critical outage"],
+        maintenance: ["role-threshold", "maintenance"],
+      };
+
+      function providerStatusBadge(feedEntry) {
+        const badge = document.createElement("span");
+        badge.className = "status-badge";
+        if (!feedEntry) {
+          badge.classList.add("state-idle");
+          badge.textContent = "no status feed";
+          return badge;
+        }
+        if (feedEntry.unreachable) {
+          badge.classList.add("role-threshold");
+          badge.textContent = "feed unreachable";
+          return badge;
+        }
+        const [role, label] = STATUS_INDICATOR_ROLE[feedEntry.indicator] || ["role-threshold", feedEntry.indicator];
+        badge.classList.add(role);
+        badge.textContent = feedEntry.incidents && feedEntry.incidents.length
+          ? `${label} · ${feedEntry.incidents[0]}`
+          : label;
+        badge.title = feedEntry.description || "";
+        return badge;
+      }
+
       function renderProviderStatus(timeSeries) {
         const host = document.getElementById("providerStatusRows");
         const summary = document.getElementById("providerStatusSummary");
         if (!host || !timeSeries || !Array.isArray(timeSeries.provider_status_series)) return;
+        const feeds = state.providerStatusFeeds || {};
         const buckets = Array.isArray(timeSeries.bucket_starts) ? timeSeries.bucket_starts : [];
         const CELLS = 48;
         const offset = Math.max(0, buckets.length - CELLS);
@@ -3116,7 +3163,7 @@
           dot.style.background = subscriptionUnifiedProviderColor({ provider: row.provider_canonical }, index);
           const name = document.createElement("span");
           name.textContent = row.provider;
-          head.append(dot, name);
+          head.append(dot, name, providerStatusBadge(feeds[row.provider]));
           const cells = document.createElement("div");
           cells.className = "status-cells";
           const windowErrors = row.errors.slice(offset).reduce((sum, n) => sum + n, 0);
@@ -3974,11 +4021,25 @@
         }
       }
 
+      async function loadProviderStatusFeeds() {
+        try {
+          const response = await fetch("/api/provider-status", { signal: AbortSignal.timeout(15000) });
+          if (!response.ok) return;
+          const data = await response.json();
+          state.providerStatusFeeds = data.providers || {};
+          // Re-render with the feed joined in if the observed series beat it.
+          if (state.donutWeek) renderProviderStatus(state.donutWeek.time_series);
+        } catch (feedError) {
+          // last-good law: a stale badge beats a vanished one.
+        }
+      }
+
       function loadPrivatePanels() {
         return Promise.allSettled([
           loadUnifiedUsage(),
           loadSubscriptions(),
           loadBilling(),
+          loadProviderStatusFeeds(),
         ]);
       }
 
@@ -4103,6 +4164,18 @@
               fold.dataset.open = next ? "true" : "false";
               toggle.setAttribute("aria-expanded", next ? "true" : "false");
               writeFoldPref(FOLD_OPEN_KEY, key, next);
+              if (next) {
+                // Chart.js sizes a canvas from its container; a chart built
+                // while the fold was display:none is 0×0 and stays blank
+                // until told the world changed (keeper defect report
+                // 2026-08-30: "a bunch of the graphs still don't work").
+                requestAnimationFrame(() => {
+                  fold.querySelectorAll("canvas").forEach((canvas) => {
+                    const chart = typeof Chart !== "undefined" && Chart.getChart ? Chart.getChart(canvas) : null;
+                    if (chart) chart.resize();
+                  });
+                });
+              }
             });
           }
 

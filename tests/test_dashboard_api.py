@@ -2082,3 +2082,73 @@ def test_dashboard_page_retires_session_surfaces_and_bounds_its_data_fetch(tmp_p
         assert retired not in markup
     # The page renders 24 rows; it must not pull the whole ledger to do it.
     assert 'fetch("/api/data?limit=200")' in markup
+
+
+class TestProviderStatusFeeds:
+    """Keeper-ruled 2026-08-30: API liveness comes from the provider's own
+    status API; the ledger-observed cells are the secondary line."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self, monkeypatch):
+        from codex_usage_tracker import dashboard as dash
+
+        monkeypatch.setattr(dash, "_provider_status_cache", {})
+        yield
+
+    def test_snapshot_projects_feeds_and_marks_unreachable(self, monkeypatch):
+        from codex_usage_tracker import dashboard as dash
+
+        def fake_fetch(url, timeout=6.0):
+            if "claude" in url:
+                return {
+                    "status": {"indicator": "minor", "description": "Elevated errors"},
+                    "incidents": [{"name": "API latency"}],
+                }
+            raise OSError("boom")
+
+        monkeypatch.setattr(dash, "_fetch_status_feed", fake_fetch)
+        snapshot = dash._provider_status_snapshot(1000.0)
+        anthropic = snapshot["anthropic"]
+        assert anthropic["indicator"] == "minor"
+        assert anthropic["incidents"] == ["API latency"]
+        assert anthropic["unreachable"] is False
+        # openai + openai-codex share one URL and one (failed) fetch
+        assert snapshot["openai"]["unreachable"] is True
+        assert snapshot["openai-codex"]["unreachable"] is True
+        assert "unreachable" in snapshot["openai"]["description"]
+
+    def test_snapshot_caches_per_url_within_ttl(self, monkeypatch):
+        from codex_usage_tracker import dashboard as dash
+
+        calls = []
+
+        def fake_fetch(url, timeout=6.0):
+            calls.append(url)
+            return {"status": {"indicator": "none", "description": "ok"}, "incidents": []}
+
+        monkeypatch.setattr(dash, "_fetch_status_feed", fake_fetch)
+        dash._provider_status_snapshot(1000.0)
+        first = len(calls)
+        assert first == len(set(dash._PROVIDER_STATUS_FEEDS.values()))
+        dash._provider_status_snapshot(1000.0 + 30)
+        assert len(calls) == first  # inside TTL: no refetch
+        dash._provider_status_snapshot(1000.0 + dash._PROVIDER_STATUS_TTL_SECONDS + 1)
+        assert len(calls) == first * 2  # past TTL: one refetch per URL
+
+    def test_endpoint_serves_providers_and_feedless_list(self, tmp_path, monkeypatch):
+        from codex_usage_tracker import dashboard as dash
+
+        monkeypatch.setattr(
+            dash,
+            "_fetch_status_feed",
+            lambda url, timeout=6.0: {
+                "status": {"indicator": "none", "description": "All Systems Operational"},
+                "incidents": [],
+            },
+        )
+        client = dash.create_app(ledger=str(tmp_path / "codex.jsonl")).test_client()
+        payload = client.get("/api/provider-status").get_json()
+        assert payload["providers"]["anthropic"]["indicator"] == "none"
+        assert payload["providers"]["kimi-coding"]["feed_url"].startswith("https://status.moonshot.cn")
+        # No public feed found for these (verified 2026-08-30) — honest, not inferred.
+        assert payload["feedless"] == ["deepseek", "openrouter", "opencode-go", "zai"] or payload["feedless"] == sorted(["zai", "deepseek", "openrouter", "opencode-go"])
