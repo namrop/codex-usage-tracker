@@ -6,3 +6,6 @@ venv/
 # Hermes/local planning artifacts
 .hermes/
 
+
+# Frontend build tooling
+frontend/node_modules/

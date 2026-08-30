@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Usage</title>
+    <!-- Governed Cognition: origin = delivery, vendored snapshot = fallback
+         (an outage renders yesterday's theme, never unstyled). Fonts are the
+         theme layer's vendored woff2 — the Google Fonts fetch died here
+         (kintsugi M1: all-local law). Origin derived from the page host so
+         remote tailnet browsers degrade to the snapshot instead of dialing
+         their own loopback. -->
+    <script>
+      globalThis.GC_CONFIG = {
+        origin: "http://" + (window.location.hostname || "127.0.0.1") + ":7312",
+        fallback: "/static/gc",
+      };
+    </script>
+    <!-- Governed Cognition. loader.js is the only GC file this page names:
+         it is the bootstrap (it IS the origin -> snapshot fallback, so it
+         cannot be delivered by it). It stays a classic synchronous script —
+         never bundled, never type=module — so the theme injects before first
+         paint; everything else (themes, shape overlays, the picker) comes
+         down the wire from the origin with static/gc/ as the snapshot. -->
+    <script src="/static/gc/loader.js" data-gc-fallback="/static/gc"></script>
+    <script src="/static/vendor/chart.umd.min.js"></script>
+    <script type="module" crossorigin src="/static/app/assets/index-C5ksPi-p.js"></script>
+    <link rel="modulepreload" crossorigin href="/static/app/assets/vendor-dzjnOsT9.js">
+    <link rel="stylesheet" crossorigin href="/static/app/assets/index-JAgE7oL0.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

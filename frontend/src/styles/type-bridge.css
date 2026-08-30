@@ -1,0 +1,19 @@
+/* Type bridge — font APPLICATION only, the one documented exception to
+ * the purity scan (mirrors diadem's excluded theme-default.css). The
+ * family values live in the GC theme layer; this block merely points
+ * the app's surfaces at them. No literals, no families named here. */
+body {
+  font-family: var(--gc-font-body);
+}
+
+h1,
+h2,
+.metric .value,
+.subscription-window-title,
+.subscription-quota-value {
+  font-family: var(--gc-font-display);
+}
+
+.mono {
+  font-family: var(--gc-font-mono);
+}

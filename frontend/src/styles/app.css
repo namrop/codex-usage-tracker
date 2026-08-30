@@ -1,0 +1,1363 @@
+/* Governed Cognition adapter — the obedience layer (kintsugi render,
+ * akasan spoken 2026-08-29). Every app token resolves to a --gc-* token
+ * from the estate theme system; zero literals live in this style layer.
+ * Role mapping (ruled): violation <- danger/stale-beyond-grace/ceded,
+ * threshold <- warning + the 80% line, stability <- ok/fresh,
+ * info <- cyan/sky tiles, structure <- chrome/grid, intent unused.
+ * The GC theme CSS arrives via static/gc/loader.js: origin :7312 first,
+ * vendored /static/gc snapshot on outage — yesterday's theme, never
+ * unstyled. Series tokens draw from the declared ai-usage.series-rank
+ * set; harness color from ai-usage.harness. */
+:root {
+  --bg: var(--gc-bg);
+  --bg-deep: var(--gc-bg-deep);
+  --panel: var(--gc-panel);
+  --panel-raised: var(--gc-panel-raised);
+  --panel-soft: var(--gc-syntax-bg);
+  --line: var(--gc-line);
+  --line-soft: color-mix(in srgb, var(--line) 32%, transparent);
+  --text: var(--gc-fg);
+  --muted: var(--gc-fg-soft);
+  --muted-2: var(--gc-muted);
+  --weekly: var(--gc-cat-ai-usage-series-rank-rank-7);
+  --spark-session: var(--gc-cat-ai-usage-series-rank-rank-10);
+  --spark-weekly: var(--gc-cat-ai-usage-series-rank-rank-3);
+  --warning: var(--gc-role-threshold);
+  --danger: var(--gc-role-violation);
+  --ok: var(--gc-role-stability);
+  --sky: var(--gc-role-info);
+  --copper: var(--gc-cat-ai-usage-series-rank-rank-6);
+  --token: var(--gc-cat-ai-usage-series-rank-rank-1);
+  --radius: var(--gc-radius-md);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100vh;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  /* The grid is structure (ruled role mapping) — both axes draw from the
+   * structural family; the old gold axis was threshold-colored, and
+   * threshold is never routine. */
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--gc-role-structure) 8%, transparent) 0 1px, transparent 1px 80px),
+    linear-gradient(180deg, color-mix(in srgb, var(--line) 6%, transparent) 0 1px, transparent 1px 80px),
+    var(--bg);
+  color: var(--text);
+  padding: 22px;
+}
+
+.shell {
+  width: min(1680px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 16px;
+}
+
+.shell,
+.title-panel,
+.card,
+.card-title,
+.usage-chart-layout,
+.chart-wrap {
+  min-width: 0;
+  max-width: 100%;
+}
+
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+.title-panel,
+.card {
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  box-shadow: 0 18px 48px color-mix(in srgb, var(--bg-deep) 42%, transparent);
+}
+
+.title-panel {
+  padding: 24px 26px 22px;
+  position: relative;
+  overflow: hidden;
+}
+
+.title-panel::after {
+  content: "";
+  position: absolute;
+  inset: auto 20px 0 auto;
+  width: 34%;
+  height: 2px;
+  background: var(--weekly);
+  opacity: 0.72;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2.1rem, 4vw, 4.4rem);
+  line-height: 0.95;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+
+.subtitle {
+  max-width: 68ch;
+  margin-top: 12px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+/* Ceded lane — violation role (ruled: ceded joins violation). One
+ * honest pill, theme-tunable, never removable. */
+.lane-notice {
+  width: fit-content;
+  max-width: 100%;
+  margin: 12px 0 0;
+  padding: 6px 11px;
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.gc-switcher-mount {
+  margin-top: 16px;
+}
+
+/* Ops digest (keeper polish round 2026-08-30, item 2): the top hero's
+ * right half answers "does anything need me?" — ledger freshness,
+ * soonest reset, week list-price estimate, substitution watch. The
+ * values mirror the unified tile row's JS state; nothing here refetches. */
+.ops-hero {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.1fr);
+  gap: 22px;
+  align-items: center;
+}
+
+.ops-hero-intro {
+  min-width: 0;
+}
+
+.ops-hero h1 {
+  font-size: clamp(1.9rem, 3.2vw, 3.2rem);
+}
+
+.ops-digest {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-content: center;
+  min-width: 0;
+}
+
+.digest-item {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  padding: 11px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--panel-soft) 70%, transparent);
+}
+
+.digest-value {
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.digest-note {
+  color: var(--muted);
+  font-size: 0.79rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.digest-item.role-stability .digest-value {
+  color: var(--ok);
+}
+
+.digest-item.role-violation {
+  border-color: color-mix(in srgb, var(--danger) 52%, transparent);
+}
+
+.digest-item.role-violation .digest-value {
+  color: var(--danger);
+}
+
+.digest-item .reset-chip {
+  justify-self: start;
+  font-size: 0.8rem;
+}
+
+.metric {
+  min-width: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--panel-soft) 76%, transparent);
+}
+
+.metric .label,
+.micro-label {
+  color: var(--muted-2);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.metric .value {
+  margin-top: 3px;
+  font-size: clamp(1.35rem, 2.4vw, 2.25rem);
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.metric .hint {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.metric .hint {
+  margin-top: 8px;
+}
+
+/* Spend sparkline (polish round item 12): seven daily list-price
+ * estimates as a bare polyline in the structure role — trend only, no
+ * axes; the values live in the title. */
+.spend-spark {
+  display: block;
+  width: 100%;
+  height: 24px;
+  margin-top: 6px;
+}
+
+.spend-spark polyline {
+  fill: none;
+  stroke: var(--gc-role-structure);
+  stroke-width: 1.5;
+}
+
+/* SVG is outside the HTML namespace, so the UA's [hidden] rule does not
+ * reach it — this rule makes the attribute mean what it says. */
+.spend-spark[hidden] {
+  display: none;
+}
+
+.card {
+  padding: 16px;
+}
+
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.card-title {
+  display: grid;
+  gap: 5px;
+}
+
+h2 {
+  font-size: clamp(1.12rem, 2vw, 1.55rem);
+  letter-spacing: -0.025em;
+}
+
+.caption {
+  color: var(--muted);
+  line-height: 1.45;
+  font-size: 0.94rem;
+}
+
+.subtitle,
+.caption,
+.chart-summary {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+button,
+summary {
+  font: inherit;
+}
+
+.refresh-btn {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  color: var(--text);
+  padding: 8px 13px;
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.refresh-btn:hover {
+  transform: translateY(-1px);
+  border-color: var(--muted);
+}
+
+.chart-wrap {
+  position: relative;
+  min-height: 278px;
+}
+
+/* ------------------------------------------------------------------
+ * Window pairs (keeper-ruled 2026-08-30). Each row is a throughput
+ * donut beside the surface that says what that window is asking of the
+ * operator: reset countdowns beside the five-hour donut ("what needs me
+ * in the next hours"), provider status beside the weekly one (week
+ * posture). The donut carries SHARE; per-provider quota caps live in
+ * the legend, never as slices — they are separate ceilings, not parts
+ * of one pool, and drawing them as pie would be a category error.
+ * ------------------------------------------------------------------ */
+.window-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 22px 0 12px;
+}
+
+.window-card {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-deep) 38%, transparent);
+}
+
+.window-card h3 {
+  margin-top: 0;
+}
+
+.donut-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 190px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.donut {
+  width: 100%;
+  max-width: 190px;
+  height: auto;
+}
+
+.donut-track {
+  fill: none;
+  stroke: color-mix(in srgb, var(--line) 24%, transparent);
+  stroke-width: 17;
+}
+
+/* Each provider owns one contiguous span of the ring, split into a
+ * fresh arc and a dimmed cached arc. stroke-opacity is a number, not a
+ * color: the cached tail is the SAME provider color, so the eye reads
+ * one provider, two kinds of throughput. */
+.donut-arc {
+  fill: none;
+  stroke-width: 17;
+}
+
+.donut-arc.cached {
+  stroke-opacity: 0.38;
+}
+
+/* SVG text sizes are viewBox user units (the viewBox is 200x200), so
+ * these scale with the ring rather than with the page. */
+.donut-center-value {
+  fill: var(--text);
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.donut-center-caption {
+  fill: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.donut-legend {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.donut-legend li {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  min-width: 0;
+}
+
+.donut-legend strong {
+  display: block;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.swatch-dot {
+  margin-top: 4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--series-color, var(--token));
+}
+
+.legend-quota,
+.legend-detail {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.legend-quota {
+  color: var(--muted);
+  font-size: 0.83rem;
+}
+
+.legend-detail {
+  color: var(--muted-2);
+  font-size: 0.78rem;
+}
+
+/* Noise fold (polish round item 4a): providers under 0.1% of window
+ * tokens collapse into one dim line; their hairline arcs stay on the
+ * ring. */
+.donut-legend .legend-fold {
+  display: block;
+  color: var(--muted-2);
+  font-size: 0.8rem;
+}
+
+/* -- reset rail: one chip per quota window that reports an exact reset,
+ * soonest first, counting down in wall-clock while every bucket on this
+ * page stays UTC. Strict single column (polish round item 3): reading
+ * order IS reset order — a two-column snake broke the soonest-first
+ * scan. Each chip is a real anchor to its provider's subscription card
+ * (item 13). -- */
+.reset-chips {
+  display: grid;
+  grid-template-columns: 1fr;
+  justify-items: start;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reset-chips li {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.reset-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid var(--chip-role);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chip-role) 13%, transparent);
+  color: var(--text);
+  font-size: 0.83rem;
+  text-decoration: none;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.reset-chip:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 3px;
+}
+
+/* Anchor scrolls are smooth only where the operator has not asked for
+ * stillness; the prefers-reduced-motion block at the sheet's end forces
+ * this back to auto (jump, no smooth). */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+.reset-chip.role-stability { --chip-role: var(--ok); }
+.reset-chip.role-threshold { --chip-role: var(--warning); }
+.reset-chip.role-violation { --chip-role: var(--danger); }
+
+.reset-chip .chip-window {
+  color: var(--muted);
+}
+
+.reset-chip .chip-countdown {
+  color: var(--chip-role);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* Motion is opt-in, never opt-out: only a quota past 90% pulses, and
+ * only where the operator has not asked for stillness. The countdown
+ * text keeps ticking either way — the tick is information, the pulse is
+ * emphasis. */
+@media (prefers-reduced-motion: no-preference) {
+  .reset-chip.role-violation {
+    animation: chip-urgency 2.6s ease-in-out infinite;
+  }
+}
+
+@keyframes chip-urgency {
+  50% { background: color-mix(in srgb, var(--danger) 26%, transparent); }
+}
+
+/* -- provider status strip: one row per provider, one cell per complete
+ * UTC hour, read off request_status/error_class as the ledger recorded
+ * them. A dim cell is no traffic, not good news. -- */
+.status-rows {
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.status-row {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.status-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.status-row-head .swatch-dot {
+  margin-top: 0;
+  flex: 0 0 auto;
+}
+
+.status-badge {
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  color: var(--muted);
+}
+
+.status-badge.role-stability { color: var(--ok); border-color: var(--ok); }
+.status-badge.role-threshold { color: var(--warning); border-color: var(--warning); }
+.status-badge.role-violation { color: var(--danger); border-color: var(--danger); }
+.status-badge.state-idle { opacity: 0.6; }
+
+.status-cells {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+}
+
+.status-cell {
+  flex: 1 1 0;
+  min-width: 2px;
+  height: 17px;
+  border-radius: 2px;
+}
+
+.status-cell.state-idle {
+  background: color-mix(in srgb, var(--line) 18%, transparent);
+}
+
+.status-cell.state-ok {
+  background: color-mix(in srgb, var(--ok) 60%, transparent);
+}
+
+.status-cell.state-degraded {
+  background: color-mix(in srgb, var(--warning) 80%, transparent);
+}
+
+.status-cell.state-failing {
+  background: var(--danger);
+}
+
+/* Noise fold (polish round item 4b): "unknown" and sub-10-event
+ * providers share one dim line instead of full cell rows. */
+.status-row.low-traffic {
+  color: var(--muted-2);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.status-row-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.79rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.status-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 13px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 0.79rem;
+}
+
+.status-key li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-key .status-cell {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 11px;
+}
+
+/* The substitution watch reads zero almost always; when it does not, a
+ * served model differed from the requested one and that is a violation
+ * of what the caller asked for, not a threshold being approached. */
+.metric.role-violation {
+  border-color: color-mix(in srgb, var(--danger) 52%, transparent);
+}
+
+.metric.role-violation .value {
+  color: var(--danger);
+}
+
+.usage-chart {
+  min-width: 0;
+  margin-top: 30px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.usage-chart h3 {
+  margin-top: 0;
+}
+
+.usage-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  gap: 18px;
+  align-items: stretch;
+}
+
+.chart-wrap.unified {
+  min-height: 310px;
+}
+
+.direct-labels {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.direct-label {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.direct-label strong {
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.chart-summary {
+  min-height: 1.25em;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+/* Ledger fold (keeper-ruled 2026-08-29: "collapse the ledger columns
+ * and tables, they should be collapsed by default"). Estate law: fold is
+ * a class/attribute toggle, never a removal — every row and cell stays in
+ * the DOM while folded, so the 60s hydrate keeps writing into the same
+ * tbody and the fold state, which lives on the wrapper the renderers
+ * never touch, survives the refresh. Collapsed is pacing; absent is
+ * elision. */
+.fold {
+  margin: 12px 0 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-deep) 30%, transparent);
+  overflow: hidden;
+}
+
+.fold-head {
+  display: flex;
+  align-items: center;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+}
+
+.fold-heading {
+  margin: 0;
+  min-width: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+
+.fold-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fold-toggle:hover .fold-label {
+  color: var(--sky);
+}
+
+.fold-toggle:focus-visible,
+.fold-cols:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 3px;
+}
+
+.fold-caret {
+  display: inline-block;
+  color: var(--muted-2);
+  font-size: 0.7rem;
+  transition: transform 120ms ease;
+}
+
+.fold-toggle[aria-expanded="true"] .fold-caret {
+  transform: rotate(90deg);
+}
+
+.fold-summary {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.fold-cols {
+  margin-left: auto;
+  padding: 4px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-raised) 62%, transparent);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.fold-cols[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--sky) 52%, transparent);
+  background: color-mix(in srgb, var(--sky) 15%, transparent);
+  color: var(--text);
+}
+
+.fold[data-open="false"] .fold-body,
+.fold[data-open="false"] .fold-cols {
+  display: none;
+}
+
+.fold .table-wrap {
+  margin: 0;
+}
+
+.fold .table-wrap table {
+  min-width: 620px;
+}
+
+/* Column tiers — the same law one level down: hidden columns are still
+ * rendered cells, just not shown. Essential tier is the default; the
+ * "all columns" toggle lifts the tier, never re-renders the table. */
+.fold[data-cols="essential"] .tier-harness :is(th, td):is(:nth-child(3), :nth-child(4), :nth-child(5), :nth-child(6), :nth-child(7)),
+.fold[data-cols="essential"] .tier-provider-model :is(th, td):is(:nth-child(3), :nth-child(5), :nth-child(6), :nth-child(7), :nth-child(8), :nth-child(9)),
+.fold[data-cols="essential"] .tier-quota :is(th, td):is(:nth-child(3), :nth-child(4), :nth-child(9), :nth-child(10), :nth-child(11), :nth-child(12), :nth-child(13)),
+.fold[data-cols="essential"] .tier-billing :is(th, td):is(:nth-child(7), :nth-child(8), :nth-child(9)) {
+  display: none;
+}
+
+.fold[data-cols="essential"] .table-wrap table {
+  min-width: 0;
+}
+
+.key-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.swatch {
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--series-color);
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border-top: 1px solid var(--line-soft);
+}
+
+table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line-soft);
+  padding: 10px 14px;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--muted);
+  text-align: left;
+  user-select: none;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+td:not(:first-child),
+th:not(:first-child) {
+  text-align: right;
+}
+
+tbody tr:hover {
+  background: color-mix(in srgb, var(--panel-soft) 74%, transparent);
+}
+
+.mono {
+  font-size: 0.82rem;
+}
+
+/* Five tiles now (events, tokens, priced spend, soonest reset,
+ * substitution watch). auto-fit reflows them at every width, so this
+ * grid no longer needs the 1100px single-column override that three
+ * fixed columns did. */
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 195px), 1fr));
+  gap: 12px;
+}
+
+.subscription-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 12px;
+}
+
+.subscription-quota-history {
+  min-width: 0;
+  max-width: 100%;
+  margin-bottom: 22px;
+  padding: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-deep) 38%, transparent);
+}
+
+.subscription-quota-history h3,
+.subscription-quota-history h4 {
+  margin-top: 0;
+}
+
+.subscription-unified-history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
+  gap: 18px;
+  min-width: 0;
+}
+
+.subscription-unified-history-card {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* Legend track widened (polish round item 1): the old 160px floor
+ * forced mid-word wraps in the custom legend entries. */
+.subscription-quota-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 250px);
+  gap: 14px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.subscription-quota-chart-wrap {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 290px;
+}
+
+.subscription-quota-chart-wrap canvas {
+  max-width: 100%;
+}
+
+.subscription-chart-labels {
+  min-width: 0;
+}
+
+/* No mid-word breaks in legend entries (item 1): break-word only splits
+ * a word that alone exceeds the track; confidence drops to its own row. */
+.subscription-chart-labels .direct-label {
+  grid-template-columns: 20px minmax(0, 1fr);
+  overflow-wrap: break-word;
+}
+
+.subscription-chart-labels .direct-label > span:last-child {
+  grid-column: 2;
+}
+
+.subscription-provider-card {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  scroll-margin-top: 18px;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel-soft) 62%, transparent);
+}
+
+.subscription-provider-header,
+.subscription-window-header,
+.subscription-window-badges {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.subscription-provider-title {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.subscription-provider-title h3,
+.subscription-window-title {
+  overflow-wrap: anywhere;
+}
+
+.subscription-provider-id,
+.subscription-provider-observed,
+.subscription-window-meta,
+.subscription-window-time,
+.subscription-explanation {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.subscription-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.subscription-badge.fresh,
+.subscription-badge.confidence-exact {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 48%, transparent);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.subscription-badge.stale,
+.subscription-badge.confidence-estimated {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 52%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+.subscription-badge.unknown,
+.subscription-badge.confidence-unknown {
+  color: var(--muted);
+}
+
+.subscription-window-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.subscription-window {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 20%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg-deep) 45%, transparent);
+}
+
+.subscription-window.is-estimated {
+  border-color: color-mix(in srgb, var(--warning) 58%, transparent);
+  background: color-mix(in srgb, var(--warning) 6%, transparent);
+}
+
+.subscription-window-title {
+  font-size: 0.98rem;
+}
+
+.subscription-quota-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.subscription-quota-stat {
+  min-width: 0;
+  padding: 8px;
+  border-left: 2px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 48%, transparent);
+}
+
+.subscription-quota-stat .label {
+  color: var(--muted-2);
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.subscription-quota-value {
+  margin-top: 3px;
+  font-size: 0.94rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+/* Balance-style stats (items 8–9): the held amount carries a role
+ * accent — stability while positive, violation at zero or below. */
+.subscription-quota-value.role-stability {
+  color: var(--ok);
+}
+
+.subscription-quota-value.role-violation {
+  color: var(--danger);
+}
+
+.subscription-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 12%, transparent);
+}
+
+.subscription-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ok);
+}
+
+.subscription-explanation {
+  padding-left: 8px;
+  border-left: 2px solid var(--warning);
+  color: var(--warning);
+}
+
+.empty-state {
+  color: var(--muted);
+  padding: 12px 0;
+}
+
+.color-token { color: var(--token); }
+.negative { color: var(--danger); }
+.neutral { color: var(--muted); }
+
+@media (max-width: 1100px) {
+  .ops-hero,
+  .window-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    padding: 12px;
+  }
+
+  .title-panel,
+  .card {
+    border-radius: 6px;
+  }
+
+  .ops-digest {
+    grid-template-columns: 1fr;
+  }
+
+  .subscription-provider-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .subscription-quota-chart-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .subscription-quota-chart-wrap {
+    min-height: 220px;
+  }
+
+  .subscription-quota-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .card-header {
+    display: grid;
+  }
+
+  .toolbar {
+    justify-content: flex-start;
+  }
+
+  .usage-chart-layout,
+  .donut-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .donut {
+    justify-self: center;
+  }
+
+  .chart-wrap.unified {
+    min-height: 280px;
+  }
+
+  .direct-labels {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
+ * SLANT — the governed-cognition shape axis, consumed the way
+ * diadem consumes it (keeper-ruled 2026-08-29: "use the pattern
+ * that diadem used"). Scoped ENTIRELY under
+ * html[data-gc-shape="slanted"] — the loader flips that attribute
+ * when it hangs the shape-slant overlay — so rounded mode matches
+ * none of these rules and stays pixel-unchanged.
+ *
+ * Pure consumption of the published namrop grammar (GC @ 99e4608):
+ * the clip templates are declared upstream on * (NOT :root), so
+ * every element composes its own polygon from its own --gc-cut.
+ * The consumer's whole job is therefore two lines per surface —
+ * pick the size tier, then apply the family's template. Never
+ * clip <html> itself: the theme's :root declarations outweigh *
+ * there, so the templates only resolve on descendants.
+ *
+ * RULED (GC standing marks):
+ *   - border-radius is 0 MODE-WIDE under slant; only the cut
+ *     families get geometry, and which ones is keeper-ruled — do
+ *     not widen them without a ruling;
+ *   - slant swaps hairline borders for background lifts, because
+ *     clip-path shears a painted border off at the cut and the
+ *     lift IS the look (--gc-card-border -> transparent,
+ *     --gc-card-lift -> the theme's lift color);
+ *   - the cut scale 28/24/18/14/12 maps to xl/lg/md/sm/xs;
+ *     pills ride the published --gc-cut-pill tier.
+ * prefers-reduced-motion and the information channels (freshness,
+ * ceded, staleness) are untouched by shape: every pill keeps its
+ * role color and tinted background when its border goes.
+ * ============================================================ */
+
+/* -- size tiers: outermost surfaces cut deepest, nested tiles least -- */
+html[data-gc-shape="slanted"] .title-panel {
+  --gc-cut: var(--gc-cut-xl);
+}
+
+html[data-gc-shape="slanted"] .card {
+  --gc-cut: var(--gc-cut-lg);
+}
+
+html[data-gc-shape="slanted"] .subscription-quota-history,
+html[data-gc-shape="slanted"] .window-card,
+html[data-gc-shape="slanted"] .subscription-provider-card {
+  --gc-cut: var(--gc-cut-md);
+}
+
+html[data-gc-shape="slanted"] .metric,
+html[data-gc-shape="slanted"] .digest-item,
+html[data-gc-shape="slanted"] .subscription-window,
+html[data-gc-shape="slanted"] .table-wrap {
+  --gc-cut: var(--gc-cut-sm);
+}
+
+/* -- diagonal family, enclosed surfaces: cards, panels, tiles. Two
+ * opposite corners (top-left + bottom-right). The tracker has no
+ * paired-voice surface, so the mirror template stays unused here.
+ * These carry the ruled border -> lift swap: their hairline is what
+ * enclosed them, and clip-path shears a painted border at the cut. -- */
+html[data-gc-shape="slanted"] :is(
+    .title-panel,
+    .card,
+    .metric,
+    .digest-item,
+    .subscription-quota-history,
+    .window-card,
+    .subscription-provider-card,
+    .subscription-window
+  ) {
+  clip-path: var(--gc-clip-diagonal);
+  border-color: transparent;
+  background-image: linear-gradient(var(--gc-card-lift), var(--gc-card-lift));
+}
+
+/* -- diagonal family, open surfaces: the table wrappers. Same cut,
+ * NO lift swap — a table wrapper's rule is a divider, not an
+ * enclosure, so nothing here needs replacing. It keeps its hairline
+ * (the cut shears its end, which is the grammar) and gains no
+ * background the rounded mode does not have. -- */
+html[data-gc-shape="slanted"] .table-wrap {
+  clip-path: var(--gc-clip-diagonal);
+}
+
+/* -- octagon family: pills, badges, buttons. All four corners, on
+ * the published pill tier (a card cut would swallow a pill). -- */
+html[data-gc-shape="slanted"] :is(
+    .lane-notice,
+    .reset-chip,
+    .subscription-badge,
+    .refresh-btn,
+    .fold-cols,
+    .status-badge
+  ) {
+  --gc-cut: var(--gc-cut-pill);
+  clip-path: var(--gc-clip-octagon);
+  border-color: transparent;
+  background-image: linear-gradient(var(--gc-card-lift), var(--gc-card-lift));
+}
+
+/* -- charts are never clipped: a canvas carries its axis labels in
+ * its own corners, and a cut there eats the reading. The enclosing
+ * card's cut clears the card padding, so the plot stays whole. -- */
+html[data-gc-shape="slanted"] :is(
+    .chart-wrap,
+    .subscription-quota-chart-wrap,
+    .donut,
+    canvas
+  ) {
+  clip-path: none;
+}
+
+/* -- mode-wide hard corners: the base geometry is square, and the
+ * cut families above carry the slants on top. !important is
+ * deliberate — this must beat every radius rule in the sheet,
+ * including the literal pill/dot radii the token axis cannot
+ * reach and the mobile-breakpoint overrides. Rounded mode matches
+ * nothing here. -- */
+html[data-gc-shape="slanted"] *,
+html[data-gc-shape="slanted"] *::before,
+html[data-gc-shape="slanted"] *::after {
+  border-radius: 0 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+}
