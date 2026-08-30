@@ -1,7 +1,7 @@
 {
   "name": "johannah",
   "title": "Johannah",
-  "description": "Paper, codex ink-green, the gold family. A page from the book, not a website about the book — beautiful-by-restraint. Roles map natively: signal wine = violation, ownvoice purple = intent. Rounded native shape (the angular look is ruled not right for her). Pulse present, hushed — channels are tunable, never removable.",
+  "description": "Paper, codex ink-green, the gold family. A page from the book, not a website about the book \u2014 beautiful-by-restraint. Roles map natively: signal wine = violation, ownvoice purple = intent. Rounded native shape (the angular look is ruled not right for her). Pulse present, hushed \u2014 channels are tunable, never removable.",
   "color": {
     "roles": {
       "structure": "#c4a051",
@@ -21,7 +21,10 @@
       "shade": "rgba(45, 35, 28, 0.13)",
       "scrollbar-thumb": "#dcc38a",
       "scrollbar-thumb-hover": "#c4a051",
-      "scrollbar-track": "#f8f1de"
+      "scrollbar-track": "#f8f1de",
+      "bg-deep": "#e8dcc0",
+      "panel-raised": "#fdf8ec",
+      "fg-soft": "#5c4a55"
     },
     "syntax": {
       "bg": "#f1e8d2",
@@ -37,7 +40,8 @@
       "green-mist": "#7aa38f",
       "atlas-gold": "#d7af77",
       "atlas-wine": "#823236"
-    }
+    },
+    "scheme": "light"
   },
   "sets": {
     "ai-usage.harness": {
@@ -48,13 +52,13 @@
     },
     "ai-usage.series-rank": {
       "rank-1": "#0e5035",
-      "rank-2": "#8b2942",
+      "rank-2": "#a85560",
       "rank-3": "#432660",
       "rank-4": "#8f7333",
       "rank-5": "#3d7358",
       "rank-6": "#96657a",
       "rank-7": "#823236",
-      "rank-8": "#5c4a55",
+      "rank-8": "#dcc38a",
       "rank-9": "#c4a051",
       "rank-10": "#7aa38f"
     },
@@ -116,13 +120,14 @@
     }
   },
   "notes": {
-    "ruled": "violation = signal wine #8b2942 (OFFICIAL accent_color — heartword/signal/warning) and intent = ownvoice purple #432660 are the two ruled mappings; both from jlmu-love's token layer.",
-    "judgment": "The other four roles are judgment calls from the jlmu grammar: structure = gold #c4a051 (the OFFICIAL rule/ornament color — the hairline rules ARE her structural voice); info = green-mid #3d7358 (links at rest, quiet information); stability = ink green #0e5035 (the body ink as the stable ground); threshold = gold-deep #8f7333 (the consequential gold — focus ring / scrubber weight). Roles stay pairwise-legible within the paper register.",
+    "ruled": "violation = signal wine #8b2942 (OFFICIAL accent_color \u2014 heartword/signal/warning) and intent = ownvoice purple #432660 are the two ruled mappings; both from jlmu-love's token layer.",
+    "judgment": "The other four roles are judgment calls from the jlmu grammar: structure = gold #c4a051 (the OFFICIAL rule/ornament color \u2014 the hairline rules ARE her structural voice); info = green-mid #3d7358 (links at rest, quiet information); stability = ink green #0e5035 (the body ink as the stable ground); threshold = gold-deep #8f7333 (the consequential gold \u2014 focus ring / scrubber weight). Roles stay pairwise-legible within the paper register.",
     "hairline": "surface.line keeps jlmu's low-alpha hairline grammar (rgb(143 115 51 / 22%)); pills are 999px per the site.",
-    "modifier": "hi darkens (-0.10 lightness) — on paper, emphasis is a richer/darker ink, the inverse of the dark cockpits.",
-    "session_type": "main = ink green, cron = gold, delegated = ownvoice purple — pairwise distinct in her register; distinctness-from-siblings is the set's meaning, not absolute semantics.",
-    "motion": "hushed but PRESENT: longer periods, 0.3 pulse amplitude. Never zero — hush is a value, not a code path.",
-    "scrollbar": "Keeper-ruled 2026-08-29: scrollbars are quiet structure, not signal — dim muted-family thumb (hover slightly brighter), track on panel. Intentionally diverges from diadem's odysseus-inherited amber thumb (style.css var(--amber)); recorded as keeper-ruled divergence entry 1 in tests/test_extraction.py.",
-    "ai_usage_sets": "LANE-DRAFTED, KEEPER-TUNABLE (kintsugi render: only the default theme inherits proven values). series-rank is a ten-ink ramp entirely from her existing token layer — inks dark enough to hold a line on paper: ink green, signal wine, ownvoice purple, gold-deep, green-mid, rose, atlas wine, muted plum, gold, green mist. harness: claude_code = ink green, claude_code_secondary = green-mid, hermes = gold, opencode = signal wine."
+    "modifier": "hi darkens (-0.10 lightness) \u2014 on paper, emphasis is a richer/darker ink, the inverse of the dark cockpits.",
+    "session_type": "main = ink green, cron = gold, delegated = ownvoice purple \u2014 pairwise distinct in her register; distinctness-from-siblings is the set's meaning, not absolute semantics.",
+    "motion": "hushed but PRESENT: longer periods, 0.3 pulse amplitude. Never zero \u2014 hush is a value, not a code path.",
+    "scrollbar": "Keeper-ruled 2026-08-29: scrollbars are quiet structure, not signal \u2014 dim muted-family thumb (hover slightly brighter), track on panel. Intentionally diverges from diadem's odysseus-inherited amber thumb (style.css var(--amber)); recorded as keeper-ruled divergence entry 1 in tests/test_extraction.py.",
+    "ai_usage_sets": "LANE-DRAFTED, KEEPER-TUNABLE (kintsugi render: only the default theme inherits proven values). series-rank is a ten-ink ramp entirely from her existing token layer \u2014 inks dark enough to hold a line on paper: ink green, signal wine, ownvoice purple, gold-deep, green-mid, rose, atlas wine, muted plum, gold, green mist. harness: claude_code = ink green, claude_code_secondary = green-mid, hermes = gold, opencode = signal wine.",
+    "ai-usage.series-rank": "Corrected 2026-08-29: rank-2 no longer wears the violation hue (#8b2942 \u2014 violation is never decorative; replaced with a documented lift of attested atlas-wine) and rank-8 no longer wears the muted text hue (replaced with attested gold-soft). Remaining ramp is palette-attested; keeper-tunable."
   }
 }

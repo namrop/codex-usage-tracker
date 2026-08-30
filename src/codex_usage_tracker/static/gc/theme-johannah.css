@@ -27,23 +27,23 @@
   --gc-cat-ai-usage-harness-hermes-hi: #a98639;
   --gc-cat-ai-usage-harness-opencode-hi: #641d2f;
   --gc-cat-ai-usage-series-rank-rank-1: #0e5035;
-  --gc-cat-ai-usage-series-rank-rank-2: #8b2942;
+  --gc-cat-ai-usage-series-rank-rank-2: #a85560;
   --gc-cat-ai-usage-series-rank-rank-3: #432660;
   --gc-cat-ai-usage-series-rank-rank-4: #8f7333;
   --gc-cat-ai-usage-series-rank-rank-5: #3d7358;
   --gc-cat-ai-usage-series-rank-rank-6: #96657a;
   --gc-cat-ai-usage-series-rank-rank-7: #823236;
-  --gc-cat-ai-usage-series-rank-rank-8: #5c4a55;
+  --gc-cat-ai-usage-series-rank-rank-8: #dcc38a;
   --gc-cat-ai-usage-series-rank-rank-9: #c4a051;
   --gc-cat-ai-usage-series-rank-rank-10: #7aa38f;
   --gc-cat-ai-usage-series-rank-rank-1-hi: #062518;
-  --gc-cat-ai-usage-series-rank-rank-2-hi: #641d2f;
+  --gc-cat-ai-usage-series-rank-rank-2-hi: #86444d;
   --gc-cat-ai-usage-series-rank-rank-3-hi: #29183b;
   --gc-cat-ai-usage-series-rank-rank-4-hi: #695526;
   --gc-cat-ai-usage-series-rank-rank-5-hi: #2b523f;
   --gc-cat-ai-usage-series-rank-rank-6-hi: #785061;
   --gc-cat-ai-usage-series-rank-rank-7-hi: #5d2427;
-  --gc-cat-ai-usage-series-rank-rank-8-hi: #40333b;
+  --gc-cat-ai-usage-series-rank-rank-8-hi: #d0af63;
   --gc-cat-ai-usage-series-rank-rank-9-hi: #a98639;
   --gc-cat-ai-usage-series-rank-rank-10-hi: #608a76;
   --gc-cat-diadem-session-type-main: #0e5035;
@@ -66,6 +66,13 @@
   --gc-terminal: var(--gc-bg);
   --gc-raw: var(--gc-bg);
   --gc-scrollbar-thumb-hover: #c4a051;
+  --gc-bg-deep: #e8dcc0;
+  --gc-panel-raised: #fdf8ec;
+  --gc-fg-soft: #5c4a55;
+
+  /* -- scheme: the theme declares its own browser color-scheme -- */
+  color-scheme: light;
+  --gc-scheme: light;
 
   /* -- syntax (falls back to roles/surfaces when the theme omits it) -- */
   --gc-syntax-bg: #f1e8d2;

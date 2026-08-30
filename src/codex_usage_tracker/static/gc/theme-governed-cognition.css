@@ -66,6 +66,13 @@
   --gc-terminal: #05090c;
   --gc-raw: #120d05;
   --gc-scrollbar-thumb-hover: #C46A2D;
+  --gc-bg-deep: #070A12;
+  --gc-panel-raised: #202A40;
+  --gc-fg-soft: #D4B87B;
+
+  /* -- scheme: the theme declares its own browser color-scheme -- */
+  color-scheme: dark;
+  --gc-scheme: dark;
 
   /* -- syntax (falls back to roles/surfaces when the theme omits it) -- */
   --gc-syntax-bg: #0E1F24;

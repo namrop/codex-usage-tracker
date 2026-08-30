@@ -1,7 +1,7 @@
 {
   "name": "governed-cognition",
   "title": "Governed Cognition",
-  "description": "The default theme — the April palette as the named instance: deep slate substrate, signal teal structure, system cyan info, convergence green stability, commit gold threshold, integrity red violation, intent magenta. Values are extracted from Diadem's theme-default.css so Diadem renders identically under this theme: the odysseus-inherited cockpit is formally re-grounded here — its teal was signal teal all along, lineage now attributed.",
+  "description": "The default theme \u2014 the April palette as the named instance: deep slate substrate, signal teal structure, system cyan info, convergence green stability, commit gold threshold, integrity red violation, intent magenta. Values are extracted from Diadem's theme-default.css so Diadem renders identically under this theme: the odysseus-inherited cockpit is formally re-grounded here \u2014 its teal was signal teal all along, lineage now attributed.",
   "color": {
     "roles": {
       "structure": "#00B3A4",
@@ -23,7 +23,10 @@
       "raw": "#120d05",
       "scrollbar-thumb": "#8A6A4F",
       "scrollbar-thumb-hover": "#C46A2D",
-      "scrollbar-track": "#1A2233"
+      "scrollbar-track": "#1A2233",
+      "bg-deep": "#070A12",
+      "panel-raised": "#202A40",
+      "fg-soft": "#D4B87B"
     },
     "syntax": {
       "bg": "#0E1F24",
@@ -38,7 +41,8 @@
       "cyan": "#66E6FF",
       "purple": "#9D4EDD",
       "error-light": "#ff4d47"
-    }
+    },
+    "scheme": "dark"
   },
   "sets": {
     "ai-usage.harness": {
@@ -121,7 +125,7 @@
     "april_lineage": "Where Diadem's current values ARE the April family: teal #00B3A4 ~ Signal Teal #1FB6A6 (structure/focus); blue #4CC9F0 ~ System Cyan #38BDF8 (info); green #A4F000 carries the Convergence Green #22C55E role; amber #FFC857 ~ Commit Gold #FBBF24 (threshold); red #E10600 ~ Integrity Red #EF4444 (violation); magenta #FF2F92 ~ Intent Magenta #D946EF (intent). The roles are April doctrine; the hues are the odysseus/neo-andean-derived cockpit values, lineage attributed per the spec.",
     "sets": "session-type values resolve Diadem's --sess-main/--sess-cron/--sess-delegated aliases (var(--green)/var(--amber)/var(--purple)).",
     "info_choice": "info = --blue #4CC9F0 (the syntax key / info channel), not --cyan #66E6FF, which stays a theme-private extra.",
-    "scrollbar": "Keeper-ruled 2026-08-29: scrollbars are quiet structure, not signal — dim muted-family thumb (hover slightly brighter), track on panel. Intentionally diverges from diadem's odysseus-inherited amber thumb (style.css var(--amber)); recorded as keeper-ruled divergence entry 1 in tests/test_extraction.py.",
-    "ai_usage_sets": "series-rank values are the tracker's proven UNIFIED_RANK_COLORS array verbatim (index.html, ten hues evenly spread, no near-duplicates) — provenance, not invention, per the kintsugi render. UNIFIED_MODEL_COLORS differed (a six-hue wrap of the SERIES palette); per the ruled spec, ranks take RANK_COLORS. harness values are picked from the cockpit's own :root hues: claude_code = the teal the Claude comparison line already wore, claude_code_secondary = the spark-weekly purple, hermes = gold, opencode = sky."
+    "scrollbar": "Keeper-ruled 2026-08-29: scrollbars are quiet structure, not signal \u2014 dim muted-family thumb (hover slightly brighter), track on panel. Intentionally diverges from diadem's odysseus-inherited amber thumb (style.css var(--amber)); recorded as keeper-ruled divergence entry 1 in tests/test_extraction.py.",
+    "ai_usage_sets": "series-rank values are the tracker's proven UNIFIED_RANK_COLORS array verbatim (index.html, ten hues evenly spread, no near-duplicates) \u2014 provenance, not invention, per the kintsugi render. UNIFIED_MODEL_COLORS differed (a six-hue wrap of the SERIES palette); per the ruled spec, ranks take RANK_COLORS. harness values are picked from the cockpit's own :root hues: claude_code = the teal the Claude comparison line already wore, claude_code_secondary = the spark-weekly purple, hermes = gold, opencode = sky."
   }
 }

@@ -32,16 +32,15 @@
        * unstyled. Series tokens draw from the declared ai-usage.series-rank
        * set; harness color from ai-usage.harness. */
       :root {
-        color-scheme: dark;
         --bg: var(--gc-bg);
-        --bg-deep: var(--gc-terminal);
+        --bg-deep: var(--gc-bg-deep);
         --panel: var(--gc-panel);
-        --panel-raised: color-mix(in srgb, var(--gc-panel) 94%, var(--gc-fg) 6%);
+        --panel-raised: var(--gc-panel-raised);
         --panel-soft: var(--gc-syntax-bg);
         --line: var(--gc-line);
         --line-soft: color-mix(in srgb, var(--line) 32%, transparent);
         --text: var(--gc-fg);
-        --muted: color-mix(in srgb, var(--gc-fg) 55%, var(--gc-muted));
+        --muted: var(--gc-fg-soft);
         --muted-2: var(--gc-muted);
         --session: var(--gc-cat-ai-usage-series-rank-rank-4);
         --weekly: var(--gc-cat-ai-usage-series-rank-rank-7);
