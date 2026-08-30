@@ -1690,50 +1690,41 @@ def test_subscription_quota_chart_ticks_are_responsive(tmp_path, monkeypatch):
 def test_unified_subscription_provider_palette_is_stable_contrasting_and_scoped(
     tmp_path, monkeypatch
 ):
+    # Governed-cognition refactor (kintsugi, 2026-08-29): the literal palette
+    # died — providers pin fixed slots of the declared ai-usage.series-rank
+    # set instead. Stability = fixed provider->slot map; contrast/distinctness
+    # are the set law enforced per-theme in governed-cognition (pairwise
+    # distinct members); scoping is unchanged.
     html = _dashboard_root_html(tmp_path, monkeypatch)
     palette_match = re.search(
-        r"const SUBSCRIPTION_UNIFIED_PROVIDER_COLORS = Object\.freeze\(\{"
-        r"(?P<colors>.*?)^      \}\);",
+        r"const SUBSCRIPTION_UNIFIED_PROVIDER_RANK = Object\.freeze\(\{"
+        r"(?P<slots>.*?)^      \}\);",
         html,
         re.DOTALL | re.MULTILINE,
     )
 
     assert palette_match is not None
-    palette = json.loads(
-        "{" + re.sub(r",\s*$", "", palette_match.group("colors")) + "}"
+    slots = json.loads(
+        "{" + re.sub(r",\s*$", "", palette_match.group("slots")) + "}"
     )
-    assert palette == {
-        "openai-codex": "#22D3EE",
-        "anthropic": "#FB923C",
-        "opencode-go": "#F472B6",
-        "z-ai-glm": "#A3E635",
-        "kimi-k3-coding": "#A78BFA",
-    }
-    assert len(set(palette.values())) == len(palette)
+    assert sorted(slots) == [
+        "anthropic",
+        "kimi-k3-coding",
+        "openai-codex",
+        "opencode-go",
+        "z-ai-glm",
+    ]
+    assert all(isinstance(slot, int) and 0 <= slot < 10 for slot in slots.values())
+    assert len(set(slots.values())) == len(slots), "provider slots must stay distinct"
 
-    def relative_luminance(color):
-        channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
-        linear = [
-            channel / 12.92
-            if channel <= 0.04045
-            else ((channel + 0.055) / 1.055) ** 2.4
-            for channel in channels
-        ]
-        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
-
-    background_match = re.search(r"--bg:\s*(#[0-9A-Fa-f]{6})\s*;", html)
+    # the style layer is token-pure: --bg resolves through the GC token layer
+    background_match = re.search(r"--bg:\s*([^;]+);", html)
     assert background_match is not None
-    assert background_match.group(1).upper() == "#0B0F1A"
-    background_luminance = relative_luminance(background_match.group(1))
-    for color in palette.values():
-        color_luminance = relative_luminance(color)
-        contrast = (max(color_luminance, background_luminance) + 0.05) / (
-            min(color_luminance, background_luminance) + 0.05
-        )
-        assert contrast >= 3
+    assert background_match.group(1).strip() == "var(--gc-bg)"
 
     assert "subscriptionQuotaDatasets(rows)" in html
     assert "const color = subscriptionUnifiedProviderColor(row, index);" in html
+    assert "UNIFIED_RANK_COLORS[rank]" in html
     assert "subscriptionUnifiedQuotaDash(row)" in html
 
 

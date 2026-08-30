@@ -4,35 +4,57 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Usage</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@500;600;700;800&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- Governed Cognition: origin = delivery, vendored snapshot = fallback
+         (an outage renders yesterday's theme, never unstyled). Fonts are the
+         theme layer's vendored woff2 — the Google Fonts fetch died here
+         (kintsugi M1: all-local law). Origin derived from the page host so
+         remote tailnet browsers degrade to the snapshot instead of dialing
+         their own loopback. -->
+    <script>
+      globalThis.GC_CONFIG = {
+        origin: "http://" + (window.location.hostname || "127.0.0.1") + ":7312",
+        fallback: "/static/gc",
+      };
+    </script>
+    <script src="/static/gc/loader.js"></script>
+    <link rel="stylesheet" href="/static/gc/switcher.css" />
+    <script src="/static/gc/switcher.js"></script>
     <script src="/static/vendor/chart.umd.min.js"></script>
     <style>
+      /* Governed Cognition adapter — the obedience layer (kintsugi render,
+       * akasan spoken 2026-08-29). Every app token resolves to a --gc-* token
+       * from the estate theme system; zero literals live in this style layer.
+       * Role mapping (ruled): violation <- danger/stale-beyond-grace/ceded,
+       * threshold <- warning + the 80% line, stability <- ok/fresh,
+       * info <- cyan/sky tiles, structure <- chrome/grid, intent unused.
+       * The GC theme CSS arrives via static/gc/loader.js: origin :7312 first,
+       * vendored /static/gc snapshot on outage — yesterday's theme, never
+       * unstyled. Series tokens draw from the declared ai-usage.series-rank
+       * set; harness color from ai-usage.harness. */
       :root {
         color-scheme: dark;
-        --bg: #0B0F1A;
-        --bg-deep: #070A12;
-        --panel: #1A2233;
-        --panel-raised: #202A40;
-        --panel-soft: #0E1F24;
-        --line: #00B3A4;
-        --line-soft: rgba(0, 179, 164, 0.32);
-        --text: #FFF8DC;
-        --muted: #D4B87B;
-        --muted-2: #C46A2D;
-        --session: #FF2F92;
-        --weekly: #FFC857;
-        --spark-session: #00B3A4;
-        --spark-weekly: #9D4EDD;
-        --warning: #FFC857;
-        --danger: #E10600;
-        --ok: #A4F000;
-        --cyan: #66E6FF;
-        --sky: #4CC9F0;
-        --copper: #C46A2D;
-        --token: #66E6FF;
-        --radius: 6px;
+        --bg: var(--gc-bg);
+        --bg-deep: var(--gc-terminal);
+        --panel: var(--gc-panel);
+        --panel-raised: color-mix(in srgb, var(--gc-panel) 94%, var(--gc-fg) 6%);
+        --panel-soft: var(--gc-syntax-bg);
+        --line: var(--gc-line);
+        --line-soft: color-mix(in srgb, var(--line) 32%, transparent);
+        --text: var(--gc-fg);
+        --muted: color-mix(in srgb, var(--gc-fg) 55%, var(--gc-muted));
+        --muted-2: var(--gc-muted);
+        --session: var(--gc-cat-ai-usage-series-rank-rank-4);
+        --weekly: var(--gc-cat-ai-usage-series-rank-rank-7);
+        --spark-session: var(--gc-cat-ai-usage-series-rank-rank-10);
+        --spark-weekly: var(--gc-cat-ai-usage-series-rank-rank-3);
+        --warning: var(--gc-role-threshold);
+        --danger: var(--gc-role-violation);
+        --ok: var(--gc-role-stability);
+        --cyan: var(--gc-extra-cyan, var(--gc-role-info));
+        --sky: var(--gc-role-info);
+        --copper: var(--gc-cat-ai-usage-series-rank-rank-6);
+        --token: var(--gc-cat-ai-usage-series-rank-rank-1);
+        --radius: var(--gc-radius-md);
       }
 
       * {
@@ -48,10 +70,12 @@
       }
 
       body {
-        font-family: Rajdhani, Avenir Next, Trebuchet MS, Segoe UI, sans-serif;
+        /* The grid is structure (ruled role mapping) — both axes draw from the
+         * structural family; the old gold axis was threshold-colored, and
+         * threshold is never routine. */
         background:
-          linear-gradient(90deg, rgba(255, 200, 87, 0.08) 0 1px, transparent 1px 80px),
-          linear-gradient(180deg, rgba(0, 179, 164, 0.06) 0 1px, transparent 1px 80px),
+          linear-gradient(90deg, color-mix(in srgb, var(--gc-role-structure) 8%, transparent) 0 1px, transparent 1px 80px),
+          linear-gradient(180deg, color-mix(in srgb, var(--line) 6%, transparent) 0 1px, transparent 1px 80px),
           var(--bg);
         color: var(--text);
         padding: 22px;
@@ -90,10 +114,10 @@
       .status-panel,
       .card,
       .insight {
-        background: rgba(26, 34, 51, 0.92);
+        background: color-mix(in srgb, var(--panel) 92%, transparent);
         border: 1px solid var(--line-soft);
         border-radius: var(--radius);
-        box-shadow: 0 18px 48px rgba(7, 10, 18, 0.42);
+        box-shadow: 0 18px 48px color-mix(in srgb, var(--bg-deep) 42%, transparent);
       }
 
       .title-panel {
@@ -128,7 +152,6 @@
       }
 
       h1 {
-        font-family: Oxanium, Rajdhani, sans-serif;
         font-size: clamp(2.1rem, 4vw, 4.4rem);
         line-height: 0.95;
         letter-spacing: -0.055em;
@@ -161,18 +184,18 @@
         align-items: center;
         gap: 8px;
         width: fit-content;
-        border: 1px solid rgba(164, 240, 0, 0.55);
+        border: 1px solid color-mix(in srgb, var(--ok) 55%, transparent);
         border-radius: 999px;
         padding: 7px 11px;
         color: var(--ok);
-        background: rgba(164, 240, 0, 0.12);
+        background: color-mix(in srgb, var(--ok) 12%, transparent);
         font-weight: 700;
       }
 
       .status-pill.capped {
         color: var(--danger);
-        border-color: rgba(225, 6, 0, 0.55);
-        background: rgba(225, 6, 0, 0.12);
+        border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+        background: color-mix(in srgb, var(--danger) 12%, transparent);
       }
 
       .dot {
@@ -180,6 +203,25 @@
         height: 8px;
         border-radius: 50%;
         background: currentColor;
+      }
+
+      /* Ceded lane — violation role (ruled: ceded joins violation). One
+       * honest pill, theme-tunable, never removable. */
+      .lane-notice {
+        width: fit-content;
+        max-width: 100%;
+        margin: 12px 0 0;
+        padding: 6px 11px;
+        border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--danger) 12%, transparent);
+        color: var(--danger);
+        font-size: 0.86rem;
+        font-weight: 700;
+      }
+
+      .gc-switcher-mount {
+        margin-top: 16px;
       }
 
       .mini-grid {
@@ -193,7 +235,7 @@
         border: 1px solid var(--line-soft);
         border-radius: 4px;
         padding: 12px;
-        background: rgba(14, 31, 36, 0.76);
+        background: color-mix(in srgb, var(--panel-soft) 76%, transparent);
       }
 
       .metric .label,
@@ -206,7 +248,6 @@
 
       .metric .value {
         margin-top: 3px;
-        font-family: Oxanium, Rajdhani, sans-serif;
         font-size: clamp(1.35rem, 2.4vw, 2.25rem);
         line-height: 1;
         font-weight: 800;
@@ -237,7 +278,6 @@
       }
 
       .insight strong {
-        font-family: Oxanium, Rajdhani, sans-serif;
         font-size: 1.05rem;
         letter-spacing: -0.015em;
       }
@@ -266,7 +306,6 @@
       }
 
       h2 {
-        font-family: Oxanium, Rajdhani, sans-serif;
         font-size: clamp(1.12rem, 2vw, 1.55rem);
         letter-spacing: -0.025em;
       }
@@ -300,7 +339,7 @@
       .refresh-btn {
         border: 1px solid var(--line);
         border-radius: 999px;
-        background: rgba(26, 34, 51, 0.88);
+        background: color-mix(in srgb, var(--panel) 88%, transparent);
         color: var(--text);
         padding: 8px 13px;
         cursor: pointer;
@@ -314,7 +353,7 @@
       }
 
       .toggle.active {
-        background: rgba(255, 200, 87, 0.18);
+        background: color-mix(in srgb, var(--warning) 18%, transparent);
         border-color: var(--weekly);
         color: var(--weekly);
       }
@@ -378,7 +417,7 @@
       .rank-track {
         height: 8px;
         border-radius: 999px;
-        background: rgba(0, 179, 164, 0.10);
+        background: color-mix(in srgb, var(--line) 10%, transparent);
         overflow: hidden;
       }
 
@@ -548,11 +587,10 @@
       }
 
       tbody tr:hover {
-        background: rgba(14, 31, 36, 0.74);
+        background: color-mix(in srgb, var(--panel-soft) 74%, transparent);
       }
 
       .mono {
-        font-family: SFMono-Regular, Consolas, Liberation Mono, monospace;
         font-size: 0.82rem;
       }
 
@@ -584,7 +622,7 @@
         overflow: hidden;
         border: 1px solid var(--line-soft);
         border-radius: var(--radius);
-        background: rgba(7, 10, 18, 0.38);
+        background: color-mix(in srgb, var(--bg-deep) 38%, transparent);
       }
 
       .subscription-quota-history h3,
@@ -642,7 +680,7 @@
         padding: 14px;
         border: 1px solid var(--line-soft);
         border-radius: var(--radius);
-        background: rgba(14, 31, 36, 0.62);
+        background: color-mix(in srgb, var(--panel-soft) 62%, transparent);
       }
 
       .subscription-provider-header,
@@ -687,7 +725,7 @@
         border: 1px solid var(--line-soft);
         border-radius: 999px;
         color: var(--muted);
-        background: rgba(26, 34, 51, 0.8);
+        background: color-mix(in srgb, var(--panel) 80%, transparent);
         font-size: 0.72rem;
         font-weight: 700;
         letter-spacing: 0.04em;
@@ -699,15 +737,15 @@
       .subscription-badge.fresh,
       .subscription-badge.confidence-exact {
         color: var(--ok);
-        border-color: rgba(164, 240, 0, 0.48);
-        background: rgba(164, 240, 0, 0.1);
+        border-color: color-mix(in srgb, var(--ok) 48%, transparent);
+        background: color-mix(in srgb, var(--ok) 10%, transparent);
       }
 
       .subscription-badge.stale,
       .subscription-badge.confidence-estimated {
         color: var(--warning);
-        border-color: rgba(255, 200, 87, 0.52);
-        background: rgba(255, 200, 87, 0.12);
+        border-color: color-mix(in srgb, var(--warning) 52%, transparent);
+        background: color-mix(in srgb, var(--warning) 12%, transparent);
       }
 
       .subscription-badge.unknown,
@@ -728,18 +766,17 @@
         display: grid;
         gap: 10px;
         padding: 12px;
-        border: 1px solid rgba(0, 179, 164, 0.2);
+        border: 1px solid color-mix(in srgb, var(--line) 20%, transparent);
         border-radius: 4px;
-        background: rgba(7, 10, 18, 0.45);
+        background: color-mix(in srgb, var(--bg-deep) 45%, transparent);
       }
 
       .subscription-window.is-estimated {
-        border-color: rgba(255, 200, 87, 0.58);
-        background: rgba(255, 200, 87, 0.06);
+        border-color: color-mix(in srgb, var(--warning) 58%, transparent);
+        background: color-mix(in srgb, var(--warning) 6%, transparent);
       }
 
       .subscription-window-title {
-        font-family: Oxanium, Rajdhani, sans-serif;
         font-size: 0.98rem;
       }
 
@@ -754,7 +791,7 @@
         min-width: 0;
         padding: 8px;
         border-left: 2px solid var(--line);
-        background: rgba(26, 34, 51, 0.48);
+        background: color-mix(in srgb, var(--panel) 48%, transparent);
       }
 
       .subscription-quota-stat .label {
@@ -766,7 +803,6 @@
 
       .subscription-quota-value {
         margin-top: 3px;
-        font-family: Oxanium, Rajdhani, sans-serif;
         font-size: 0.94rem;
         font-weight: 700;
         overflow-wrap: anywhere;
@@ -776,7 +812,7 @@
         height: 8px;
         overflow: hidden;
         border-radius: 999px;
-        background: rgba(0, 179, 164, 0.12);
+        background: color-mix(in srgb, var(--line) 12%, transparent);
       }
 
       .subscription-progress-fill {
@@ -909,6 +945,28 @@
         }
       }
     </style>
+    <style id="gc-type-bridge">
+      /* Type bridge — font APPLICATION only, the one documented exception to
+       * the purity scan (mirrors diadem's excluded theme-default.css). The
+       * family values live in the GC theme layer; this block merely points
+       * the app's surfaces at them. No literals, no families named here. */
+      body {
+        font-family: var(--gc-font-body);
+      }
+
+      h1,
+      h2,
+      .metric .value,
+      .insight strong,
+      .subscription-window-title,
+      .subscription-quota-value {
+        font-family: var(--gc-font-display);
+      }
+
+      .mono {
+        font-family: var(--gc-font-mono);
+      }
+    </style>
   </head>
   <body>
     <main class="shell">
@@ -916,6 +974,7 @@
         <p class="eyebrow">Private provider-neutral accounting</p>
         <h1 id="aiUsageTitle">AI Usage</h1>
         <p class="subtitle">Seven-day canonical usage, subscription windows, and posted billing facts across configured AI harnesses and providers.</p>
+        <div id="gcSwitcher" class="gc-switcher-mount" aria-label="Governed Cognition theme"></div>
       </section>
 
       <section class="card" aria-labelledby="unifiedUsageTitle">
@@ -926,6 +985,7 @@
           </div>
         </div>
         <div id="unifiedUsageState" class="empty-state">Loading unified usage…</div>
+        <p id="unifiedCededNotice" class="lane-notice" hidden aria-live="polite"></p>
         <div id="unifiedUsageContent" hidden>
           <div class="panel-grid">
             <div class="metric"><div class="label">Total tokens</div><div class="value color-token" id="unifiedTotalTokens">—</div><div class="hint" id="unifiedWindow">—</div></div>
@@ -1304,42 +1364,83 @@
     </main>
 
     <script>
-      const SERIES = {
-        session: getCss("--session"),
-        weekly: getCss("--weekly"),
-        sparkSession: getCss("--spark-session"),
-        sparkWeekly: getCss("--spark-weekly"),
-        muted: getCss("--muted"),
-        line: getCss("--line-soft"),
-        warning: getCss("--warning"),
-        token: getCss("--token"),
-        input: getCss("--sky"),
-        cacheRead: getCss("--spark-session"),
-        cacheWrite: getCss("--copper"),
-        output: getCss("--weekly"),
-        reasoning: getCss("--spark-weekly"),
-      };
+      // Governed Cognition palette bridge (kintsugi render): the JS palette
+      // arrays died here — every color the JS layer hands to Chart.js or
+      // canvas resolves through the GC token layer at render time, so a theme
+      // swap reaches the charts. getColor() normalizes any CSS color value
+      // (var chains, color-mix) to a plain rgb()/rgba() string via a probe
+      // element so canvas and Chart.js parse it under every theme.
+      function getCss(name) {
+        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      }
+      const colorProbe = document.createElement("span");
+      colorProbe.style.display = "none";
+      document.documentElement.appendChild(colorProbe);
+      function getColor(name) {
+        colorProbe.style.color = "";
+        colorProbe.style.color = getCss(name);
+        const resolved = getComputedStyle(colorProbe).color;
+        return resolved || getCss(name);
+      }
+      function withAlpha(color, alpha) {
+        const match = String(color).match(/^rgba?\(([^)]+)\)$/);
+        if (!match) return color;
+        const [r, g, b] = match[1].split(",").map((part) => part.trim());
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      }
 
-      const UNIFIED_MODEL_COLORS = [
-        SERIES.token,
-        SERIES.sparkSession,
-        SERIES.weekly,
-        SERIES.session,
-        SERIES.input,
-        SERIES.cacheWrite,
-      ];
-      // renderRankBars shows up to ten rows; the six chart colours wrapped, so rows 1
-      // and 7 were the same colour. Ten hues, evenly spread, no near-duplicates.
-      const UNIFIED_RANK_COLORS = [
-        "#66E6FF", "#4C6FF0", "#9D4EDD", "#FF2F92", "#E1655B",
-        "#C46A2D", "#FFC857", "#A4F000", "#34C759", "#00B3A4",
-      ];
-      const SUBSCRIPTION_UNIFIED_PROVIDER_COLORS = Object.freeze({
-        "openai-codex": "#22D3EE",
-        "anthropic": "#FB923C",
-        "opencode-go": "#F472B6",
-        "z-ai-glm": "#A3E635",
-        "kimi-k3-coding": "#A78BFA",
+      const SERIES = {};
+      // Ranked/unbounded series wear the declared ai-usage.series-rank set
+      // (keeper amendment, verbatim in the GC schema: surplus graph-line
+      // colors are acceptable but defined in governed cognition). Harness
+      // identity wears the declared ai-usage.harness set.
+      let UNIFIED_RANK_COLORS = [];
+      let UNIFIED_MODEL_COLORS = [];
+      let HARNESS_COLORS = {};
+      function refreshPalette() {
+        Object.assign(SERIES, {
+          session: getColor("--session"),
+          weekly: getColor("--weekly"),
+          sparkSession: getColor("--spark-session"),
+          sparkWeekly: getColor("--spark-weekly"),
+          muted: getColor("--muted"),
+          line: getColor("--line-soft"),
+          warning: getColor("--warning"),
+          danger: getColor("--danger"),
+          token: getColor("--token"),
+          input: getColor("--sky"),
+          cacheRead: getColor("--spark-session"),
+          cacheWrite: getColor("--copper"),
+          output: getColor("--weekly"),
+          reasoning: getColor("--spark-weekly"),
+          text: getColor("--text"),
+          grid: withAlpha(getColor("--line"), 0.10),
+          gridSoft: withAlpha(getColor("--line"), 0.08),
+          tooltipBg: withAlpha(getColor("--bg"), 0.96),
+          fontBody: getCss("--gc-font-body") || "sans-serif",
+        });
+        UNIFIED_RANK_COLORS = Array.from({ length: 10 }, (_unused, index) => (
+          getColor(`--gc-cat-ai-usage-series-rank-rank-${index + 1}`)
+        ));
+        UNIFIED_MODEL_COLORS = UNIFIED_RANK_COLORS.slice();
+        HARNESS_COLORS = {
+          claude_code: getColor("--gc-cat-ai-usage-harness-claude_code"),
+          claude_code_secondary: getColor("--gc-cat-ai-usage-harness-claude_code_secondary"),
+          hermes: getColor("--gc-cat-ai-usage-harness-hermes"),
+          opencode: getColor("--gc-cat-ai-usage-harness-opencode"),
+        };
+      }
+      refreshPalette();
+
+      // Providers pin fixed slots of the rank set (nearest-hue to the retired
+      // literal map) so a provider keeps one color across renders; unmapped
+      // providers fall through by index.
+      const SUBSCRIPTION_UNIFIED_PROVIDER_RANK = Object.freeze({
+        "openai-codex": 0,
+        "anthropic": 5,
+        "opencode-go": 3,
+        "z-ai-glm": 7,
+        "kimi-k3-coding": 2,
       });
       const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -1433,7 +1534,7 @@
           ctx.setLineDash([]);
           ctx.globalAlpha = 0.75;
           ctx.fillStyle = SERIES.warning;
-          ctx.font = "11px Rajdhani, Avenir Next, sans-serif";
+          ctx.font = "11px " + SERIES.fontBody;
           ctx.fillText(`${threshold}%`, area.right - 30, y - 6);
           ctx.restore();
         },
@@ -1473,7 +1574,7 @@
           }
 
           ctx.save();
-          ctx.font = "12px Rajdhani, Avenir Next, sans-serif";
+          ctx.font = "12px " + SERIES.fontBody;
           labels.forEach((label) => {
             const y = Math.max(area.top + 16, Math.min(area.bottom - 8, label.y));
             ctx.fillStyle = label.color;
@@ -1484,10 +1585,6 @@
       };
 
       if (typeof Chart !== "undefined") Chart.register(thresholdPlugin, endpointLabelPlugin);
-
-      function getCss(name) {
-        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-      }
 
       // Timezone policy: UTC-bucketed surfaces (anything headed "UTC hour") render
       // through formatUtcHour; point-in-time sample timestamps render local through
@@ -1640,7 +1737,7 @@
                 stepSize: 25,
                 callback: (value) => `${value}%`,
               },
-              grid: { color: "rgba(0, 179, 164, 0.10)" },
+              grid: { color: SERIES.grid },
             },
             x: {
               border: { color: SERIES.line },
@@ -1659,11 +1756,11 @@
             endpointLabelPlugin: { enabled: Boolean(endpointLabels) },
             legend: {
               display: legend && !endpointLabels,
-              labels: { color: getCss("--text"), usePointStyle: true, boxWidth: 8 },
+              labels: { color: SERIES.text, usePointStyle: true, boxWidth: 8 },
             },
             tooltip: {
               displayColors: false,
-              backgroundColor: "rgba(11, 15, 26, 0.96)",
+              backgroundColor: SERIES.tooltipBg,
               borderColor: SERIES.line,
               borderWidth: 1,
               padding: 10,
@@ -1720,7 +1817,7 @@
               beginAtZero: true,
               border: { color: SERIES.line },
               ticks: { color: SERIES.muted, callback: (value) => compactIntFormat(value) },
-              grid: { color: "rgba(0, 179, 164, 0.10)" },
+              grid: { color: SERIES.grid },
               title: { display: true, text: "tokens", color: SERIES.muted },
             },
             yUsage: {
@@ -1741,10 +1838,10 @@
           },
           plugins: {
             thresholdPlugin: { axis: "yUsage", value: 80 },
-            legend: { display: true, labels: { color: getCss("--text"), usePointStyle: true, boxWidth: 8 } },
+            legend: { display: true, labels: { color: SERIES.text, usePointStyle: true, boxWidth: 8 } },
             tooltip: {
               displayColors: true,
-              backgroundColor: "rgba(11, 15, 26, 0.96)",
+              backgroundColor: SERIES.tooltipBg,
               borderColor: SERIES.line,
               borderWidth: 1,
               padding: 10,
@@ -1772,7 +1869,7 @@
               stacked,
               border: { color: SERIES.line },
               ticks: { color: SERIES.muted, callback: (value) => pct || delta ? `${value}%` : compactIntFormat(value) },
-              grid: { color: "rgba(0, 179, 164, 0.10)" },
+              grid: { color: SERIES.grid },
             },
             x: {
               stacked,
@@ -1782,9 +1879,9 @@
             },
           },
           plugins: {
-            legend: { display: true, labels: { color: getCss("--text"), usePointStyle: true, boxWidth: 8 } },
+            legend: { display: true, labels: { color: SERIES.text, usePointStyle: true, boxWidth: 8 } },
             tooltip: {
-              backgroundColor: "rgba(11, 15, 26, 0.96)",
+              backgroundColor: SERIES.tooltipBg,
               borderColor: SERIES.line,
               borderWidth: 1,
               padding: 10,
@@ -1811,7 +1908,7 @@
               stacked,
               border: { color: SERIES.line },
               ticks: { color: SERIES.muted, maxTicksLimit: 5, callback: (value) => compactIntFormat(value) },
-              grid: { color: "rgba(0, 179, 164, 0.08)" },
+              grid: { color: SERIES.gridSoft },
             },
             x: {
               stacked,
@@ -1831,7 +1928,7 @@
             legend: { display: false },
             tooltip: {
               displayColors: false,
-              backgroundColor: "rgba(11, 15, 26, 0.96)",
+              backgroundColor: SERIES.tooltipBg,
               borderColor: SERIES.line,
               borderWidth: 1,
               padding: 10,
@@ -1994,7 +2091,7 @@
         document.getElementById("modelTokenSummary").textContent = `${compactIntFormat(modelTotal)} accounted tokens across ${models.length} displayed series in complete UTC hours.`;
 
         const comparisons = Array.isArray(timeSeries.comparison_series) ? timeSeries.comparison_series : [];
-        const comparisonColors = [SERIES.token, SERIES.sparkSession];
+        const comparisonColors = [SERIES.token, HARNESS_COLORS.claude_code || SERIES.sparkSession];
         const comparisonDatasets = comparisons.map((row, index) => lineDataset(
           row.label,
           row.values,
@@ -2330,12 +2427,34 @@
         return ` Stale lane${named.length > 1 ? "s" : ""}: ${named.join(", ")}.`;
       }
 
+      // Ceded-lane rendering (the one behavior addition, keeper-ratified via
+      // the kintsugi akasan): a lane the collector gave up on this run is a
+      // violation-role state — one honest line naming the lane and its error
+      // class, not a dashboard section.
+      function renderCededLanes(freshness) {
+        const notice = document.getElementById("unifiedCededNotice");
+        if (!notice) return;
+        const lanes = Array.isArray(freshness.lanes) ? freshness.lanes : [];
+        const ceded = lanes.filter((lane) => lane && lane.ceded === true);
+        if (!ceded.length) {
+          notice.hidden = true;
+          notice.textContent = "";
+          return;
+        }
+        const named = ceded.map((lane) => (
+          lane.last_error_class ? `${lane.lane} (${lane.last_error_class})` : String(lane.lane)
+        ));
+        notice.textContent = `Lane${named.length > 1 ? "s" : ""} ceded this run: ${named.join(", ")} — collector retried, then skipped so the rest of the run could land.`;
+        notice.hidden = false;
+      }
+
       async function loadUnifiedUsage() {
         try {
           const response = await fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) });
           if (!response.ok) throw new Error("unavailable");
           const data = await response.json();
           const freshness = data.freshness || {};
+          renderCededLanes(freshness);
           if (freshness.status === "stale") {
             showPanel("unifiedUsageState", "unifiedUsageContent", `Canonical usage is stale · last ledger write ${formatTimestamp(freshness.latest_at)}.${staleLaneSuffix(freshness)}`);
             return;
@@ -2454,8 +2573,9 @@
 
       function subscriptionUnifiedProviderColor(row, index) {
         const provider = String(row && row.provider || "").trim().toLowerCase();
-        return SUBSCRIPTION_UNIFIED_PROVIDER_COLORS[provider]
-          || UNIFIED_MODEL_COLORS[index % UNIFIED_MODEL_COLORS.length];
+        const rank = SUBSCRIPTION_UNIFIED_PROVIDER_RANK[provider];
+        if (rank !== undefined && UNIFIED_RANK_COLORS[rank]) return UNIFIED_RANK_COLORS[rank];
+        return UNIFIED_MODEL_COLORS[index % UNIFIED_MODEL_COLORS.length];
       }
 
       function subscriptionUnifiedQuotaDash(row) {
@@ -2504,7 +2624,7 @@
               max: 100,
               border: { color: SERIES.line },
               ticks: { color: SERIES.muted, stepSize: 25, callback: (value) => `${value}%` },
-              grid: { color: "rgba(0, 179, 164, 0.10)" },
+              grid: { color: SERIES.grid },
               title: { display: true, text: "quota used", color: SERIES.muted },
             },
             x: {
@@ -2523,7 +2643,7 @@
             legend: { display: false },
             tooltip: {
               displayColors: true,
-              backgroundColor: "rgba(11, 15, 26, 0.96)",
+              backgroundColor: SERIES.tooltipBg,
               borderColor: SERIES.line,
               borderWidth: 1,
               padding: 10,
@@ -3162,7 +3282,50 @@
       });
 
       els.refresh.addEventListener("click", hydrate);
-      hydrate();
+
+      // Charts read colors at render time, so the GC token layer must be
+      // resolved BEFORE the first render: poll for the theme stylesheet
+      // (origin or vendored fallback — the loader guarantees one lands), with
+      // a deadline so a pathological outage still renders data.
+      function whenThemeReady(deadlineMs = 4000) {
+        const started = Date.now();
+        return new Promise((resolve) => {
+          (function poll() {
+            if (getCss("--gc-bg") || Date.now() - started > deadlineMs) {
+              resolve();
+              return;
+            }
+            setTimeout(poll, 50);
+          })();
+        });
+      }
+
+      let booted = false;
+      whenThemeReady().then(() => {
+        refreshPalette();
+        booted = true;
+        hydrate();
+      });
+
+      // Runtime theme swap (GC switcher): the loader replaces the href on its
+      // managed #gc-theme link; each load re-resolves the palette and
+      // re-renders so Chart.js picks up the new tokens.
+      const gcThemeLink = document.getElementById("gc-theme");
+      if (gcThemeLink) {
+        gcThemeLink.addEventListener("load", () => {
+          if (!booted) return;
+          refreshPalette();
+          hydrate();
+        });
+      }
+      if (globalThis.GovernedCognitionSwitcher) {
+        try {
+          GovernedCognitionSwitcher.mount("#gcSwitcher");
+        } catch (error) {
+          /* switcher is optional chrome; theming works without it */
+        }
+      }
+
       setInterval(() => {
         if (!document.hidden) hydrate();
       }, 60000);

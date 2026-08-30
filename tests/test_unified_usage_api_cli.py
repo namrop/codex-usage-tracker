@@ -1190,6 +1190,26 @@ def test_freshness_names_the_stale_lane_behind_a_healthy_heartbeat(tmp_path, mon
     assert by_lane["hermes"]["status"] == "fresh"
 
 
+def test_freshness_projects_the_ceded_flag_so_the_ui_can_render_it(tmp_path, monkeypatch):
+    # Graceful cede (keeper-ruled 2026-08-29): a lane skipped after exhausted
+    # retries must reach the screen — the projection carries `ceded` verbatim
+    # and defaults it to False when the collector predates the field.
+    lane_health = _lane_health(
+        hermes="2026-07-14T11:30:00Z",
+        claude_code="2026-07-14T11:30:00Z",
+    )
+    lane_health["lanes"]["hermes"]["ceded"] = True
+    lane_health["lanes"]["hermes"]["last_error_class"] = "TimeoutError"
+    client = _freshness_client(tmp_path, monkeypatch, lane_health=lane_health)
+
+    freshness = client.get("/api/unified-usage?hours=3").get_json()["freshness"]
+
+    by_lane = {lane["lane"]: lane for lane in freshness["lanes"]}
+    assert by_lane["hermes"]["ceded"] is True
+    assert by_lane["hermes"]["last_error_class"] == "TimeoutError"
+    assert by_lane["claude_code"]["ceded"] is False
+
+
 def test_freshness_falls_back_to_the_heartbeat_when_lane_health_is_absent(tmp_path, monkeypatch):
     client = _freshness_client(tmp_path, monkeypatch)
 

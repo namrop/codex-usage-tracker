@@ -278,6 +278,10 @@ def _lane_freshness(
                 "rows_written": int(lane.get("rows_written") or 0),
                 "quarantined_count": int(lane.get("quarantined_count") or 0),
                 "age_seconds": age_seconds,
+                # Graceful cede (keeper-ruled 2026-08-29): a lane that
+                # exhausted its retries this run was skipped so the rest of
+                # the run could land. The honest state must reach the screen.
+                "ceded": bool(lane.get("ceded")),
             }
         )
     return projected
