@@ -137,3 +137,135 @@ def test_gc_repo_conformance_scan_agrees_when_available() -> None:
     _attrs, body = _style_blocks()[0]
     findings = module.scan_css_text(body, "index.html:<style>")
     assert findings == [], "\n".join(findings)
+
+
+# ---------------------------------------------------------------------------
+# Shape axis: the slant consumer contract.
+#
+# Keeper-ruled 2026-08-29 ("use the pattern that diadem used"). These mirror
+# diadem's tests-static slant-obedience section: the app consumes the
+# published namrop grammar, never re-declares it, and rounded mode cannot
+# see any of it. GC's standing marks are the law being pinned here — radius
+# 0 mode-wide, cuts only on the ruled families, the border -> lift swap, and
+# the keeper-tuned 28/24/18/14/12 scale reached only through its tokens.
+# ---------------------------------------------------------------------------
+
+SLANT_MARKER = "SLANT — the governed-cognition shape axis"
+SLANT_SCOPE = 'html[data-gc-shape="slanted"]'
+
+
+def _slant_split() -> tuple[str, str]:
+    """Return (everything outside the slant section, the slant section) of the
+    app style block, comments included. The section runs from its header
+    comment to the prefers-reduced-motion block, which stays the sheet's last
+    law and is shape-independent."""
+    _attrs, body = _style_blocks()[0]
+    marker = body.index(SLANT_MARKER)
+    start = body.rfind("/*", 0, marker)
+    assert start != -1
+    end = body.index("@media (prefers-reduced-motion", start)
+    return body[:start] + body[end:], body[start:end]
+
+
+def _uncommented(css: str) -> str:
+    return COMMENT_RE.sub("", css)
+
+
+def test_slant_section_exists_and_owns_every_clip_path() -> None:
+    """Rounded mode must be byte-identical to the pre-shape sheet: no
+    clip-path may exist outside the slant section."""
+    outside, slant = _slant_split()
+    assert "clip-path" not in _uncommented(outside), (
+        "clip-path outside the slant section — rounded mode would change shape"
+    )
+    assert _uncommented(slant).count("clip-path:") >= 3
+
+
+def test_every_slant_selector_is_scoped_to_the_shape_attribute() -> None:
+    """Nothing in the section may leak into rounded mode."""
+    _outside, slant = _slant_split()
+    for line in _uncommented(slant).splitlines():
+        if "{" not in line or "}" in line or line.lstrip().startswith("@"):
+            continue
+        if line.strip() == ") {":  # a multiline :is() closing its selector
+            continue
+        assert SLANT_SCOPE in line or ":is(" in line, (
+            f"unscoped slant selector (rounded mode would match it): {line.strip()!r}"
+        )
+    assert f"{SLANT_SCOPE} :is(" in _uncommented(slant)
+
+
+def test_cuts_ride_the_published_tier_tokens_only() -> None:
+    """The keeper-tuned scale is reached through its tokens — never a
+    literal, never a calc-derived half tier (retired at GC 99e4608)."""
+    _outside, slant = _slant_split()
+    rules = _uncommented(slant)
+    for tier in ("xl", "lg", "md", "sm", "pill"):
+        assert f"var(--gc-cut-{tier})" in rules, f"cut tier {tier} unused"
+    assert "calc(" not in rules, "cut tiers are published, not derived"
+    assert not re.search(r"--gc-cut:\s*[\d.]", rules), "literal cut value in the slant section"
+
+
+def test_published_clip_templates_are_consumed_never_redeclared() -> None:
+    """GC declares the templates on * so each element composes its polygon
+    from its own --gc-cut. A local copy would freeze the tier again."""
+    _outside, slant = _slant_split()
+    rules = _uncommented(slant)
+    assert "clip-path: var(--gc-clip-diagonal)" in rules
+    assert "clip-path: var(--gc-clip-octagon)" in rules
+    assert "polygon(" not in rules, (
+        "the grammar is published upstream — consumers reference it, they do not copy it"
+    )
+
+
+def test_enclosed_surfaces_carry_the_ruled_border_to_lift_swap() -> None:
+    """RULED: slant swaps hairline borders for background lifts, because
+    clip-path shears a painted border off at the cut."""
+    _outside, slant = _slant_split()
+    rules = _uncommented(slant)
+    swaps = rules.count("border-color: transparent;")
+    lifts = rules.count("linear-gradient(var(--gc-card-lift), var(--gc-card-lift))")
+    assert swaps >= 2 and swaps == lifts, (
+        f"border -> lift swap unbalanced: {swaps} border resets, {lifts} lifts"
+    )
+
+
+def test_radius_is_zero_mode_wide_under_slant() -> None:
+    """RULED: under slant the base geometry is square; only the cut families
+    carry geometry. The !important beats the literal pill/dot radii the token
+    axis cannot reach."""
+    _outside, slant = _slant_split()
+    rules = _uncommented(slant)
+    assert f"{SLANT_SCOPE} *,\n" in rules or f"{SLANT_SCOPE} *," in rules
+    assert "border-radius: 0 !important;" in rules
+
+
+def test_charts_are_never_clipped_under_slant() -> None:
+    """A canvas carries its axis labels in its own corners; a cut there eats
+    the reading."""
+    _outside, slant = _slant_split()
+    rules = _uncommented(slant)
+    chart_rule = re.search(
+        r"html\[data-gc-shape=\"slanted\"\] :is\(([^)]*canvas[^)]*)\)\s*\{([^}]*)\}",
+        rules,
+        re.S,
+    )
+    assert chart_rule is not None, "no explicit chart exemption in the slant section"
+    assert "clip-path: none" in chart_rule.group(2)
+    assert ".chart-wrap" in chart_rule.group(1)
+
+
+def test_vendored_overlay_publishes_the_full_grammar_surface() -> None:
+    """The fallback snapshot must carry the pill tier and the templates on *
+    (GC 99e4608) — an origin outage must not fall back to a broken slant."""
+    overlay = (GC_SNAPSHOT / "shape-slant.css").read_text(encoding="utf-8")
+    assert "--gc-cut-pill: 7px" in overlay
+    assert "--gc-clip-diagonal:" in overlay
+    assert "--gc-clip-octagon:" in overlay
+    templates = overlay[overlay.index("--gc-clip-diagonal:") :]
+    scope = overlay.rfind("{", 0, overlay.index("--gc-clip-diagonal:"))
+    assert overlay[:scope].rstrip().endswith("*"), (
+        "clip templates must be declared on * — a :root declaration freezes "
+        "--gc-cut at the root value and per-element tiers can never resolve"
+    )
+    assert "polygon(" in templates

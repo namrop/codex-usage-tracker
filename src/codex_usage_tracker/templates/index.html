@@ -934,6 +934,126 @@
         }
       }
 
+      /* ============================================================
+       * SLANT — the governed-cognition shape axis, consumed the way
+       * diadem consumes it (keeper-ruled 2026-08-29: "use the pattern
+       * that diadem used"). Scoped ENTIRELY under
+       * html[data-gc-shape="slanted"] — the loader flips that attribute
+       * when it hangs the shape-slant overlay — so rounded mode matches
+       * none of these rules and stays pixel-unchanged.
+       *
+       * Pure consumption of the published namrop grammar (GC @ 99e4608):
+       * the clip templates are declared upstream on * (NOT :root), so
+       * every element composes its own polygon from its own --gc-cut.
+       * The consumer's whole job is therefore two lines per surface —
+       * pick the size tier, then apply the family's template. Never
+       * clip <html> itself: the theme's :root declarations outweigh *
+       * there, so the templates only resolve on descendants.
+       *
+       * RULED (GC standing marks):
+       *   - border-radius is 0 MODE-WIDE under slant; only the cut
+       *     families get geometry, and which ones is keeper-ruled — do
+       *     not widen them without a ruling;
+       *   - slant swaps hairline borders for background lifts, because
+       *     clip-path shears a painted border off at the cut and the
+       *     lift IS the look (--gc-card-border -> transparent,
+       *     --gc-card-lift -> the theme's lift color);
+       *   - the cut scale 28/24/18/14/12 maps to xl/lg/md/sm/xs;
+       *     pills ride the published --gc-cut-pill tier.
+       * prefers-reduced-motion and the information channels (freshness,
+       * ceded, staleness) are untouched by shape: every pill keeps its
+       * role color and tinted background when its border goes.
+       * ============================================================ */
+
+      /* -- size tiers: outermost surfaces cut deepest, nested tiles least -- */
+      html[data-gc-shape="slanted"] .title-panel {
+        --gc-cut: var(--gc-cut-xl);
+      }
+
+      html[data-gc-shape="slanted"] .card,
+      html[data-gc-shape="slanted"] .status-panel {
+        --gc-cut: var(--gc-cut-lg);
+      }
+
+      html[data-gc-shape="slanted"] .insight,
+      html[data-gc-shape="slanted"] .subscription-quota-history,
+      html[data-gc-shape="slanted"] .subscription-provider-card {
+        --gc-cut: var(--gc-cut-md);
+      }
+
+      html[data-gc-shape="slanted"] .metric,
+      html[data-gc-shape="slanted"] .subscription-window,
+      html[data-gc-shape="slanted"] .table-wrap {
+        --gc-cut: var(--gc-cut-sm);
+      }
+
+      /* -- diagonal family, enclosed surfaces: cards, panels, tiles. Two
+       * opposite corners (top-left + bottom-right). The tracker has no
+       * paired-voice surface, so the mirror template stays unused here.
+       * These carry the ruled border -> lift swap: their hairline is what
+       * enclosed them, and clip-path shears a painted border at the cut. -- */
+      html[data-gc-shape="slanted"] :is(
+          .title-panel,
+          .status-panel,
+          .card,
+          .insight,
+          .metric,
+          .subscription-quota-history,
+          .subscription-provider-card,
+          .subscription-window
+        ) {
+        clip-path: var(--gc-clip-diagonal);
+        border-color: transparent;
+        background-image: linear-gradient(var(--gc-card-lift), var(--gc-card-lift));
+      }
+
+      /* -- diagonal family, open surfaces: the table wrappers. Same cut,
+       * NO lift swap — a table wrapper's rule is a divider, not an
+       * enclosure, so nothing here needs replacing. It keeps its hairline
+       * (the cut shears its end, which is the grammar) and gains no
+       * background the rounded mode does not have. -- */
+      html[data-gc-shape="slanted"] .table-wrap {
+        clip-path: var(--gc-clip-diagonal);
+      }
+
+      /* -- octagon family: pills, badges, buttons. All four corners, on
+       * the published pill tier (a card cut would swallow a pill). -- */
+      html[data-gc-shape="slanted"] :is(
+          .status-pill,
+          .lane-notice,
+          .subscription-badge,
+          .toggle,
+          .refresh-btn
+        ) {
+        --gc-cut: var(--gc-cut-pill);
+        clip-path: var(--gc-clip-octagon);
+        border-color: transparent;
+        background-image: linear-gradient(var(--gc-card-lift), var(--gc-card-lift));
+      }
+
+      /* -- charts are never clipped: a canvas carries its axis labels in
+       * its own corners, and a cut there eats the reading. The enclosing
+       * card's cut clears the card padding, so the plot stays whole. -- */
+      html[data-gc-shape="slanted"] :is(
+          .chart-wrap,
+          .subscription-quota-chart-wrap,
+          canvas
+        ) {
+        clip-path: none;
+      }
+
+      /* -- mode-wide hard corners: the base geometry is square, and the
+       * cut families above carry the slants on top. !important is
+       * deliberate — this must beat every radius rule in the sheet,
+       * including the literal pill/dot radii the token axis cannot
+       * reach and the mobile-breakpoint overrides. Rounded mode matches
+       * nothing here. -- */
+      html[data-gc-shape="slanted"] *,
+      html[data-gc-shape="slanted"] *::before,
+      html[data-gc-shape="slanted"] *::after {
+        border-radius: 0 !important;
+      }
+
       @media (prefers-reduced-motion: reduce) {
         *,
         *::before,
