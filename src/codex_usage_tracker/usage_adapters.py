@@ -128,10 +128,13 @@ def collect_hermes_usage(db_path: str | Path, source_namespace: str, *, batch_si
                 event_id=str(r.get("event_uid") or f"sqlite-row:{r['_immutable_rowid']}")
                 occurred=_timestamp(r.get("timestamp"),r.get("created_at"))
                 recorded=_timestamp(r.get("created_at"),r.get("timestamp"))
+                # The sidecar gains a model_reported column in its own lane;
+                # .get() is None-safe on databases from before that column.
+                model_reported=_optional_text(r.get("model_reported"))
                 row=_base_event(namespace=source_namespace,event_id=event_id,harness="hermes",occurred=occurred,recorded=recorded,purpose=_hermes_purpose(r.get("purpose"), historical=historical))
                 row.update({
                   "event_uid":_optional_text(r.get("event_uid")),"surface":_optional_text(r.get("source")),"session_id":_optional_text(r.get("session_id")),
-                  "provider":_optional_text(r.get("provider")),"model_requested":_optional_text(r.get("model")),"model_reported":None,
+                  "provider":_optional_text(r.get("provider")),"model_requested":_optional_text(r.get("model")),"model_reported":model_reported,
                   "api_mode":_optional_text(r.get("api_mode")),"billing_mode":_optional_text(r.get("billing_mode")),
                   "record_kind":r.get("record_kind") or "api_attempt","request_status":None if historical else _optional_text(r.get("request_status")),
                   "error_class":_optional_text(r.get("error_class")),"latency_ms":None if historical else r.get("latency_ms"),
@@ -139,7 +142,7 @@ def collect_hermes_usage(db_path: str | Path, source_namespace: str, *, batch_si
                   "cache_write_tokens":r.get("cache_write_tokens"),"output_tokens":r.get("output_tokens"),
                   "reasoning_tokens":r.get("reasoning_tokens"),"usage_source":r.get("usage_source") or ("reconstructed" if historical else "provider_reported"),
                   "usage_completeness":"unknown","measurement_confidence":r.get("measurement_confidence") or "unknown",
-                  "missing_fields":[],"attribution_gaps":[name for name,value in (("provider",r.get("provider")),("model_requested",r.get("model")),("model_reported",None)) if value is None],
+                  "missing_fields":[],"attribution_gaps":[name for name,value in (("provider",r.get("provider")),("model_requested",r.get("model")),("model_reported",model_reported)) if value is None],
                   "estimated_cost_usd":estimated,"actual_cost_usd":actual,"cost_status":status,"cost_source":_optional_text(r.get("cost_source")),
                   "pricing_version":_optional_text(r.get("pricing_version")),"reconstructed_call_count":r.get("api_call_index") if historical else None,
                 })

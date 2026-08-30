@@ -369,20 +369,31 @@ include a three-hour ledger-write freshness contract (`fresh`, `stale`, or
 is stale:
 
 - `GET /api/unified-usage` supports `provider`, `harness`, `purpose`,
-  `model_requested`, and `days`; it returns token/request-cost totals, selected
-  window metadata, harness and provider/model groups, and exact/reconstructed
-  coverage. Supplying `hours=1..168` instead of `days` aligns the response to
+  `model_requested`, `days`, and `before`; it returns token/request-cost totals,
+  selected window metadata, harness and provider/model groups, and
+  exact/reconstructed coverage. Supplying `hours=1..168` instead of `days`
+  aligns the response to
   complete UTC hours and adds zero-filled chart series. The model chart uses
   reported model when available (requested model otherwise), keeps the five
   largest provider/model pairs, and rolls the rest into `Other models`. The
   comparison chart defines OpenAI Codex subscription traffic by
   `provider=openai-codex` and Claude Code traffic by `harness=claude_code`;
-- `GET /api/subscriptions` supports `provider`, `harness`, and `quota_name`; it
-  returns the latest observation per subscription window and normalized
-  observation history;
+- `GET /api/subscriptions` supports `provider`, `harness`, `quota_name`,
+  `days`, and `before`; it returns the latest observation per subscription
+  window and normalized observation history;
 - `GET /api/billing` supports `provider`, `transaction_kind`, `status`,
-  `currency`, and `days`; it returns signed totals separately by currency and
-  transaction kind plus an allowlisted transaction projection.
+  `currency`, `days`, and `before`; it returns signed totals separately by
+  currency and transaction kind plus an allowlisted transaction projection.
+
+Private reads with no explicit window default to the latest eight days
+(keeper ruling 2026-08-29) rather than reading the whole ledger; the response
+`window` metadata reports `default_days` and a `next_before` cursor. Older
+history is fetched with timestamp-cursor paging: `before=<RFC 3339>` returns
+the half-open window `[before - days, before)` (page length `days`, default
+eight), and passing the returned `next_before` as the next request's `before`
+yields disjoint, gapless pages even while collectors append. An explicit
+`days` without `before` keeps its historical now-anchored, upper-unbounded
+semantics, still capped by the per-request row limit.
 
 Billing totals are never combined with `usage_event_v1` estimated or actual
 request costs. Private API reads are schema-bound, indexed for typed filters,

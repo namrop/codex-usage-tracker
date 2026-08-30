@@ -71,6 +71,9 @@ _PRIVATE_API_SQLITE_LIMIT = 10_000
 _PRIVATE_API_MAX_ROWS = 100_000
 _PRIVATE_API_MAX_JSONL_BYTES = 128 * 1024 * 1024
 _MAX_PRIVATE_API_DAYS = 36_500
+# Keeper ruling 2026-08-29: unbounded private reads return the latest rows an
+# 8-day reconstruction needs; older history is reached with `before` paging.
+_DEFAULT_PRIVATE_API_WINDOW_DAYS = 8
 _MAX_UNIFIED_SERIES_HOURS = 168
 # /api/data feeds a 24-row table; returning the whole ledger cost ~4MB per refresh.
 _DEFAULT_DATA_ROW_LIMIT = 200
@@ -385,7 +388,8 @@ def _private_facts(
     raise UnsupportedLedgerSuffix(f"unsupported ledger suffix: {suffix or '<none>'}")
 
 
-def _days_argument() -> tuple[datetime | None, tuple[Any, int] | None]:
+def _days_argument() -> tuple[int | None, tuple[Any, int] | None]:
+    """Parse and validate ``?days=`` without anchoring it to a window end."""
     days_text = request.args.get("days")
     if days_text is None:
         return None, None
@@ -397,11 +401,72 @@ def _days_argument() -> tuple[datetime | None, tuple[Any, int] | None]:
         return None, (jsonify({"error": "days must be nonnegative"}), 400)
     if days > _MAX_PRIVATE_API_DAYS:
         return None, (jsonify({"error": f"days must be no greater than {_MAX_PRIVATE_API_DAYS}"}), 400)
+    return days, None
+
+
+def _before_argument() -> tuple[datetime | None, tuple[Any, int] | None]:
+    """Parse ``?before=``, the exclusive upper timestamp bound and paging cursor."""
+    before_text = request.args.get("before")
+    if before_text is None:
+        return None, None
     try:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        canonical = canonical_timestamp(before_text)
+    except ValidationError:
+        return None, (jsonify({"error": "before must be an RFC 3339 timestamp"}), 400)
+    return _fact_datetime(canonical), None
+
+
+def _window_timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _window_arguments(
+    now: datetime,
+) -> tuple[datetime | None, datetime | None, dict[str, Any], tuple[Any, int] | None]:
+    """Resolve the ``[cutoff, before)`` fact window for a private canonical read.
+
+    Keeper ruling 2026-08-29: an unbounded private read returns at most the
+    latest ``_DEFAULT_PRIVATE_API_WINDOW_DAYS`` days — enough for an 8-day
+    reconstruction — and anything older is fetched in pages. ``before`` is the
+    paging cursor: each page is the disjoint half-open window
+    ``[before - days, before)``, so consecutive pages meet at an exact
+    timestamp boundary and can neither overlap nor skip rows even while
+    writers append (fact timestamps are immutable, unlike OFFSET positions
+    across reopened connections — see ``_private_facts``). An explicit
+    ``days`` without ``before`` keeps its historical now-anchored,
+    upper-unbounded semantics, with ``_PRIVATE_API_MAX_ROWS`` as the backstop
+    for pathological explicit windows.
+
+    Returns ``(cutoff, before, window_metadata, error_response)``.
+    """
+    before, before_error = _before_argument()
+    if before_error is not None:
+        return None, None, {}, before_error
+    days, days_error = _days_argument()
+    if days_error is not None:
+        return None, None, {}, days_error
+    window: dict[str, Any] = {"days": days}
+    if days is not None and before is None:
+        try:
+            cutoff = now - timedelta(days=days)
+        except OverflowError:
+            return None, None, {}, (jsonify({"error": "days is outside the supported range"}), 400)
+        return cutoff, None, window, None
+    page_days = days if days is not None else _DEFAULT_PRIVATE_API_WINDOW_DAYS
+    if days is None:
+        window["default_days"] = _DEFAULT_PRIVATE_API_WINDOW_DAYS
+    anchor = now if before is None else before
+    try:
+        cutoff = anchor - timedelta(days=page_days)
     except OverflowError:
-        return None, (jsonify({"error": "days is outside the supported range"}), 400)
-    return cutoff, None
+        return None, None, {}, (
+            jsonify({"error": "the requested window is outside the supported range"}),
+            400,
+        )
+    if before is not None:
+        window["before"] = _window_timestamp(before)
+    window["next_before"] = _window_timestamp(cutoff)
+    return cutoff, before, window, None
 
 
 def _hours_argument() -> tuple[int | None, tuple[Any, int] | None]:
@@ -410,6 +475,8 @@ def _hours_argument() -> tuple[int | None, tuple[Any, int] | None]:
         return None, None
     if request.args.get("days") is not None:
         return None, (jsonify({"error": "days and hours are mutually exclusive"}), 400)
+    if request.args.get("before") is not None:
+        return None, (jsonify({"error": "before and hours are mutually exclusive"}), 400)
     try:
         hours = int(hours_text)
     except ValueError:
@@ -1242,15 +1309,17 @@ def create_app(
         generated_at = datetime.now(timezone.utc)
         series_start = None
         series_end = None
+        query_before = None
+        window_meta: dict[str, Any] = {}
         if hours is not None:
             series_end = generated_at.replace(minute=0, second=0, microsecond=0)
             series_start = series_end - timedelta(hours=hours)
             cutoff = series_start
-            days_error = None
+            query_before = series_end
         else:
-            cutoff, days_error = _days_argument()
-        if days_error is not None:
-            return days_error
+            cutoff, query_before, window_meta, window_error = _window_arguments(generated_at)
+            if window_error is not None:
+                return window_error
         typed_filters = {
             field: requested
             for field in ("provider", "harness", "purpose")
@@ -1262,7 +1331,7 @@ def create_app(
                 fact_type="usage_event_v1",
                 filters=typed_filters,
                 cutoff=cutoff,
-                before=series_end,
+                before=query_before,
             )
         except UnsupportedLedgerSuffix:
             return jsonify({"error": "unsupported ledger suffix"}), 400
@@ -1350,7 +1419,8 @@ def create_app(
             "first_occurred_at": rows[0].get("occurred_at") if rows else None,
             "last_occurred_at": rows[-1].get("occurred_at") if rows else None,
             "event_count": len(rows),
-            "days": int(request.args["days"]) if "days" in request.args else None,
+            "days": None,
+            **window_meta,
         }
         if hours is not None:
             window_payload["hours"] = hours
@@ -1387,11 +1457,11 @@ def create_app(
         series_start = None
         series_end = None
         query_before = None
+        window_meta: dict[str, Any] = {}
         if hours is not None:
             series_end = generated_at.replace(minute=0, second=0, microsecond=0)
             series_start = series_end - timedelta(hours=hours)
             cutoff = series_start
-            days_error = None
             try:
                 # Private ledger bounds are strict, so use the smallest
                 # representable successor and then enforce inclusive-now below.
@@ -1400,9 +1470,9 @@ def create_app(
                 # Fail closed at datetime.max rather than dropping the bound.
                 query_before = generated_at
         else:
-            cutoff, days_error = _days_argument()
-        if days_error is not None:
-            return days_error
+            cutoff, query_before, window_meta, window_error = _window_arguments(generated_at)
+            if window_error is not None:
+                return window_error
         history_text = request.args.get("history")
         if history_text not in (None, "0", "1"):
             return jsonify({"error": "history must be 0 or 1"}), 400
@@ -1486,6 +1556,8 @@ def create_app(
             "latest": [project(row) for row in latest],
             "observations": [project(row) for row in rows] if include_history else [],
         }
+        if window_meta:
+            payload["window"] = window_meta
         if series_start is not None and series_end is not None:
             payload["time_series"] = _build_subscription_time_series(
                 rows,
@@ -1499,9 +1571,11 @@ def create_app(
     def api_billing():
         if not resolved_billing_ledger:
             return jsonify({"error": "billing ledger is not configured"}), 404
-        cutoff, days_error = _days_argument()
-        if days_error is not None:
-            return days_error
+        cutoff, query_before, window_meta, window_error = _window_arguments(
+            datetime.now(timezone.utc)
+        )
+        if window_error is not None:
+            return window_error
         typed_filters = {
             field: requested
             for field in ("provider", "transaction_kind", "status")
@@ -1513,6 +1587,7 @@ def create_app(
                 fact_type="billing_fact_v1",
                 filters=typed_filters,
                 cutoff=cutoff,
+                before=query_before,
                 order="desc",
             )
         except UnsupportedLedgerSuffix:
@@ -1550,6 +1625,7 @@ def create_app(
                     {field: row.get(field) for field in BILLING_RESPONSE_FIELDS}
                     for row in rows
                 ],
+                "window": window_meta,
             }
         )
 
