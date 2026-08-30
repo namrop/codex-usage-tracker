@@ -2809,6 +2809,9 @@ def test_collect_all_dry_run_skips_mutating_claude_quota_probe(tmp_path, monkeyp
         raise AssertionError("Claude quota probe must not run during dry-run")
 
     monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_code_quota", forbidden_probe)
+    monkeypatch.setattr(
+        "codex_usage_tracker.collector.collect_claude_code_quota_api", forbidden_probe
+    )
     result = collect_all(
         state_db=tmp_path / "state.db",
         claude_root=tmp_path / "claude",

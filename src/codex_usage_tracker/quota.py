@@ -1140,5 +1140,136 @@ def collect_claude_code_quota(
     return rows
 
 
+CLAUDE_OAUTH_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+
+# ``limits[].kind`` → the quota_name vocabulary the tmux ``/usage`` probe
+# established, so the API cutover continues the same historical series.
+_CLAUDE_OAUTH_LIMIT_KINDS = {
+    "session": "five_hour",
+    "weekly_all": "seven_day",
+}
+
+
+class ClaudeTokenExpired(Exception):
+    """The stored Claude OAuth access token is expired (locally or live 401).
+
+    The tracker never refreshes tokens itself — a tracker-side refresh could
+    rotate the refresh token and log the operator's CLI out. Callers fall back
+    to the tmux ``/usage`` probe, whose CLI launch refreshes the token as a
+    side effect.
+    """
+
+
+def _read_claude_access_token(credentials_path: str | Path) -> str:
+    """Read the Claude Code OAuth access token, refusing an expired one."""
+    target = Path(credentials_path).expanduser()
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    oauth = payload.get("claudeAiOauth") if isinstance(payload, Mapping) else None
+    if not isinstance(oauth, Mapping):
+        raise ValueError("Claude credentials file has no claudeAiOauth object")
+    token = oauth.get("accessToken")
+    if not isinstance(token, str) or not token:
+        raise ValueError("Claude credentials file has no accessToken")
+    expires_at = oauth.get("expiresAt")
+    if (
+        isinstance(expires_at, (int, float))
+        and not isinstance(expires_at, bool)
+        and expires_at / 1000 < time.time()
+    ):
+        raise ClaudeTokenExpired("Claude OAuth access token is expired")
+    return token
+
+
+def collect_claude_code_quota_api(
+    source_namespace: str,
+    *,
+    credentials_path: str | Path,
+    account_ref: str | None = None,
+    observed_at: str | datetime | None = None,
+    timeout: float = 10.0,
+) -> list[dict[str, Any]]:
+    """Collect subscription limits from Anthropic's OAuth usage API.
+
+    This is the same read-only endpoint Claude Code's TUI polls for its
+    ``/usage`` view. The tracker reads the stored access token and performs
+    one GET — it must never refresh tokens and never POST anywhere; a
+    tracker-side refresh could rotate the refresh token and log the
+    operator's CLI out. An expired token (checked locally before the request,
+    or reported by a live 401) raises :class:`ClaudeTokenExpired` so the
+    caller can decide whether to fall back to the TUI probe.
+    """
+    observed = _now(observed_at)
+    token = _read_claude_access_token(credentials_path)
+    response: Any = None
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.get(
+                    CLAUDE_OAUTH_USAGE_URL,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            break
+        except httpx.TransportError:
+            # At most one retry, for a transient transport fault only. The
+            # bimodal-timeout pathology of the TUI probe does not exist on a
+            # plain GET, so no multi-attempt wrapper belongs here.
+            if attempt:
+                raise
+    if response.status_code == 401:
+        raise ClaudeTokenExpired("Claude OAuth usage API rejected the access token (401)")
+    payload = _payload(response)
+    limits = payload.get("limits")
+    if not isinstance(limits, list):
+        raise ValueError("Claude OAuth usage payload has no limits array")
+    rows: list[dict[str, Any]] = []
+    seen_kinds: set[str] = set()
+    for entry in limits:
+        if not isinstance(entry, Mapping):
+            continue
+        kind = entry.get("kind")
+        if kind in _CLAUDE_OAUTH_LIMIT_KINDS:
+            quota_name = _CLAUDE_OAUTH_LIMIT_KINDS[kind]
+        elif kind == "weekly_scoped":
+            scope = entry.get("scope")
+            model = scope.get("model") if isinstance(scope, Mapping) else None
+            display_name = model.get("display_name") if isinstance(model, Mapping) else None
+            if not isinstance(display_name, str) or not display_name:
+                raise ValueError(
+                    "Claude OAuth usage weekly_scoped limit has no model display_name"
+                )
+            quota_name = f"seven_day_{display_name.lower()}"
+        else:
+            # Codenamed experimental windows come and go; only the stable
+            # kinds are canonical.
+            continue
+        seen_kinds.add(str(kind))
+        percent = entry.get("percent")
+        if not isinstance(percent, (int, float)) or isinstance(percent, bool):
+            raise ValueError(f"Claude OAuth usage limit {quota_name} has no percent")
+        rows.append(
+            _quota(
+                namespace=source_namespace,
+                observation_id=f"{observed}:{quota_name}",
+                harness="claude_code",
+                observed_at=observed,
+                provider="anthropic",
+                quota_name=quota_name,
+                window_kind="rolling",
+                unit="percent",
+                confidence="exact",
+                limit="100",
+                used=str(percent),
+                remaining=_remaining_percent(percent),
+                resets_at=_reset(entry.get("resets_at")),
+                account_ref=account_ref,
+                x_source_surface="claude_oauth_usage_api",
+            )
+        )
+    for required in ("session", "weekly_all"):
+        if required not in seen_kinds:
+            raise ValueError(f"Claude OAuth usage payload omitted {required}")
+    return rows
+
+
 # Naming alias used by collector integrations.
 collect_codex_quota = codex_quota_observations

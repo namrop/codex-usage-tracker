@@ -15,7 +15,11 @@ import sqlite3
 import time
 from typing import Any, Callable, Iterable, Mapping
 
-from .claude_instances import ClaudeInstance, normalize_claude_instances
+from .claude_instances import (
+    ClaudeInstance,
+    default_claude_credentials_path,
+    normalize_claude_instances,
+)
 from .canonical_ledger import (
     AppendResult,
     ConflictSummary,
@@ -33,8 +37,10 @@ from .canonical_ledger import (
     query_sqlite_facts,
 )
 from .quota import (
+    ClaudeTokenExpired,
     codex_quota_observations,
     collect_claude_code_quota,
+    collect_claude_code_quota_api,
     collect_deepseek_quota,
     collect_kimi_code_quota,
     collect_opencode_go_quota as collect_exact_opencode_go_quota,
@@ -99,6 +105,44 @@ def load_allowed_dotenv(
 
 def _source_result(discovered: int) -> dict[str, int]:
     return {"discovered": discovered}
+
+
+def _collect_claude_quota_with_probe_fallback(
+    namespace: str,
+    *,
+    credentials_path: str | Path,
+    claude_command: str | Path,
+    probe_dir: str | Path,
+    timeout: float,
+    claude_config_dir: str | Path | None = None,
+    account_ref: str | None = None,
+) -> list[dict[str, Any]]:
+    """Collect Claude quota from the OAuth usage API, tmux probe on expiry only.
+
+    The OAuth usage API is the primary surface (keeper-ruled 2026-08-29). Only
+    an expired access token — detected locally before the request or reported
+    by a live 401 — falls back to the tmux ``/usage`` probe: launching the
+    real CLI refreshes the OAuth token as a side effect, and that CLI-owned
+    refresh is deliberately the tracker's only refresh mechanism. Every other
+    API failure propagates so the lane retry/cede machinery handles it; the
+    API collector's single transport retry happens inside one lane attempt,
+    not as a second retry layer.
+    """
+    try:
+        return collect_claude_code_quota_api(
+            namespace,
+            credentials_path=credentials_path,
+            account_ref=account_ref,
+        )
+    except ClaudeTokenExpired:
+        return collect_claude_code_quota(
+            namespace,
+            claude_command=claude_command,
+            probe_dir=probe_dir,
+            timeout=timeout,
+            claude_config_dir=claude_config_dir,
+            account_ref=account_ref,
+        )
 
 
 def _ledger_backend(path: str | Path) -> str:
@@ -1086,8 +1130,9 @@ def collect_all(
                                     source,
                                     collect_source(
                                         source,
-                                        lambda instance=instance: collect_claude_code_quota(
+                                        lambda instance=instance: _collect_claude_quota_with_probe_fallback(
                                             instance.quota_namespace(source_prefix),
+                                            credentials_path=instance.credentials_path,
                                             claude_command=claude_quota_command,
                                             probe_dir=instance.probe_dir(claude_probe_dir),
                                             timeout=claude_quota_timeout,
@@ -1103,8 +1148,9 @@ def collect_all(
                                 "claude_code_quota",
                                 collect_source(
                                     "claude_code_quota",
-                                    lambda: collect_claude_code_quota(
+                                    lambda: _collect_claude_quota_with_probe_fallback(
                                         f"{source_prefix}:claude-code-quota",
+                                        credentials_path=default_claude_credentials_path(),
                                         claude_command=claude_quota_command,
                                         probe_dir=claude_probe_dir,
                                         timeout=claude_quota_timeout,

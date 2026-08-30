@@ -10,6 +10,16 @@ from typing import Any, Iterable, Mapping, cast
 
 _CLAUDE_SOURCE_SUFFIX_RE = re.compile(r"^claude-code(?:-[a-z0-9]+)*$")
 
+# Claude Code's default split layout stores OAuth material here for the
+# primary account; named secondary instances keep theirs inside their
+# declared ``CLAUDE_CONFIG_DIR`` root.
+DEFAULT_CLAUDE_CREDENTIALS_PATH = "~/.claude/.credentials.json"
+
+
+def default_claude_credentials_path() -> Path:
+    """Return the primary account's expanded ``.credentials.json`` path."""
+    return Path(DEFAULT_CLAUDE_CREDENTIALS_PATH).expanduser()
+
 
 @dataclass(frozen=True)
 class ClaudeInstance:
@@ -52,6 +62,14 @@ class ClaudeInstance:
             if self.source_suffix == "claude-code"
             else cast(Path, self.config_dir)
         )
+
+    @property
+    def credentials_path(self) -> Path:
+        """Return this instance's ``.credentials.json`` (OAuth token store)."""
+        config = self.quota_config_dir
+        if config is None:
+            return default_claude_credentials_path()
+        return config / ".credentials.json"
 
     def usage_namespace(self, source_prefix: str) -> str:
         return f"{source_prefix}:{self.source_suffix}"
