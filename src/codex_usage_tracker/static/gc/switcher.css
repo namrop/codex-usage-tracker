@@ -1,0 +1,52 @@
+/* Governed Cognition — switcher styles. Token-pure: zero literals, only
+ * var(--gc-*) references; verified by `python3 conformance.py css switcher.css`. */
+
+.gc-switcher {
+  display: flex;
+  gap: var(--gc-fs-sm);
+  align-items: flex-start;
+  font-size: var(--gc-fs-sm);
+  line-height: var(--gc-lh-base);
+  color: var(--gc-fg);
+}
+
+.gc-switcher fieldset {
+  margin: 0;
+  padding: var(--gc-fs-xs);
+  background: var(--gc-panel);
+  border: 1px solid var(--gc-card-border);
+  background-image: linear-gradient(var(--gc-card-lift), var(--gc-card-lift));
+  border-radius: var(--gc-radius-md);
+  clip-path: var(--gc-clip-diagonal);
+  --gc-cut: var(--gc-cut-sm);
+}
+
+.gc-switcher legend {
+  padding: 0 var(--gc-fs-xs);
+  color: var(--gc-muted);
+  text-transform: lowercase;
+  letter-spacing: 0.06em;
+}
+
+.gc-switcher-option {
+  display: flex;
+  gap: calc(var(--gc-fs-xs) / 2);
+  align-items: center;
+  cursor: pointer;
+  padding: calc(var(--gc-fs-xs) / 4) var(--gc-fs-xs);
+  border-radius: var(--gc-radius-pill);
+  clip-path: var(--gc-clip-octagon);
+  transition: background var(--gc-t-med);
+}
+
+.gc-switcher-option:hover {
+  background: var(--gc-shade);
+}
+
+.gc-switcher-option input {
+  accent-color: var(--gc-role-structure);
+}
+
+.gc-switcher-option input:checked + span {
+  color: var(--gc-role-structure);
+}

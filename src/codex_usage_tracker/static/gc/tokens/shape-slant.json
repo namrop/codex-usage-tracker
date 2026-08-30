@@ -1,0 +1,23 @@
+{
+  "name": "shape-slant",
+  "overlay": "shape",
+  "mode": "slanted",
+  "description": "The orthogonal shape overlay — the namrop grammar verbatim: clip-path polygons, the keeper-tuned cut scale 28/24/18/14/12 mapped to size tiers; diagonal family for cards and bubbles, octagon for pills. Ruled: slant swaps hairline borders for background lifts. Loaded AFTER a theme file; any theme x either shape.",
+  "cut": {
+    "xl": "28px",
+    "lg": "24px",
+    "md": "18px",
+    "sm": "14px",
+    "xs": "12px",
+    "pill": "7px"
+  },
+  "line_treatment": "lift",
+  "notes": {
+    "grammar": "From namrop-site app/globals.css (READ-ONLY donor): the diagonal family is the 6-point polygon cutting the top-left and bottom-right corners; the octagon family is the 8-point polygon cutting all four. Cut sizes 28/24/18/14/12 are the keeper-tuned scale for hero/large/medium/small/mobile tiers.",
+    "lift": "Under this overlay --gc-card-border goes transparent and --gc-card-lift takes the theme's own lift color (--gc-lift-color, declared per theme so light papers darken while dark cockpits lighten).",
+    "radius": "All radius tokens go to 0 under slant — clip-path carries the shape.",
+    "pill_tier": "--gc-cut-pill 7px: the namrop octagon chip cut (protocol-chips/language-option family) — pills are ~half a card's height, so the card scale's 12px floor over-cuts them; consumers were each deriving calc(xs/2). Published as its own tier (consumer-seam feedback, diadem slant lane, 2026-08-29).",
+    "per_element": "The clip templates are declared on * (not :root): custom properties substitute var() at the declaring element, so a :root-declared template freezes --gc-cut at the root value and per-element tier cuts can never work through it. On * each element composes the polygon from its own --gc-cut. (consumer-seam feedback, diadem slant lane)",
+    "mirror": "--gc-clip-diagonal-mirror cuts the opposite corner pair (top-right + bottom-left) so paired surfaces — e.g. user/assistant chat bubbles — keep their tail asymmetry under slant by alternating the two diagonal templates."
+  }
+}

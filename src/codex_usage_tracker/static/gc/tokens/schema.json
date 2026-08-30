@@ -1,0 +1,225 @@
+{
+  "schema": "governed-cognition/tokens",
+  "version": "0.2.0",
+  "spec_uid": "01a04ecd-8c2c-75ef-808c-c26c95de3a7f",
+  "doctrine": "Color is not decoration; hues are quarantined to meaning. A theme assigns hues TO roles; remapping preserves roles. Legibility of governance semantics survives any palette swap — that sentence is the system's reason.",
+  "layers": {
+    "comment": "The semantic schema has THREE layers (keeper-raised and RATIFIED 2026-08-29 ~15:00 — role/set/modifier with per-kind invariants: identity/distinctness/direction): (1) roles — closed-ish, estate-universal; (2) categorical sets — app-declared categories whose meaning is distinctness-from-siblings, not absolute semantics; (3) state modifiers — systematic transforms (highlighted/dim/...) declared once and applied to roles and set-members alike, derived by default, theme-tunable, per-token overridable.",
+    "order": [
+      "roles",
+      "sets",
+      "modifiers"
+    ]
+  },
+  "roles": {
+    "set": [
+      "structure",
+      "info",
+      "stability",
+      "threshold",
+      "violation",
+      "intent"
+    ],
+    "closed_ish": true,
+    "growing_by_pressure": "Keeper-ruled 2026-08-29 ~14:44: 'the roles are a closed-ish set, like the language, the memory system, and the atrium. growing by pressure.' Not open accretion, not frozen — a new role must force its way in by real signal the existing six cannot carry. Adding a role is a schema change, ratified against the spec (uid above), never an ad-hoc theme-file invention.",
+    "doctrine": {
+      "structure": "Structure / focus — structural highlight, borders, rings, the skeleton of the surface. (April: Signal Teal.)",
+      "info": "The information channel — keys, links-at-rest, quiet data. (April: System Cyan.)",
+      "stability": "Convergence / ok / success — the system at rest and correct. (April: Convergence Green.)",
+      "threshold": "Rare and consequential — commits, gates, warnings at the edge. Threshold colors are never routine. (April: Commit Gold.)",
+      "violation": "Sacred, never decorative — integrity breach, error, the broken invariant. (April: Integrity Red.)",
+      "intent": "The human hand — invocation, ownvoice, deliberate human action. (April: Intent Magenta.)"
+    }
+  },
+  "sets": {
+    "doctrine": "A categorical set is an app-declared color category whose meaning is DISTINCTNESS-FROM-SIBLINGS, not absolute semantics. Sets are declared here with a namespaced name (app.set-name) and a member list. EVERY theme must map every declared set, and the member values must be pairwise distinct within that theme. Never flattened, never unmapped.",
+    "declared": {
+      "ai-usage.harness": {
+        "members": [
+          "claude_code",
+          "claude_code_secondary",
+          "hermes",
+          "opencode"
+        ],
+        "note": "The ai-usage tracker's harness lanes (kintsugi refactor, akasan spoken 2026-08-29 ~22:47): the color encodes WHICH harness a series/dot/lane-name belongs to; health state (fresh/stale/ceded) stays on the role layer, never on these."
+      },
+      "ai-usage.series-rank": {
+        "members": [
+          "rank-1",
+          "rank-2",
+          "rank-3",
+          "rank-4",
+          "rank-5",
+          "rank-6",
+          "rank-7",
+          "rank-8",
+          "rank-9",
+          "rank-10"
+        ],
+        "note": "Keeper amendment to the ai-usage kintsugi akasan, 2026-08-29 ~22:47, verbatim: 'the extra colors are acceptable for dealing with multiple lines in a graph. however those surplus colors should still be defined in governed cognition.' A model wears its rank's color; unbounded series (including substitution rows minted mid-window by model_reported) draw from these ten declared slots. The default theme seeds its values from the tracker's proven UNIFIED_RANK_COLORS literal array — provenance, not invention."
+      },
+      "diadem.session-type": {
+        "members": [
+          "main",
+          "cron",
+          "delegated"
+        ],
+        "note": "The sidebar session-type dots (diadem v0.9 keeper rider): the dot's base color encodes the session TYPE; liveness stays on the pulse animation. main = the primary interactive lane, cron = scheduled/mechanical, delegated = sub-agent lanes."
+      }
+    }
+  },
+  "modifiers": {
+    "doctrine": "A state modifier is a systematic transform for state variants (highlighted/not, ...). It is declared ONCE here, applied to roles and set-members alike at generate time, DERIVED by default (a lightness shift in HLS space), theme-tunable (a theme may set its own shift — light themes typically darken where dark themes lighten), and per-token overridable (a theme may pin an explicit value for one derived token). The keeper's session-type observation — 'technically 6 colors because of highlighted/not' — is 3 set-members x 1 modifier, not 6 free choices.",
+    "declared": {
+      "hi": {
+        "meaning": "highlighted / active / selected emphasis of the base token",
+        "default_transform": {
+          "lightness": 0.14
+        }
+      }
+    },
+    "applies_to": [
+      "color.roles.*",
+      "sets.*.*"
+    ]
+  },
+  "token_axes": {
+    "color": {
+      "roles": {
+        "required": [
+          "structure",
+          "info",
+          "stability",
+          "threshold",
+          "violation",
+          "intent"
+        ],
+        "format": "hex"
+      },
+      "surface": {
+        "required": [
+          "bg",
+          "fg",
+          "panel",
+          "line",
+          "muted",
+          "muted-alt",
+          "shade",
+          "scrollbar-thumb",
+          "scrollbar-track"
+        ],
+        "optional": [
+          "terminal",
+          "raw",
+          "scrollbar-thumb-hover"
+        ],
+        "optional_fallbacks": {
+          "terminal": "surface.bg",
+          "raw": "surface.bg",
+          "scrollbar-thumb-hover": "surface.scrollbar-thumb"
+        },
+        "scrollbar_doctrine": "Keeper-ruled 2026-08-29 (v0.1 browse feedback): scrollbars are quiet structure with little semantic value — they get a muted/dim value, never an accent. The odysseus-inherited amber scrollbar was a doctrine violation the governed doctrine itself rules against: color is quarantined to meaning."
+      },
+      "syntax": {
+        "optional": [
+          "bg",
+          "fg",
+          "key",
+          "string",
+          "number",
+          "bool",
+          "null"
+        ],
+        "optional_fallbacks": {
+          "bg": "surface.panel",
+          "fg": "surface.fg",
+          "key": "roles.info",
+          "string": "roles.threshold",
+          "number": "surface.muted",
+          "bool": "roles.intent",
+          "null": "surface.muted-alt"
+        }
+      },
+      "extra": "optional free-form named theme-private colors, emitted as --gc-extra-<name>; apps must not depend on an extra existing across themes"
+    },
+    "shape": {
+      "native": [
+        "rounded",
+        "slanted"
+      ],
+      "radius": {
+        "required": [
+          "xs",
+          "sm",
+          "md",
+          "lg",
+          "xl",
+          "pill"
+        ]
+      },
+      "cut": {
+        "tiers": {
+          "xl": "28px",
+          "lg": "24px",
+          "md": "18px",
+          "sm": "14px",
+          "xs": "12px",
+          "pill": "7px"
+        },
+        "note": "The namrop slant grammar verbatim: clip-path polygons, keeper-tuned cut scale 28/24/18/14/12 mapped to size tiers; diagonal family for cards and bubbles, octagon for pills. Carried by the shape-slant overlay; shape is orthogonal to color — any theme x either shape, though a theme may declare a native shape. The pill tier (7px, the namrop octagon chip cut) joins the scale so pill consumers need not derive half-cuts. A mirrored diagonal template (--gc-clip-diagonal-mirror, opposite corner pair) preserves paired-surface asymmetry under slant."
+      },
+      "lift": "per-theme color used when the slant overlay swaps hairline borders for background lifts (ruled)",
+      "rule": "slant swaps hairline borders for background lifts: under the overlay --gc-card-border goes transparent and --gc-card-lift carries the theme's lift color"
+    },
+    "motion": {
+      "timings": {
+        "required": [
+          "fast",
+          "med",
+          "slide",
+          "pulse",
+          "pulse-fast",
+          "blink",
+          "flash",
+          "breathe"
+        ]
+      },
+      "amplitudes": {
+        "required": [
+          "pulse"
+        ]
+      },
+      "invariants": [
+        "Information channels are theme-tunable, NEVER theme-removable: every duration > 0, every amplitude > 0. Hush is a value, not a code path.",
+        "prefers-reduced-motion outranks every theme — the reader's own directive beats any theme's aesthetics, including the keeper's. The generator bakes the clamp into every emitted theme file."
+      ]
+    },
+    "type": {
+      "family": {
+        "required": [
+          "body",
+          "display",
+          "mono"
+        ],
+        "alias": "a family value of '@mono'/'@body'/'@display' references another family token"
+      },
+      "scale": {
+        "required": [
+          "xs",
+          "sm",
+          "base",
+          "lg",
+          "xl"
+        ]
+      },
+      "leading": {
+        "required": [
+          "code",
+          "base",
+          "prose"
+        ]
+      },
+      "webfonts": "optional per-theme list of @font-face descriptors (family/style/weight/src) — src is a relative fonts/ path vendored in this repo and copied into dist/, so it resolves both origin-served and app-vendored. LOCAL files only, no CDN ever."
+    }
+  }
+}

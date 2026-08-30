@@ -1,0 +1,123 @@
+{
+  "name": "neo-andean",
+  "title": "Neo-Andean",
+  "description": "Ceremonial, identity-forward — painted concrete, woven textiles, sacred geometry. Color in blocks, not gradients; brights paired with very dark bases; saturation as architectural weight; gold + magenta carry ceremonial authority. Corpus: neo_andean_ceremonial_palette_2026-04-03 + the hermes theme/skin mapping (the one prior real-UI application).",
+  "webfonts": [
+    { "family": "Oxanium", "style": "normal", "weight": "200 800", "src": "fonts/oxanium-latin-200-800.woff2" },
+    { "family": "Rajdhani", "style": "normal", "weight": "400", "src": "fonts/rajdhani-latin-400.woff2" },
+    { "family": "Rajdhani", "style": "normal", "weight": "500", "src": "fonts/rajdhani-latin-500.woff2" },
+    { "family": "Rajdhani", "style": "normal", "weight": "600", "src": "fonts/rajdhani-latin-600.woff2" },
+    { "family": "Rajdhani", "style": "normal", "weight": "700", "src": "fonts/rajdhani-latin-700.woff2" }
+  ],
+  "color": {
+    "roles": {
+      "structure": "#FFC857",
+      "info": "#66E6FF",
+      "stability": "#A4F000",
+      "threshold": "#C46A2D",
+      "violation": "#E10600",
+      "intent": "#FF2F92"
+    },
+    "surface": {
+      "bg": "#0B0F1A",
+      "fg": "#FFF8DC",
+      "panel": "#1A2233",
+      "line": "#00B3A4",
+      "muted": "#8A6A4F",
+      "muted-alt": "#6b5340",
+      "shade": "rgba(0, 0, 0, 0.5)",
+      "raw": "#0E1F24",
+      "scrollbar-thumb": "#8A6A4F",
+      "scrollbar-thumb-hover": "#C46A2D",
+      "scrollbar-track": "#1A2233"
+    },
+    "syntax": {
+      "bg": "#0E1F24",
+      "fg": "#FFF8DC",
+      "key": "#4CC9F0",
+      "string": "#FFC857",
+      "number": "#C46A2D",
+      "bool": "#9D4EDD",
+      "null": "#9D4EDD"
+    },
+    "extra": {
+      "deep-night": "#0B0F1A",
+      "stone-shadow": "#1A2233",
+      "obsidian-teal": "#0E1F24",
+      "solar-gold": "#FFC857",
+      "festival-magenta": "#FF2F92",
+      "andean-turquoise": "#00B3A4",
+      "highland-lime": "#A4F000",
+      "ceremonial-red": "#E10600",
+      "glacial-cyan": "#66E6FF",
+      "royal-amethyst": "#9D4EDD",
+      "copper-earth": "#C46A2D",
+      "sky-plateau": "#4CC9F0"
+    }
+  },
+  "sets": {
+    "ai-usage.harness": {
+      "claude_code": "#00B3A4",
+      "claude_code_secondary": "#9D4EDD",
+      "hermes": "#FFC857",
+      "opencode": "#66E6FF"
+    },
+    "ai-usage.series-rank": {
+      "rank-1": "#66E6FF",
+      "rank-2": "#4CC9F0",
+      "rank-3": "#9D4EDD",
+      "rank-4": "#FF2F92",
+      "rank-5": "#E1655B",
+      "rank-6": "#C46A2D",
+      "rank-7": "#FFC857",
+      "rank-8": "#A4F000",
+      "rank-9": "#00B3A4",
+      "rank-10": "#FFF8DC"
+    },
+    "diadem.session-type": {
+      "main": "#A4F000",
+      "cron": "#FFC857",
+      "delegated": "#9D4EDD"
+    }
+  },
+  "modifiers": {
+    "hi": { "lightness": 0.14 }
+  },
+  "shape": {
+    "native": "rounded",
+    "radius": { "xs": "0px", "sm": "0px", "md": "0px", "lg": "0px", "xl": "0px", "pill": "0px" },
+    "lift": "rgba(255, 255, 255, 0.06)"
+  },
+  "motion": {
+    "timings": {
+      "fast": "0.1s",
+      "med": "0.15s",
+      "slide": "0.18s",
+      "pulse": "1.5s",
+      "pulse-fast": "0.7s",
+      "blink": "1.2s",
+      "flash": "1.6s",
+      "breathe": "2.6s"
+    },
+    "amplitudes": { "pulse": 1.0 }
+  },
+  "type": {
+    "family": {
+      "display": "Oxanium, sans-serif",
+      "body": "Rajdhani, sans-serif",
+      "mono": "ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace"
+    },
+    "scale": { "xs": "10px", "sm": "12px", "base": "14px", "lg": "16px", "xl": "20px" },
+    "leading": { "code": 1.5, "base": 1.55, "prose": 1.65 }
+  },
+  "notes": {
+    "remap_2026-08-29": "Keeper-dispatched rebuild: the first cut copied the GC/diadem role hues wholesale and rendered as a visual no-op. This mapping is drawn from the ceremonial palette's own annotations: structure = Solar Gold #FFC857 (the palette labels it 'Ceremonial focus' — a direct match for the structure/focus role; gold carries architectural authority, and the hermes mapping put gold on primary, midground AND label); info = Glacial Cyan #66E6FF; stability = Highland Lime ('Vitality / success'); threshold = Copper Earth #C46A2D (the burnished earthen gate — keeping gold free for structure keeps threshold visually distinct from it); violation = Ceremonial Red ('Alerts / breach channel', never decorative); intent = Festival Magenta ('Active energy', the hermes accent).",
+    "honest_overlaps": "stability, violation, and intent share hexes with governed-cognition because diadem's cockpit inherited this very palette through odysseus — the overlap is lineage, not laziness. Distinctness now comes from the gold-structural chrome (vs GC's teal), the icier info channel, the copper threshold, and the vendored Oxanium/Rajdhani actually rendering.",
+    "muted": "muted #8A6A4F and muted-alt #6b5340 are dim earthen values (the second a derived darker tint, marked derived) — the hermes TUI used Copper Earth for muted, but copper now carries threshold, and the doctrine (threshold rare and consequential) forbids sharing it with everyday muted text.",
+    "line": "surface.line stays Andean Turquoise #00B3A4 — hermes border/ring verbatim ('Structural highlight' in the palette); focus/emphasis is gold, hairlines are turquoise.",
+    "fonts": "Oxanium (variable 200-800) + Rajdhani (400/500/600/700), latin subsets, vendored in fonts/ from Google Fonts' hosted woff2 files — @font-face emitted into the generated CSS with relative URLs; no CDN.",
+    "shape": "radius 0 on pills too — ceremonial hard edges ('use color in blocks'; hermes dashboard rule radius: 0px).",
+    "scrollbar": "Keeper-ruled 2026-08-29: scrollbars are quiet structure — dim earthen thumb, copper hover, panel track.",
+    "ai_usage_sets": "LANE-DRAFTED, KEEPER-TUNABLE (kintsugi render: only the default theme inherits proven values). series-rank is a native ceremonial ramp drawn from this theme's own palette: glacial cyan, sky plateau, royal amethyst, festival magenta, burnt clay (#E1655B — the one drafted addition, an earthen terracotta in the register but not in the named palette), copper earth, solar gold, highland lime, andean turquoise, and parchment cream (#FFF8DC, the fg) as the tenth line. harness: claude_code = andean turquoise, claude_code_secondary = royal amethyst, hermes = solar gold, opencode = glacial cyan."
+  }
+}

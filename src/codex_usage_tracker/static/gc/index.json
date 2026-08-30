@@ -1,0 +1,73 @@
+{
+  "spec_uid": "01a04ecd-8c2c-75ef-808c-c26c95de3a7f",
+  "roles": [
+    "structure",
+    "info",
+    "stability",
+    "threshold",
+    "violation",
+    "intent"
+  ],
+  "sets": {
+    "ai-usage.harness": [
+      "claude_code",
+      "claude_code_secondary",
+      "hermes",
+      "opencode"
+    ],
+    "ai-usage.series-rank": [
+      "rank-1",
+      "rank-2",
+      "rank-3",
+      "rank-4",
+      "rank-5",
+      "rank-6",
+      "rank-7",
+      "rank-8",
+      "rank-9",
+      "rank-10"
+    ],
+    "diadem.session-type": [
+      "main",
+      "cron",
+      "delegated"
+    ]
+  },
+  "modifiers": [
+    "hi"
+  ],
+  "themes": [
+    {
+      "name": "governed-cognition",
+      "title": "Governed Cognition",
+      "native_shape": "rounded",
+      "css": "theme-governed-cognition.css",
+      "tokens": "tokens/governed-cognition.json"
+    },
+    {
+      "name": "johannah",
+      "title": "Johannah",
+      "native_shape": "rounded",
+      "css": "theme-johannah.css",
+      "tokens": "tokens/johannah.json"
+    },
+    {
+      "name": "neo-andean",
+      "title": "Neo-Andean",
+      "native_shape": "rounded",
+      "css": "theme-neo-andean.css",
+      "tokens": "tokens/neo-andean.json"
+    }
+  ],
+  "shapes": [
+    {
+      "name": "rounded",
+      "css": null
+    },
+    {
+      "name": "slanted",
+      "css": "shape-slant.css"
+    }
+  ],
+  "default_theme": "governed-cognition"
+}
