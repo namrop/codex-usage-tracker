@@ -549,10 +549,17 @@ def _build_provider_status_series(
     explicit ``error`` status counts as a failure: ``unknown`` is a source that
     does not report status, and ``cancelled`` is the operator stopping a call,
     neither of which is the provider failing.
+
+    Each entry also carries per-bucket ``input_tokens`` and
+    ``cache_read_tokens`` sums — the two prompt-side buckets the estate-wide
+    cache-hit-rate chart divides (cache read over input plus cache read), so
+    the frontend needs no second projection to draw it.
     """
     events: dict[str, list[int]] = {}
     errors: dict[str, list[int]] = {}
     classes: dict[str, list[dict[str, int]]] = {}
+    input_tokens: dict[str, list[int]] = {}
+    cache_read_tokens: dict[str, list[int]] = {}
 
     for row in rows:
         occurred_at = _fact_datetime(row.get("occurred_at"))
@@ -564,7 +571,11 @@ def _build_provider_status_series(
             events[provider] = [0] * bucket_count
             errors[provider] = [0] * bucket_count
             classes[provider] = [{} for _index in range(bucket_count)]
+            input_tokens[provider] = [0] * bucket_count
+            cache_read_tokens[provider] = [0] * bucket_count
         events[provider][bucket_index] += 1
+        input_tokens[provider][bucket_index] += int(row.get("input_tokens") or 0)
+        cache_read_tokens[provider][bucket_index] += int(row.get("cache_read_tokens") or 0)
         if row.get("request_status") != "error":
             continue
         errors[provider][bucket_index] += 1
@@ -593,6 +604,8 @@ def _build_provider_status_series(
                 "provider_canonical": _canonical_quota_provider(provider),
                 "events": events[provider],
                 "errors": errors[provider],
+                "input_tokens": input_tokens[provider],
+                "cache_read_tokens": cache_read_tokens[provider],
                 "top_error_classes": [dominant(counts) for counts in classes[provider]],
                 "total_events": sum(events[provider]),
                 "total_errors": sum(errors[provider]),
@@ -613,6 +626,7 @@ def _build_unified_time_series(
     bucket_count = int((window_end - window_start).total_seconds() // 3600)
     bucket_starts = [window_start + timedelta(hours=index) for index in range(bucket_count)]
     model_buckets: dict[tuple[str, str], list[int]] = {}
+    bucket_series = {field: [0] * bucket_count for field in _LIST_PRICE_TOKEN_FIELDS}
 
     for row in rows:
         occurred_at = _fact_datetime(row.get("occurred_at"))
@@ -624,6 +638,8 @@ def _build_unified_time_series(
         model = str(row.get("model_reported") or row.get("model_requested") or "unknown")
         values = model_buckets.setdefault((provider, model), [0] * bucket_count)
         values[bucket_index] += total
+        for field in _LIST_PRICE_TOKEN_FIELDS:
+            bucket_series[field][bucket_index] += int(row.get(field) or 0)
 
     ranked_models = sorted(
         model_buckets.items(),
@@ -663,6 +679,12 @@ def _build_unified_time_series(
         "bucket_starts": [_iso_z(value) for value in bucket_starts],
         "model_series": model_series,
         "other_model_series": other_model_series,
+        # Estate-wide token composition (keeper-ruled 2026-08-30, replacing
+        # the codex-only Token bucket mix): the five token buckets summed
+        # across every provider, on the same hourly UTC grid. Reasoning stays
+        # its own series here — the chart shows composition, not the
+        # accounted total, and the caption owns that distinction.
+        "bucket_series": bucket_series,
         # The Codex-vs-Claude two-series comparison was retired with its card
         # (keeper ruling, 2026-08-30): the provider donuts carry share now, and
         # this projection existed only to feed that one chart.
