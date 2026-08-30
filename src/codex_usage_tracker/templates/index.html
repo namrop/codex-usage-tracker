@@ -979,7 +979,7 @@
           <h3>By harness</h3>
           <div class="table-wrap"><table><thead><tr><th>Harness</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>Estimated USD</th><th>Actual USD</th></tr></thead><tbody id="harnessUsageBody"></tbody></table></div>
           <h3>By provider and model</h3>
-          <div class="table-wrap"><table><thead><tr><th>Provider</th><th>Model</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>Estimated USD</th><th>Actual USD</th></tr></thead><tbody id="providerModelUsageBody"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>Provider</th><th>Model</th><th>API</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>Estimated USD</th><th>Actual USD</th></tr></thead><tbody id="providerModelUsageBody"></tbody></table></div>
         </div>
       </section>
 
@@ -1933,6 +1933,19 @@
         });
       }
 
+      function formatApiModes(apiModes) {
+        // Dominant transport per (provider, model); "unknown" stays visible
+        // rather than blank — a NULL here is a fact about the source, and
+        // pre-2026-08-29 Hermes rows are NULL forever by decision.
+        if (!apiModes || typeof apiModes !== "object") return "unknown";
+        const entries = Object.entries(apiModes).sort((a, b) => b[1] - a[1]);
+        if (!entries.length) return "unknown";
+        const [top, count] = entries[0];
+        if (entries.length === 1) return top;
+        const share = count / entries.reduce((sum, [, n]) => sum + n, 0);
+        return `${top} ${Math.round(share * 100)}% +${entries.length - 1}`;
+      }
+
       function renderAggregateComparisons(data) {
         const modelRows = Array.isArray(data.by_provider_model) ? data.by_provider_model : [];
         const providerTotals = new Map();
@@ -2357,9 +2370,9 @@
           const providerBody = document.getElementById("providerModelUsageBody");
           providerBody.textContent = "";
           (data.by_provider_model || []).forEach((row) => appendTextRow(providerBody, [
-            row.provider, row.model, row.events, row.input_tokens, row.cache_read_tokens,
-            row.cache_write_tokens, row.output_tokens, row.reasoning_tokens, row.total_tokens,
-            row.estimated_cost_usd, row.actual_cost_usd,
+            row.provider, row.model, formatApiModes(row.api_modes), row.events, row.input_tokens,
+            row.cache_read_tokens, row.cache_write_tokens, row.output_tokens, row.reasoning_tokens,
+            row.total_tokens, row.estimated_cost_usd, row.actual_cost_usd,
           ]));
           showPanel("unifiedUsageState", "unifiedUsageContent", "");
           renderAggregateComparisons(data);

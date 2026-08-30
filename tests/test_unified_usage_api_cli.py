@@ -982,7 +982,7 @@ def test_unified_private_aggregate_endpoints_and_filters(tmp_path):
     recent=(datetime.now(timezone.utc)-timedelta(days=1)).replace(microsecond=0)
     recent_at=recent.isoformat().replace("+00:00","Z")
     base={"fact_type":"usage_event_v1","schema_version":1,"source_namespace":"n","harness":"hermes","surface":None,"purpose":"main","record_kind":"api_attempt","occurred_at":recent_at,"recorded_at":recent_at,"session_id":None,"logical_call_id":None,"attempt_no":None,"provider_request_id":None,"upstream_provider":None,"model_reported":None,"api_mode":None,"billing_mode":None,"request_status":"ok","error_class":None,"latency_ms":None,"cache_write_tokens":0,"reasoning_tokens":2,"usage_source":"provider_reported","usage_completeness":"complete","measurement_confidence":"exact","missing_fields":[],"attribution_gaps":[],"estimated_cost_usd":None,"actual_cost_usd":None,"cost_status":"included","cost_source":None,"pricing_version":None,"reconstructed_call_count":None,"corrects_source_namespace":None,"corrects_source_event_id":None}
-    rows=[dict(base,source_event_id="1",provider="anthropic",model_requested="claude",input_tokens=10,cache_read_tokens=5,output_tokens=4),dict(base,source_event_id="2",provider="openrouter",model_requested="m",harness="opencode",purpose="subagent",record_kind="historical_aggregate",measurement_confidence="reconstructed",input_tokens=20,cache_read_tokens=0,output_tokens=8,reconstructed_call_count=3)]
+    rows=[dict(base,source_event_id="1",provider="anthropic",model_requested="claude",api_mode="anthropic_messages",input_tokens=10,cache_read_tokens=5,output_tokens=4),dict(base,source_event_id="2",provider="openrouter",model_requested="m",harness="opencode",purpose="subagent",record_kind="historical_aggregate",measurement_confidence="reconstructed",input_tokens=20,cache_read_tokens=0,output_tokens=8,reconstructed_call_count=3)]
     usage.write_text("\n".join(json.dumps(x) for x in rows)+"\n")
     q={"fact_type":"quota_observation_v1","schema_version":1,"source_namespace":"q","source_observation_id":"1","harness":"claude_code","observed_at":recent_at,"provider":"anthropic","account_ref":"private-account","quota_name":"five_hour","quota_scope":"account","window_kind":"rolling","window_started_at":None,"window_ends_at":None,"resets_at":None,"limit_value":"100","remaining_value":"80","used_value":"20","unit":"percent","measurement_confidence":"exact","provider_payload_ref":"private-ref","x_private":"do-not-project"}
     newer=dict(q,source_observation_id="2",observed_at=recent_at.replace("Z",".1Z"),remaining_value="79",used_value="21")
@@ -1005,6 +1005,9 @@ def test_unified_private_aggregate_endpoints_and_filters(tmp_path):
         "estimated_cost_usd": "0", "actual_cost_usd": "0",
     }]
     assert list(data["by_provider_model"])[0]["provider"]=="anthropic"
+    # Endpoint attribution surfaces per (provider, model); NULL groups as
+    # "unknown" (pre-2026-08-29 Hermes rows are NULL forever by decision).
+    assert data["by_provider_model"][0]["api_modes"] == {"anthropic_messages": 1}
     subscriptions=client.get("/api/subscriptions").get_json()
     assert subscriptions["observations"][0]["used_value"]=="21"
     assert subscriptions["latest"][0]["used_value"] == "21"

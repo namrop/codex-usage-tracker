@@ -1304,11 +1304,16 @@ def create_app(
                     "provider": key[0],
                     "model": key[1],
                     "events": 0,
+                    "api_modes": {},
                     **{field: 0 for field in token_fields},
                     **{field: "0" for field in cost_fields},
                 },
             )
             bucket["events"] += 1
+            # Endpoint/protocol attribution — restored upstream for Hermes on
+            # 2026-08-29; NULL means the source genuinely does not know.
+            mode_key = str(row.get("api_mode") or "unknown")
+            bucket["api_modes"][mode_key] = bucket["api_modes"].get(mode_key, 0) + 1
             for field in token_fields:
                 bucket[field] += int(row.get(field) or 0)
             for field in cost_fields:
