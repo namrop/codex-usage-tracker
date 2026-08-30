@@ -96,6 +96,10 @@
     "switcher": {
       "js": "switcher.js",
       "css": "switcher.css"
-    }
+    },
+    "types": "loader.d.ts"
+  },
+  "adapters": {
+    "shadcn": "gc-shadcn.css"
   }
 }

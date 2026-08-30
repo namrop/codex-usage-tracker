@@ -1,0 +1,72 @@
+/* Governed Cognition — shadcn/ui adapter (the estate's React obedience layer).
+ *
+ * Maps the shadcn token contract — the de-facto standard for React + Tailwind
+ * apps (:root custom properties: --background, --card, --chart-N, --radius…)
+ * — onto the published --gc-* tokens, so any shadcn-shaped app themes by
+ * loading loader.js plus THIS file after its own stylesheet. First target:
+ * the beszel fork; every future estate React app gets it for free.
+ *
+ * Same doctrine as Diadem's gc-adapter.css: the law lives in the GC tokens,
+ * the obedience lives here. Load ONLY while a GC theme is live (gate on the
+ * gc:source event / data-gc-theme-source attribute) — with no GC layer these
+ * var(--gc-*) references are guaranteed-invalid and would unstyle the app.
+ *
+ * Token-pure: zero literals; verified by `python3 conformance.py css`.
+ *
+ * shadcn apps toggle light/dark with a .dark class; GC themes carry their
+ * scheme in their values (johannah is light, the rest dark), so both scopes
+ * receive the SAME mappings and the theme decides. When the scheme axis
+ * lands (designed 2026-08-30, deferred to the theme round) this file is
+ * where light/dark variants meet shadcn's .dark convention.
+ *
+ * --chart-1..5: interim mapping onto the ai-usage series-rank set — the only
+ * published multi-series ramp today. Repoint to --gc-spectrum-* when the
+ * validated 7-slot spectra land (theme round); consumers reference --chart-N
+ * and will not notice the swap. */
+
+:root,
+.dark {
+  color-scheme: var(--gc-scheme);
+
+  --background: var(--gc-bg);
+  --foreground: var(--gc-fg);
+
+  --card: var(--gc-panel);
+  --card-foreground: var(--gc-fg);
+  --popover: var(--gc-panel-raised, var(--gc-panel));
+  --popover-foreground: var(--gc-fg);
+
+  --primary: var(--gc-role-structure);
+  --primary-foreground: var(--gc-bg);
+  --secondary: var(--gc-shade);
+  --secondary-foreground: var(--gc-fg-soft, var(--gc-fg));
+  --muted: var(--gc-shade);
+  --muted-foreground: var(--gc-muted);
+  --accent: var(--gc-shade);
+  --accent-foreground: var(--gc-fg);
+
+  --destructive: var(--gc-role-violation);
+  --destructive-foreground: var(--gc-bg);
+
+  --border: var(--gc-line);
+  --input: var(--gc-line);
+  --ring: var(--gc-role-structure);
+
+  --radius: var(--gc-radius-md);
+
+  --chart-1: var(--gc-cat-ai-usage-series-rank-rank-1);
+  --chart-2: var(--gc-cat-ai-usage-series-rank-rank-2);
+  --chart-3: var(--gc-cat-ai-usage-series-rank-rank-3);
+  --chart-4: var(--gc-cat-ai-usage-series-rank-rank-4);
+  --chart-5: var(--gc-cat-ai-usage-series-rank-rank-5);
+
+  /* shadcn sidebar family (present in newer templates; harmless otherwise) */
+  --sidebar: var(--gc-bg-deep, var(--gc-bg));
+  --sidebar-foreground: var(--gc-fg);
+  --sidebar-primary: var(--gc-role-structure);
+  --sidebar-primary-foreground: var(--gc-bg);
+  --sidebar-accent: var(--gc-shade);
+  --sidebar-accent-foreground: var(--gc-fg);
+  --sidebar-border: var(--gc-line);
+  --sidebar-ring: var(--gc-role-structure);
+}
