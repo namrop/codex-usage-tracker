@@ -17,4 +17,15 @@ dependencies = [
 codex-usage-tracker = "codex_usage_tracker.cli:main"
 
 [tool.setuptools.package-data]
-codex_usage_tracker = ["templates/*.html", "static/vendor/*.js", "static/vendor/*.md"]
+codex_usage_tracker = [
+  "static/app/index.html",
+  "static/app/assets/*",
+  "static/vendor/*.js",
+  "static/vendor/*.md",
+  "static/gc/*.js",
+  "static/gc/*.d.ts",
+  "static/gc/*.css",
+  "static/gc/*.json",
+  "static/gc/fonts/*",
+  "static/gc/tokens/*",
+]

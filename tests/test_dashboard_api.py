@@ -11,6 +11,8 @@ from codex_usage_tracker.canonical_ledger import append_sqlite_facts, canonical_
 import codex_usage_tracker.dashboard as dashboard_module
 from codex_usage_tracker.dashboard import create_app
 
+import frontend_surfaces
+
 
 def _write_usage_ledger(path, rows):
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
@@ -289,15 +291,23 @@ def _dashboard_root_html(tmp_path, monkeypatch) -> str:
     return response.get_data(as_text=True)
 
 
-def test_subscription_provider_overview_and_raw_observation_details_exist(tmp_path, monkeypatch):
-    html = _dashboard_root_html(tmp_path, monkeypatch)
 
-    assert 'id="subscriptionProviderGrid"' in html
-    # The raw observation ledger moved from <details> to the fold system
+def test_subscription_provider_overview_and_raw_observation_details_exist(tmp_path, monkeypatch):
+    """React + Vite retarget: the served page is the built shell (still 200,
+    still no-store); the subscription grid, the raw-observation fold, the
+    ruled column order, and the record-class doctrine live in the component
+    that renders that card."""
+    html = _dashboard_root_html(tmp_path, monkeypatch)
+    assert '<div id="root"></div>' in html
+
+    card = frontend_surfaces.source("components/SubscriptionsCard.tsx")
+    assert 'id="subscriptionProviderGrid"' in card
+    # The raw observation ledger stays behind the fold system
     # (keeper-ruled 2026-08-29: ledger tables collapsed by default).
-    assert 'data-fold="subscriptionsRaw"' in html
-    assert 'id="subscriptionsBody"' in html
-    assert re.search(r"<th[^>]*>Observed</th>\s*<th[^>]*>Confidence</th>", html)
+    assert 'foldKey="subscriptionsRaw"' in card
+    assert 'id="subscriptionsBody"' in card
+    assert "<th>Observed</th><th>Confidence</th>" in card
+    providers = frontend_surfaces.source("lib/providers.ts")
     for display_name in (
         "OpenAI / Codex",
         "Anthropic / Claude",
@@ -305,13 +315,12 @@ def test_subscription_provider_overview_and_raw_observation_details_exist(tmp_pa
         "Z.AI / GLM",
         "Kimi K3 Coding",
     ):
-        assert display_name in html
+        assert display_name in providers
     assert (
         "Usage events above, subscription quota observations here, and billing facts below "
         "are separate record classes."
-    ) in html
-    assert "No quota estimate is a billing fact." in html
-
+    ) in card
+    assert "No quota estimate is a billing fact." in card
 
 FOLD_KEYS = (
     "modelTokenSeries",
@@ -336,96 +345,124 @@ COLUMN_TIERED_FOLDS = (
 )
 
 
-def test_every_ledger_table_ships_collapsed_behind_an_accessible_fold(tmp_path, monkeypatch):
+
+def test_every_ledger_table_ships_collapsed_behind_an_accessible_fold():
     """Keeper-ruled 2026-08-29: the ledger tables and columns are collapsed by
-    default. Fold is a class/attribute toggle, never a removal — the tbodies
-    ship in the DOM even while folded, so the hydrate cycle keeps writing into
-    them and nothing is lazy-rendered on expand."""
-    html = _dashboard_root_html(tmp_path, monkeypatch)
-
+    default. Fold is a class/attribute toggle, never a removal — the shared
+    Fold component renders its body children unconditionally (full tbodies in
+    the DOM while folded; nothing lazy-renders on expand), the collapsed
+    default comes from unset localStorage prefs, and the aria wiring
+    (aria-expanded / aria-controls / role=region) rides the fold key."""
+    joined = frontend_surfaces.frontend_text()
     for key in FOLD_KEYS:
-        fold = re.search(
-            rf'<section class="fold" data-fold="{key}"(?P<attrs>[^>]*)>', html
-        )
-        assert fold, f"{key}: no fold wrapper"
-        assert 'data-open="false"' in fold.group("attrs"), f"{key}: not collapsed by default"
-        toggle = re.search(
-            rf'<button type="button" class="fold-toggle" id="{key}FoldToggle"[^>]*>', html
-        )
-        assert toggle, f"{key}: fold toggle is not a real button"
-        assert 'aria-expanded="false"' in toggle.group(0), f"{key}: missing collapsed aria-expanded"
-        assert f'aria-controls="{key}FoldBody"' in toggle.group(0)
-        assert (
-            f'<div class="fold-body" id="{key}FoldBody" role="region" '
-            f'aria-labelledby="{key}FoldToggle">'
-        ) in html
+        assert f'foldKey="{key}"' in joined, f"{key}: no fold usage"
+
+    fold = frontend_surfaces.source("components/Fold.tsx")
+    assert 'data-open={open ? "true" : "false"}' in fold
+    assert "aria-expanded={open}" in fold
+    assert 'aria-controls={`${foldKey}FoldBody`}' in fold
+    assert 'id={`${foldKey}FoldToggle`}' in fold
+    assert (
+        'className="fold-body" id={`${foldKey}FoldBody`} role="region" '
+        'aria-labelledby={`${foldKey}FoldToggle`}'
+    ) in fold
+    # Toggle, never removal: the body renders children unconditionally.
+    assert "{children}" in fold
+    assert "open &&" not in fold, "fold body must not conditionally render on open"
+    assert '<button\n            type="button"' in fold or 'type="button"' in fold
+
+    state = frontend_surfaces.source("hooks/useFoldState.ts")
+    assert "expandAllRequested() || readFoldPrefs(FOLD_OPEN_KEY)[foldKey] === true" in state
 
 
-def test_wide_ledger_tables_default_to_the_essential_column_tier(tmp_path, monkeypatch):
-    html = _dashboard_root_html(tmp_path, monkeypatch)
-
-    for key, tier_class in COLUMN_TIERED_FOLDS:
-        fold = re.search(rf'<section class="fold" data-fold="{key}"(?P<attrs>[^>]*)>', html)
-        assert fold, f"{key}: no fold wrapper"
-        assert 'data-cols="essential"' in fold.group("attrs"), f"{key}: wide table not tiered"
-        assert f'class="{tier_class}"' in html, f"{key}: table missing its column-tier class"
+def test_wide_ledger_tables_default_to_the_essential_column_tier():
+    """Wide ledger tables default to the essential column tier; column
+    collapse is visibility (CSS display:none on the tier class), never DOM
+    removal, lifted by a real aria-pressed toggle button."""
+    tiered_sources = {
+        "harnessUsage": ("components/UnifiedUsageCard.tsx", "tier-harness"),
+        "providerModelUsage": ("components/UnifiedUsageCard.tsx", "tier-provider-model"),
+        "subscriptionsRaw": ("components/SubscriptionsCard.tsx", "tier-quota"),
+        "billingLedger": ("components/BillingCard.tsx", "tier-billing"),
+    }
+    assert set(tiered_sources) == {key for key, _tier in COLUMN_TIERED_FOLDS}
+    for key, (source_path, tier_class) in tiered_sources.items():
+        component = frontend_surfaces.source(source_path)
         assert re.search(
-            rf'<button type="button" class="fold-cols" data-fold-cols aria-pressed="false"'
-            rf' aria-controls="{key}FoldBody">All columns</button>',
-            html,
-        ), f"{key}: no all-columns toggle"
-    # Column collapse is visibility, never DOM removal: the hidden columns are
-    # still declared in the shipped markup.
-    assert re.search(r"\.fold\[data-cols=.essential.\][^{]*\{\s*display: none;", html)
+            rf'<Fold[^>]*foldKey="{key}"[^>]*colsToggle', component, re.DOTALL
+        ), f"{key}: fold is not column-tiered"
+        assert f'className="{tier_class}"' in component, (
+            f"{key}: table missing its column-tier class"
+        )
+
+    fold = frontend_surfaces.source("components/Fold.tsx")
+    assert 'data-cols={colsToggle ? (allCols ? "all" : "essential") : undefined}' in fold
+    assert "aria-pressed={allCols}" in fold
+    assert "All columns" in fold
+    assert "data-fold-cols" in fold
+
+    # Column collapse is visibility, never DOM removal: the hidden columns
+    # are still declared in the shipped markup.
+    assert re.search(
+        r"\.fold\[data-cols=.essential.\][^{]*\{\s*display: none;",
+        frontend_surfaces.app_css(),
+    )
 
 
-def test_fold_state_is_remembered_and_lives_outside_the_rendered_tbodies(tmp_path, monkeypatch):
-    html = _dashboard_root_html(tmp_path, monkeypatch)
+def test_fold_state_is_remembered_and_lives_outside_the_rendered_tbodies():
+    """Fold state lives in localStorage under the stable keys plus component
+    state — never inside the rendered tbodies, so the 60s hydrate cannot
+    reopen or re-collapse anything. Unset preference means collapsed /
+    essential, never remembered-open. ?expand=all is a one-load debug/print
+    affordance that writes nothing back. Summaries re-derive from the same
+    data the tables render from on every hydrate."""
+    state = frontend_surfaces.source("hooks/useFoldState.ts")
+    assert 'FOLD_OPEN_KEY = "aiUsage.fold.open"' in state
+    assert 'FOLD_COLS_KEY = "aiUsage.fold.cols"' in state
+    assert "expandAllRequested() || readFoldPrefs(FOLD_OPEN_KEY)[foldKey] === true" in state
+    assert "readFoldPrefs(FOLD_COLS_KEY)[foldKey] === true" in state
+    assert 'has("expand")' in state
+    # writeFoldPref appears exactly three times: its definition and the two
+    # user toggles — the expand affordance and initial reads never write.
+    assert state.count("writeFoldPref(") == 3
 
-    assert 'FOLD_OPEN_KEY = "aiUsage.fold.open"' in html
-    assert 'FOLD_COLS_KEY = "aiUsage.fold.cols"' in html
-    # Unset preference means collapsed / essential, never remembered-open.
-    # ?expand=all is a one-load debug/print affordance; unset prefs still
-    # default collapsed and the affordance writes nothing back.
-    assert "const isOpen = expandAll || openPrefs[key] === true;" in html
-    assert "const allColumns = colPrefs[key] === true;" in html
-    # Summaries re-derive from the rows in hand whenever a renderer rewrites a
-    # tbody, so the 60s hydrate refreshes them without disturbing fold state.
-    assert "new MutationObserver" in html
-    assert "function foldSummaryText(fold)" in html
+    # Summaries are derived from the data in hand (tableFoldSummary) and
+    # passed down as a prop — no DOM scraping, no state in the tbodies.
+    fold = frontend_surfaces.source("components/Fold.tsx")
+    assert "export function tableFoldSummary" in fold
+    assert "summary: string" in fold
 
 
-def test_codex_detail_section_is_removed_entirely(tmp_path, monkeypatch):
+def test_codex_detail_section_is_removed_entirely():
     """Keeper-ruled 2026-08-30: the Codex detail compatibility section is gone
     outright — hero, trend fold, correlation charts, token correlation ledger,
     and raw ledger rows, with all of their JS. The weekly codex quota signal
     survives in the subscriptions cards and the reset rail; banked resets and
     plan are accepted losses. The server endpoints those views consumed stay
-    (other consumers may exist); the page just never fetches them."""
-    html = _dashboard_root_html(tmp_path, monkeypatch)
+    (other consumers may exist); the frontend just never fetches them. The
+    scan covers every frontend source AND the built app chunk."""
+    surface = frontend_surfaces.frontend_text() + "\n" + frontend_surfaces.built_app_js()
 
-    assert "Codex detail" not in html
-    assert "Compatibility views" not in html
-    assert "section-label" not in html
+    assert "Codex detail" not in surface
+    assert "Compatibility views" not in surface
+    assert "section-label" not in surface
     # The hero and its monitor tiles.
     for retired in (
         'id="globalStatus"', 'id="planType"', 'id="currentWeekly"', 'id="resetCredits"',
         'id="freshness"', "Codex usage monitor", "Limits, resets, and headroom.",
         "Banked resets",
     ):
-        assert retired not in html
+        assert retired not in surface
     # The trend fold, correlation charts, and both ledger tables.
     for retired in (
         "codexUsageTrend", 'id="weekChart"', 'id="tokenUsageChart"',
         'id="tokenBucketChart"', 'id="tokenDeltaChart"', 'id="cacheHitChart"',
-        # ("Token bucket mix" survives only as a provenance mention in the
-        # replacement chart's comment, so it is not asserted absent.)
         "Usage over time", "Usage × tokens over time",
         "Quota movement", "Token correlation ledger", "Ledger rows",
         'data-fold="tokenLedger"', 'data-fold="rawLedger"', "tier-token-ledger",
         "detail-grid",
     ):
-        assert retired not in html
+        assert retired not in surface
     # The dead JS went with the markup — render paths, sorters, and the
     # codex-only chart builders.
     for retired_js in (
@@ -435,19 +472,20 @@ def test_codex_detail_section_is_removed_entirely(tmp_path, monkeypatch):
         "buildOrUpdateCacheHitChart", "thresholdPlugin", "endpointLabelPlugin",
         "state.trend", "state.tokenChart", "state.tokenLedger", "state.sortBy",
     ):
-        assert retired_js not in html
-    # The page no longer fetches the codex JSONL endpoints at all.
+        assert retired_js not in surface
+    # The frontend no longer fetches the codex JSONL endpoints at all.
     for retired_fetch in (
         '"/api/summary"', '"/api/trend"', '"/api/data', '"/api/token-ledger"',
         '"/api/token-chart"',
     ):
-        assert retired_fetch not in html
+        assert retired_fetch not in surface
     # The refresh button survives the section it used to live in, and the
     # refresh cycle drives the unified surfaces.
-    assert 'id="refreshUsage"' in html
-    assert "els.refresh.addEventListener" in html
-    assert "if (!document.hidden) hydrate();" in html
-
+    assert 'id="refreshUsage"' in surface
+    assert "onClick={onRefresh}" in frontend_surfaces.source("components/UnifiedUsageCard.tsx")
+    hook = frontend_surfaces.source("hooks/useDashboardData.ts")
+    assert "if (!document.hidden && booted.current) hydrate();" in hook
+    assert 'document.addEventListener("visibilitychange", onVisibility);' in hook
 
 def test_frontend_orphaned_codex_endpoints_are_still_served(tmp_path, monkeypatch):
     """The keeper kept the server side of the removed views: /api/summary,
@@ -466,77 +504,76 @@ def test_frontend_orphaned_codex_endpoints_are_still_served(tmp_path, monkeypatc
         assert client.get(endpoint).status_code == 200, endpoint
 
 
-def test_estate_wide_token_composition_and_cache_hit_charts_exist(tmp_path, monkeypatch):
+
+def test_estate_wide_token_composition_and_cache_hit_charts_exist():
     """Keeper-ruled 2026-08-30: the codex-only Token bucket mix and Cache hit
     rate charts are replaced by estate-wide charts in the unified section —
     stacked hourly token composition from bucket_series, and per-provider
     cache-hit lines from the provider_status_series token sums."""
-    html = _dashboard_root_html(tmp_path, monkeypatch)
+    card = frontend_surfaces.source("components/UnifiedUsageCard.tsx")
 
     # Token composition: stacked bars, SERIES bucket colors, chart+fold table.
-    assert "Token composition" in html
-    assert 'id="tokenCompositionChart"' in html
-    assert 'id="tokenCompositionLabels"' in html
-    assert "bucket_series" in html
-    assert "TOKEN_COMPOSITION_BUCKETS" in html
+    assert "Token composition" in card
+    assert 'canvasId="tokenCompositionChart"' in card
+    assert 'labelsId="tokenCompositionLabels"' in card
+    assert "bucket_series" in card
+    assert "TOKEN_COMPOSITION_BUCKETS" in card
     for bucket_label in ('"Input"', '"Cache read"', '"Cache write"', '"Output"', '"Reasoning"'):
-        assert bucket_label in html
-    assert 'stack: "composition"' in html
+        assert bucket_label in card
+    assert 'stack: "composition"' in card
 
     # Cache hit rate: per-provider lines in provider colors, 0-100 percent,
     # gaps where a provider had no prompt tokens, window-average legend.
-    assert "Cache hit rate" in html
-    assert 'id="cacheHitRateChart"' in html
-    assert 'id="cacheHitRateLabels"' in html
-    assert "function renderCacheHitRate" in html
-    assert "spanGaps: false" in html
-    assert "prompt > 0 ? (cache / prompt) * 100 : null" in html
-    assert "windowAverage" in html
+    assert "Cache hit rate" in card
+    assert 'canvasId="cacheHitRateChart"' in card
+    assert 'labelsId="cacheHitRateLabels"' in card
+    assert "function cacheHitRateModel" in card
+    assert "spanGaps: false" in card
+    assert "prompt > 0 ? (cache / prompt) * 100 : null" in card
+    assert "windowAverage" in card
     # Provider identity rides the same rank-slot mapping every other unified
-    # surface uses.
-    assert html.count("subscriptionUnifiedProviderColor({ provider: row.provider_canonical }, index)") >= 3
+    # surface uses (status strip, donuts, cache chart).
+    joined = frontend_surfaces.frontend_text()
+    assert joined.count(
+        "subscriptionUnifiedProviderColor(palette, { provider: row.provider_canonical }, index)"
+    ) >= 3
     # The status strip's low-traffic folding rule applies to the chart too.
-    assert 'row.provider !== "unknown" && Number(row.total_events) >= 10' in html
-    assert "Low-traffic fold:" in html
+    assert 'row.provider !== "unknown" && Number(row.total_events) >= 10' in card
+    assert "Low-traffic fold:" in card
 
     # Both new charts sit in the unified section, after the model token chart
     # and before the harness fold.
-    model_at = html.index('id="modelTokenChart"')
-    composition_at = html.index('id="tokenCompositionChart"')
-    cache_at = html.index('id="cacheHitRateChart"')
-    harness_at = html.index('data-fold="harnessUsage"')
+    model_at = card.index('canvasId="modelTokenChart"')
+    composition_at = card.index('canvasId="tokenCompositionChart"')
+    cache_at = card.index('canvasId="cacheHitRateChart"')
+    harness_at = card.index('foldKey="harnessUsage"')
     assert model_at < composition_at < cache_at < harness_at
 
 
-def test_captions_are_single_sentence_with_doctrine_at_section_level(
-    tmp_path, monkeypatch
-):
+def test_captions_are_single_sentence_with_doctrine_at_section_level():
     """Keeper polish round 2026-08-30, item 7: card captions say what the
     surface shows in one sentence; shared doctrine lives once at section
-    level."""
-    html = _dashboard_root_html(tmp_path, monkeypatch)
+    level (scanned across every frontend source)."""
+    joined = frontend_surfaces.frontend_text()
 
     # The pool/slices doctrine appears exactly once, on the unified section
     # header, not per-donut.
-    assert html.count("never shares of one pool") == 1
-    assert html.count("never drawn as slices") == 1
+    assert joined.count("never shares of one pool") == 1
+    assert joined.count("never drawn as slices") == 1
     # The tokens-vs-dollars doctrine appears exactly once, on the
     # Subscriptions header, not on each twin utilization chart.
-    assert html.count("never tokens or dollars") == 1
-    assert "this does not compare tokens or dollars" not in html
+    assert joined.count("never tokens or dollars") == 1
+    assert "this does not compare tokens or dollars" not in joined
     # The UTC policy note lives once at section level.
-    assert html.count("complete UTC hours (countdowns run in wall-clock time)") == 1
+    assert joined.count("complete UTC hours (countdowns run in wall-clock time)") == 1
 
 
-def test_subscription_meters_never_draw_a_lying_bar(tmp_path, monkeypatch):
+def test_subscription_meters_never_draw_a_lying_bar():
     """Keeper polish round 2026-08-30, items 8-10: lifetime/unknown windows and
     used>limit rows render balance-style (no used/limit bar), null-sided
     usd/credits quotas render as balances with a role accent, and kimi's
     provider_unit limit-100 scale displays as a percentage."""
-    html = _dashboard_root_html(tmp_path, monkeypatch)
-    script = html.split("async function loadSubscriptions()", 1)[1].split(
-        "async function loadBilling()", 1
-    )[0]
+    script = frontend_surfaces.source("components/SubscriptionsCard.tsx")
 
     # Item 8: the meterless gate covers lifetime, unknown, and used > limit,
     # and the authoritative-bar gate excludes those rows.
@@ -548,35 +585,46 @@ def test_subscription_meters_never_draw_a_lying_bar(tmp_path, monkeypatch):
     # Item 9: balance rendering with stability/violation accents.
     assert '"Balance"' in script
     assert 'remainingNumber > 0 ? "stability" : "violation"' in script
-    assert ".subscription-quota-value.role-stability" in html
-    assert ".subscription-quota-value.role-violation" in html
+    css = frontend_surfaces.app_css()
+    assert ".subscription-quota-value.role-stability" in css
+    assert ".subscription-quota-value.role-violation" in css
     # Item 10: provider_unit with limit 100 displays as %, provenance in the
     # tooltip, canonical unit untouched server-side.
     assert 'rawUnit === "provider_unit" && limitNumber === 100' in script
     assert "normalized 0–100 scale reported by the provider" in script
 
 
-def test_stale_notices_name_the_failing_lane(tmp_path, monkeypatch):
-    html = _dashboard_root_html(tmp_path, monkeypatch)
+def test_stale_notices_name_the_failing_lane():
+    """A bare "stale" badge sent an operator to the whole pipeline when one
+    source was the problem: staleLaneSuffix names the lane everywhere a stale
+    notice renders — both panel notices and the hero digest mirror (polish
+    round 2026-08-30, item 2)."""
+    freshness_lib = frontend_surfaces.source("lib/freshness.ts")
+    assert "export function staleLaneSuffix(freshness" in freshness_lib
+    assert "no successful run on record" in freshness_lib
 
-    assert "function staleLaneSuffix(freshness)" in html
-    assert "no successful run on record" in html
-    # Four callers: the definition, the two panel stale notices, and the hero
-    # ops digest's freshness mirror (polish round 2026-08-30, item 2).
-    assert html.count("staleLaneSuffix(freshness)") == 4
-    assert "renderFreshnessDigest(freshness)" in html
+    hook = frontend_surfaces.source("hooks/useDashboardData.ts")
+    # Both panel stale notices carry the suffix.
+    assert hook.count("staleLaneSuffix(freshness)") == 2
     for notice in (
         "Canonical usage is stale",
         "Subscription observations are stale",
     ):
-        assert notice in html
+        assert notice in hook
+    # The hero ops digest mirrors freshness (and the lane naming) even when
+    # the panel below falls back to a stale/empty notice.
+    hero = frontend_surfaces.source("components/OpsHero.tsx")
+    assert "staleLaneSuffix(freshness)" in hero
+    assert "freshness={state.freshness}" in frontend_surfaces.source("App.tsx")
 
 
-def test_subscription_provider_js_preserves_authority_and_freshness(tmp_path, monkeypatch):
-    html = _dashboard_root_html(tmp_path, monkeypatch)
-    script = html.split("async function loadSubscriptions()", 1)[1].split(
-        "async function loadBilling()", 1
-    )[0]
+def test_subscription_provider_js_preserves_authority_and_freshness():
+    """The subscription cards preserve provider authority and freshness
+    semantics: confidence labels, coverage/provider-state provenance, the
+    observed_at freshness threshold chain, and grouping. Rendering stays
+    injection-safe (React text nodes; no raw-HTML paths). A stale ledger
+    keeps rendering observations — the stale branch only sets the notice."""
+    script = frontend_surfaces.source("components/SubscriptionsCard.tsx")
 
     for label in ("Exact", "Estimated / partial", "Unknown"):
         assert label in script
@@ -591,23 +639,24 @@ def test_subscription_provider_js_preserves_authority_and_freshness(tmp_path, mo
     assert "threshold_seconds" in script
     assert "21600" in script
     assert "providerGroups" in script
-    assert "document.createElement" in script
-    assert ".textContent" in script
-    assert ".innerHTML" not in script
+    # React renders text nodes by construction; the raw-HTML escape hatches
+    # stay banned (the .innerHTML ban, translated).
+    joined = frontend_surfaces.frontend_text()
+    assert ".innerHTML" not in joined
+    assert "dangerouslySetInnerHTML" not in joined
 
-    stale_branch = script.split('if (freshness.status === "stale")', 1)[1].split(
+    hook = frontend_surfaces.source("hooks/useDashboardData.ts")
+    subs_loader = hook.split("async function loadSubscriptions", 1)[1].split(
+        "async function loadBilling", 1
+    )[0]
+    stale_branch = subs_loader.split('if (freshness.status === "stale")', 1)[1].split(
         'if (freshness.status === "empty")', 1
     )[0]
     assert "return" not in stale_branch
 
 
-def test_subscription_freshness_prefers_threshold_then_api_max_age_then_default(
-    tmp_path, monkeypatch
-):
-    html = _dashboard_root_html(tmp_path, monkeypatch)
-    script = html.split("async function loadSubscriptions()", 1)[1].split(
-        "async function loadBilling()", 1
-    )[0]
+def test_subscription_freshness_prefers_threshold_then_api_max_age_then_default():
+    script = frontend_surfaces.source("components/SubscriptionsCard.tsx")
 
     threshold_position = script.index("freshness.threshold_seconds")
     max_age_position = script.index("freshness.max_age_seconds")
@@ -616,44 +665,45 @@ def test_subscription_freshness_prefers_threshold_then_api_max_age_then_default(
     assert "Number.isFinite" in script[threshold_position:default_position]
 
 
-def test_subscription_groups_seed_expected_providers_and_keep_unknown_extras(
-    tmp_path, monkeypatch
-):
-    html = _dashboard_root_html(tmp_path, monkeypatch)
-    script = html.split("async function loadSubscriptions()", 1)[1].split(
-        "async function loadBilling()", 1
-    )[0]
+def test_subscription_groups_seed_expected_providers_and_keep_unknown_extras():
+    """The provider grid seeds every expected provider (so an empty ledger
+    still shows the estate), keeps unknown extras, and the frontend alias
+    map stays byte-identical to the server's canonical alias map."""
+    card = frontend_surfaces.source("components/SubscriptionsCard.tsx")
+    providers_src = frontend_surfaces.source("lib/providers.ts")
 
-    seed_statement = "providerOrder.forEach((provider) => ensureProviderGroup(provider));"
-    assert seed_statement in script
-    assert script.index(seed_statement) < script.index("rows.forEach((row) =>")
-    assert "const aliasKey = rawProvider.toLowerCase();" in script
+    seed_statement = "PROVIDER_ORDER.forEach((provider) => ensureProviderGroup(provider));"
+    assert seed_statement in card
+    assert card.index(seed_statement) < card.index("rows.forEach((row) =>")
+    assert "const aliasKey = rawProvider.toLowerCase();" in providers_src
     assert (
-        "Object.prototype.hasOwnProperty.call(providerAliases, aliasKey)"
-        in script
+        "Object.prototype.hasOwnProperty.call(PROVIDER_ALIASES, aliasKey)"
+        in providers_src
     )
-    assert "providerAliases[normalized]" not in script
-    assert "providerAliases[compact]" not in script
-    assert "const compact" not in script
-    assert '[".", "_", "/", " "]' not in script
+    assert "PROVIDER_ALIASES[normalized]" not in providers_src
+    assert "PROVIDER_ALIASES[compact]" not in providers_src
+    assert "const compact" not in providers_src
+    assert '[".", "_", "/", " "]' not in providers_src
     alias_declaration = re.search(
-        r"const providerAliases = (?P<aliases>\{.*?\});", script, re.DOTALL
+        r"PROVIDER_ALIASES[^=]*= Object\.freeze\((?P<aliases>\{.*?\})\);",
+        providers_src,
+        re.DOTALL,
     )
     assert alias_declaration is not None
     frontend_aliases = json.loads(
         re.sub(r",(\s*})$", r"\1", alias_declaration.group("aliases"))
     )
     assert frontend_aliases == dashboard_module._QUOTA_PROVIDER_ALIASES
-    assert "return group.key;" in script
-    assert "Unknown freshness" in script
-    assert "No quota windows available for this provider." in script
-    assert "if (!providerGroups.size)" not in script
+    assert "return group.key;" in card
+    assert "Unknown freshness" in card
+    assert "No quota windows available for this provider." in card
+    assert "providerGroups.size" not in card
 
 
-def test_subscription_provider_cards_are_mobile_contained(tmp_path, monkeypatch):
-    html = _dashboard_root_html(tmp_path, monkeypatch)
+def test_subscription_provider_cards_are_mobile_contained():
+    css = frontend_surfaces.app_css()
 
-    card_rule = re.search(r"\.subscription-provider-card\s*\{(?P<body>[^}]*)\}", html)
+    card_rule = re.search(r"\.subscription-provider-card\s*\{(?P<body>[^}]*)\}", css)
     assert card_rule is not None
     declarations = card_rule.group("body")
     assert re.search(r"min-width:\s*0\s*;", declarations)
@@ -662,19 +712,21 @@ def test_subscription_provider_cards_are_mobile_contained(tmp_path, monkeypatch)
     assert re.search(
         r"@media \(max-width: 640px\).*?\.subscription-provider-grid\s*\{"
         r"[^}]*grid-template-columns:\s*1fr\s*;",
-        html,
+        css,
         re.DOTALL,
     )
 
 
-def test_subscription_unavailable_path_renders_expected_provider_placeholders(
-    tmp_path, monkeypatch
-):
-    html = _dashboard_root_html(tmp_path, monkeypatch)
-    script = html.split("function renderUnavailableSubscriptionPlaceholders()", 1)
-    assert len(script) == 2
-    helper, loader = script[1].split("async function loadSubscriptions()", 1)
+def test_subscription_unavailable_path_renders_expected_provider_placeholders():
+    """A total subscriptions failure renders the expected-provider
+    placeholder cards as VISIBLE content under a "Subscription data
+    unavailable." notice — and placeholders are never mistaken for real
+    data: last-good gating keys on a real payload, never on hidden-ness."""
+    card = frontend_surfaces.source("components/SubscriptionsCard.tsx")
+    hook = frontend_surfaces.source("hooks/useDashboardData.ts")
+    providers_src = frontend_surfaces.source("lib/providers.ts")
 
+    assert "PlaceholderProviderCard" in card
     for display_name in (
         "OpenAI / Codex",
         "Anthropic / Claude",
@@ -682,28 +734,25 @@ def test_subscription_unavailable_path_renders_expected_provider_placeholders(
         "Z.AI / GLM",
         "Kimi K3 Coding",
     ):
-        assert display_name in helper
-    assert 'grid.textContent = ""' in helper
-    assert '"Unknown freshness"' in helper
-    assert '"No quota windows available for this provider."' in helper
-    assert 'statusEl.textContent = "Subscription data unavailable."' in helper
-    assert "statusEl.hidden = false" in helper
-    assert "content.hidden = false" in helper
-    # Placeholders are visible content, so they must not be mistaken for real data.
-    assert "subscriptionsHaveRenderedData = false;" in helper
-    assert "document.createElement" in helper
-    assert ".textContent" in helper
-    assert ".innerHTML" not in helper
+        assert display_name in providers_src
+    assert '"Unknown freshness"' in card
+    assert "No quota windows available for this provider." in card
+    # Placeholder mode is visible content with the notice shown.
+    assert "const contentVisible = !subs.loading && (Boolean(data) || subs.placeholder);" in card
 
-    catch_branch = loader.split("async function loadBilling()", 1)[0].split(
-        "} catch (error) {", 1
-    )[1]
-    assert "renderUnavailableSubscriptionPlaceholders();" in catch_branch
-    assert "showPanel(" not in catch_branch
-    # "showing last good data" is gated on a real render, never on content.hidden.
-    assert "if (subscriptionsHaveRenderedData) {" in catch_branch
-    assert "content.hidden" not in catch_branch
-
+    subs_loader = hook.split("async function loadSubscriptions", 1)[1].split(
+        "async function loadBilling", 1
+    )[0]
+    catch_branch = subs_loader.split("} catch (error) {", 1)[1]
+    assert '"Subscription data unavailable."' in catch_branch
+    assert "placeholder: true" in catch_branch
+    # Placeholder mode carries no data, so it can never read as a render.
+    assert "data: null" in catch_branch
+    # "showing last good data" is gated on a real payload, never on
+    # content visibility.
+    assert "prev.subs.data" in catch_branch
+    assert '"Refresh failed — showing last good data."' in catch_branch
+    assert "contentVisible" not in catch_branch
 
 @pytest.mark.parametrize(
     "query",
@@ -1934,40 +1983,32 @@ def test_extreme_quota_timestamps_fail_safely_in_parser_and_api(tmp_path):
     assert response.get_json() == {"error": "configured private ledger is unavailable"}
 
 
-def test_subscription_quota_chart_ticks_are_responsive(tmp_path, monkeypatch):
-    html = _dashboard_root_html(tmp_path, monkeypatch)
-    options = re.search(
-        r"function subscriptionQuotaChartOptions\(\) \{(?P<body>.*?)^      \}",
-        html,
-        re.DOTALL | re.MULTILINE,
-    )
 
-    assert options is not None
+def test_subscription_quota_chart_ticks_are_responsive():
+    chart = frontend_surfaces.source("lib/chart.ts")
+    options_at = chart.index("export function subscriptionQuotaChartOptions")
     assert (
         'maxTicksLimit: window.matchMedia("(max-width: 520px)").matches ? 3 : 9,'
-        in options.group("body")
+        in chart[options_at:]
     )
 
 
-def test_unified_subscription_provider_palette_is_stable_contrasting_and_scoped(
-    tmp_path, monkeypatch
-):
+def test_unified_subscription_provider_palette_is_stable_contrasting_and_scoped():
     # Governed-cognition refactor (kintsugi, 2026-08-29): the literal palette
     # died — providers pin fixed slots of the declared ai-usage.series-rank
     # set instead. Stability = fixed provider->slot map; contrast/distinctness
     # are the set law enforced per-theme in governed-cognition (pairwise
     # distinct members); scoping is unchanged.
-    html = _dashboard_root_html(tmp_path, monkeypatch)
+    providers_src = frontend_surfaces.source("lib/providers.ts")
     palette_match = re.search(
-        r"const SUBSCRIPTION_UNIFIED_PROVIDER_RANK = Object\.freeze\(\{"
-        r"(?P<slots>.*?)^      \}\);",
-        html,
-        re.DOTALL | re.MULTILINE,
+        r"SUBSCRIPTION_UNIFIED_PROVIDER_RANK[^=]*= Object\.freeze\((?P<slots>\{.*?\})\);",
+        providers_src,
+        re.DOTALL,
     )
 
     assert palette_match is not None
     slots = json.loads(
-        "{" + re.sub(r",\s*$", "", palette_match.group("slots")) + "}"
+        re.sub(r",(\s*})$", r"\1", palette_match.group("slots"))
     )
     assert sorted(slots) == [
         "anthropic",
@@ -1978,93 +2019,102 @@ def test_unified_subscription_provider_palette_is_stable_contrasting_and_scoped(
     ]
     assert all(isinstance(slot, int) and 0 <= slot < 10 for slot in slots.values())
     assert len(set(slots.values())) == len(slots), "provider slots must stay distinct"
+    assert "palette.rankColors[rank]" in providers_src
 
     # the style layer is token-pure: --bg resolves through the GC token layer
-    background_match = re.search(r"--bg:\s*([^;]+);", html)
+    background_match = re.search(r"--bg:\s*([^;]+);", frontend_surfaces.app_css())
     assert background_match is not None
     assert background_match.group(1).strip() == "var(--gc-bg)"
 
     # Datasets build from chartRows — the chart-window slice (polish round
     # item 11: the five-hour canvas plots the trailing 48 buckets) — while the
     # tables keep rendering from the unsliced rows.
-    assert "subscriptionQuotaDatasets(chartRows)" in html
-    assert "chartBucketLimit: 48" in html
-    assert "const color = subscriptionUnifiedProviderColor(row, index);" in html
-    assert "UNIFIED_RANK_COLORS[rank]" in html
-    assert "subscriptionUnifiedQuotaDash(row)" in html
+    card = frontend_surfaces.source("components/SubscriptionsCard.tsx")
+    assert "subscriptionQuotaDatasets(palette, chartRows)" in card
+    assert "chartBucketLimit={48}" in card
+    assert "const color = subscriptionUnifiedProviderColor(palette, row, index);" in card
+    assert "borderDash: subscriptionUnifiedQuotaDash(row)" in card
 
 
-def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_explicit(
-    tmp_path, monkeypatch
-):
-    html = _dashboard_root_html(tmp_path, monkeypatch)
+def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_explicit():
+    """The unified quota history renders exactly two accessible chart cards
+    (weekly + five-hour), normalized 0-100%, confidence-explicit labels and
+    dashes, bounded fetches, and the retired per-provider small multiples
+    stay dead — the invariants of the pre-React history section, held
+    against the React sources and the entry documents."""
+    card = frontend_surfaces.source("components/SubscriptionsCard.tsx")
+    chart = frontend_surfaces.source("lib/chart.ts")
+    quota_src = frontend_surfaces.source("lib/quota.ts")
+    hook = frontend_surfaces.source("hooks/useDashboardData.ts")
+    canvas = frontend_surfaces.source("components/ChartCanvas.tsx")
+    joined = frontend_surfaces.frontend_text()
 
-    history = html.split('<section class="subscription-quota-history"', 1)[1].split(
-        '<div id="subscriptionProviderGrid"', 1
-    )[0]
-    assert len(re.findall(r"<canvas\b", history)) == 2
-    assert "Unified weekly subscription utilization" in history
-    assert "Unified five-hour subscription utilization" in history
-    assert "normalized 0–100% scale" in history
+    # Exactly two chart cards in the history section.
+    assert card.count("<SubscriptionHistoryCard") == 2
+    assert "Unified weekly subscription utilization" in card
+    assert "Unified five-hour subscription utilization" in card
+    assert card.count("normalized 0–100% scale") == 2
     # Caption diet (2026-08-30 polish, item 7): the tokens-vs-dollars doctrine
-    # moved from the twin chart captions to the Subscriptions section header,
-    # and the no-substitution rule is carried by the dynamic
-    # missingQuotaMessage summary rather than restated in the caption.
-    assert "does not compare tokens or dollars" not in history
-    assert "never tokens or dollars" in html
-    assert "weekly data is not substituted" in html
-    for prefix, period in (
-        ("subscriptionUnifiedWeekly", "weekly"),
-        ("subscriptionUnifiedFiveHour", "five-hour"),
+    # lives on the Subscriptions section header, and the no-substitution rule
+    # is carried by the dynamic missingQuotaMessage summary.
+    assert "does not compare tokens or dollars" not in joined
+    assert "never tokens or dollars" in card
+    assert "weekly data is not substituted" in quota_src
+    for wired in (
+        'prefix="subscriptionUnifiedWeekly"',
+        'prefix="subscriptionUnifiedFiveHour"',
+        'canvasAriaLabel="Unified weekly subscription quota utilization from 0 to 100 percent"',
+        'canvasAriaLabel="Unified five-hour subscription quota utilization from 0 to 100 percent"',
     ):
-        assert f'id="{prefix}Chart"' in history
-        assert (
-            f'aria-label="Unified {period} subscription quota utilization from 0 to 100 percent"'
-            in history
-        )
-        assert (
-            f'role="img" aria-describedby="{prefix}Description {prefix}Summary"'
-            in history
-        )
-        assert f'id="{prefix}Description"' in history
-        assert f'id="{prefix}Labels"' in history
-        assert f'id="{prefix}TableHead"' in history
-        assert f'id="{prefix}TableBody"' in history
-    assert "Provider quota history" not in html
-    assert "subscriptionProviderChartGrid" not in html
-    assert "subscriptionProviderChart-" not in html
-    assert "subscriptionProviderTableHead-" not in html
-    assert "subscriptionProviderTableBody-" not in html
-    assert "subscriptionProviderCharts" not in html
-    assert "destroySubscriptionProviderCharts" not in html
-    assert "renderSubscriptionProviderCharts" not in html
-    assert "subscriptionProviderAccountCards" not in html
-    assert ".subscription-provider-chart" not in html
-    assert 'id="subscriptionProviderGrid"' in html
-    # The raw observation ledger moved from <details> to the fold system
-    # (keeper-ruled 2026-08-29: ledger tables collapsed by default).
-    assert 'data-fold="subscriptionsRaw"' in html
-    script = html.rsplit("<script>", 1)[1].split("</script>", 1)[0]
-    assert 'prefix: "subscriptionUnifiedWeekly"' in script
-    assert 'prefix: "subscriptionUnifiedFiveHour"' in script
-    assert "timeSeries.unified_weekly" in script
-    assert "timeSeries.unified_five_hour" in script
-    assert 'fetch("/api/subscriptions?hours=168&history=0", { signal: AbortSignal.timeout(30000) })' in html
-    assert 'fetch("/api/subscriptions?days=30&history=0")' not in html
-    assert "Historical contract only" not in html
-    assert "No comparable primary weekly-equivalent data:" in html
-    assert "OpenAI / Codex reports no comparable five-hour quota" in html
-    assert "quotaConfidenceDash" in html
-    assert 'status === "exact" ? [] : [7, 5]' in html
-    assert "spanGaps: false" in html
-    assert "confidence_status" in html
-    assert ".destroy()" in html
-    assert "animation: REDUCED_MOTION ? false" in html
-    assert "min: 0" in html and "max: 100" in html
-    assert "cdn.jsdelivr.net" not in html
+        assert wired in card
+    # The id family and the described-by chain ride the prefix, so both
+    # cards carry Chart/Description/Summary/Labels/TableHead/TableBody.
+    assert 'role="img"' in card
+    assert "ariaDescribedBy={`${prefix}Description ${prefix}Summary`}" in card
+    for template_id in (
+        "`${prefix}Chart`", "`${prefix}Description`", "`${prefix}Summary`",
+        "`${prefix}Labels`", "`${prefix}TableHead`", "`${prefix}TableBody`",
+    ):
+        assert template_id in card
 
+    # Retired per-provider small multiples stay dead.
+    for retired in (
+        "Provider quota history",
+        "subscriptionProviderChartGrid",
+        "subscriptionProviderChart-",
+        "subscriptionProviderTableHead-",
+        "subscriptionProviderTableBody-",
+        "subscriptionProviderCharts",
+        "destroySubscriptionProviderCharts",
+        "renderSubscriptionProviderCharts",
+        "subscriptionProviderAccountCards",
+        ".subscription-provider-chart {",
+    ):
+        assert retired not in joined
+    assert 'id="subscriptionProviderGrid"' in card
+    # The raw observation ledger stays behind the fold system
+    # (keeper-ruled 2026-08-29: ledger tables collapsed by default).
+    assert 'foldKey="subscriptionsRaw"' in card
+    assert "timeSeries.unified_weekly" in card
+    assert "timeSeries.unified_five_hour" in card
+    assert 'fetch("/api/subscriptions?hours=168&history=0", { signal: AbortSignal.timeout(30000) })' in hook
+    assert 'fetch("/api/subscriptions?days=30&history=0")' not in joined
+    assert "Historical contract only" not in joined
+    assert "No comparable primary weekly-equivalent data:" in quota_src
+    assert "OpenAI / Codex reports no comparable five-hour quota" in quota_src
+    assert "quotaConfidenceDash" in quota_src
+    assert 'status === "exact" ? [] : [7, 5]' in quota_src
+    assert "spanGaps: false" in card
+    assert "confidence_status" in card
+    assert ".destroy()" in canvas
+    assert "animation: REDUCED_MOTION ? false" in chart
+    assert "min: 0" in chart and "max: 100" in chart
+    assert "cdn.jsdelivr.net" not in joined
+    assert "cdn.jsdelivr.net" not in frontend_surfaces.built_html()
+
+    css = frontend_surfaces.app_css()
     responsive_grid_rule = re.search(
-        r"\.subscription-unified-history-grid\s*\{(?P<body>[^}]*)\}", html
+        r"\.subscription-unified-history-grid\s*\{(?P<body>[^}]*)\}", css
     )
     assert responsive_grid_rule is not None
     assert re.search(
@@ -2072,16 +2122,17 @@ def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_ex
         r"minmax\(min\(100%,\s*520px\),\s*1fr\)\)\s*;",
         responsive_grid_rule.group("body"),
     )
-    assert '<meta name="viewport" content="width=device-width, initial-scale=1.0" />' in html
+    viewport = '<meta name="viewport" content="width=device-width, initial-scale=1.0" />'
+    assert viewport in frontend_surfaces.entry_html()
+    assert viewport in frontend_surfaces.built_html()
 
     mobile_rule = re.search(
         r"@media \(max-width: 640px\).*?\.subscription-quota-chart-wrap\s*\{"
         r"[^}]*min-height:\s*220px\s*;",
-        html,
+        css,
         re.DOTALL,
     )
     assert mobile_rule is not None
-
 
 def test_vendor_readme_records_bounded_bklit_design_provenance():
     provenance = Path("src/codex_usage_tracker/static/vendor/README.md").read_text(

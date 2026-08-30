@@ -10,7 +10,7 @@ import os
 import threading
 from typing import Any, Dict, List, Optional, TypeAlias
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, request
 
 from .capability_matrix import get_capability_matrix
 from .list_pricing import estimate_list_price
@@ -1364,7 +1364,13 @@ def create_app(
 
     @app.route("/")
     def dashboard_page():
-        return render_template("index.html")
+        # The frontend is a React + Vite app (frontend/) that builds into
+        # static/app/; this route serves the built entry document. The
+        # after_request cache policy still stamps it no-store (it is not a
+        # /static/ path), while the hashed asset files it names may cache —
+        # a rebuild changes the hashes, so a cached asset can never hide a
+        # deploy (keeper report 2026-08-30).
+        return app.send_static_file("app/index.html")
 
     @app.route("/api/data")
     def api_data():

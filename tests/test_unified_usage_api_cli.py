@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import sqlite3
 import threading
@@ -23,6 +24,8 @@ import codex_usage_tracker.dashboard as dashboard_module
 import codex_usage_tracker.quota as quota_module
 from codex_usage_tracker.cli import main
 from codex_usage_tracker.dashboard import create_app
+
+import frontend_surfaces
 from codex_usage_tracker.provider_spend import latest_budget_state
 from codex_usage_tracker.quota import (
     capture_claude_code_usage_screen,
@@ -1061,9 +1064,12 @@ def test_private_dashboard_labels_stale_usage_and_quota_ledgers(tmp_path, monkey
     assert usage_payload["freshness"] == expected
     assert quota_payload["freshness"] == expected
 
-    page = client.get("/").get_data(as_text=True)
-    assert "Canonical usage is stale" in page
-    assert "Subscription observations are stale" in page
+    # React + Vite retarget: the stale notices render client-side from the
+    # freshness payload asserted above; the notice strings live in the
+    # frontend data hook.
+    hook = frontend_surfaces.source("hooks/useDashboardData.ts")
+    assert "Canonical usage is stale" in hook
+    assert "Subscription observations are stale" in hook
 
 
 def test_private_dashboard_uses_success_heartbeats_for_noop_collection_freshness(tmp_path, monkeypatch):
@@ -2273,6 +2279,11 @@ def test_dashboard_cli_threads_private_ledgers_without_repurposing_legacy_ledger
 
 
 def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independently(tmp_path):
+    """React + Vite retarget: the served page is the built entry document
+    (title, vendored Chart.js as a classic script, no Codex-specific
+    surfaces); the panel wiring — bounded fetches, independent loaders,
+    last-good fallbacks, provider-neutral unified surfaces — lives in the
+    frontend sources."""
     client = create_app(ledger=str(tmp_path / "codex.jsonl")).test_client()
     page = client.get("/").get_data(as_text=True)
     assert "<title>AI Usage</title>" in page
@@ -2282,54 +2293,68 @@ def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independent
     assert b"Chart.js v4.5.1" in chart_asset.data[:100]
     package_data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["tool"]["setuptools"]["package-data"]
     assert "static/vendor/*.js" in package_data["codex_usage_tracker"]
+    # The served page must name the committed build it ships.
+    assert re.search(r'src="/static/app/assets/index-[^"]+\.js"', page)
+
+    joined = frontend_surfaces.frontend_text()
+    hook = frontend_surfaces.source("hooks/useDashboardData.ts")
+    card = frontend_surfaces.source("components/UnifiedUsageCard.tsx")
+    chart_lib = frontend_surfaces.source("lib/chart.ts")
+
     # The Codex detail compatibility section was removed entirely
     # (keeper-ruled 2026-08-30); the unified surfaces carry the page alone.
     assert "Codex detail" not in page
-    assert 'fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) })' in page
-    assert 'id="modelTokenChart"' in page
+    assert "Codex detail" not in joined
+    assert 'fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) })' in hook
+    assert 'canvasId="modelTokenChart"' in card
     # Estate-wide replacements for the codex-only token charts.
-    assert 'id="tokenCompositionChart"' in page
-    assert 'id="cacheHitRateChart"' in page
+    assert 'canvasId="tokenCompositionChart"' in card
+    assert 'canvasId="cacheHitRateChart"' in card
     # Retired surfaces (keeper-ratified flow rework, akasan 2026-08-30): the
     # rank-bar comparison cards and the two-party Codex-vs-Claude chart are
     # replaced by the quota donuts, status strip, and reset rail.
-    assert "codexClaude" not in page
-    assert "ComparisonBars" not in page
-    assert "renderAggregateComparisons" not in page
-    assert 'id="fiveHourDonut"' in page
-    assert 'id="weeklyDonut"' in page
-    assert 'id="resetRailChips"' in page
-    assert 'id="providerStatusRows"' in page
-    assert 'typeof Chart !== "undefined"' in page
-    assert 'id="modelTokenLabels"' in page
-    assert "Tokens across provider models" in page
-    assert "stacked: true" in page
-    assert "legend: { display: false" in page
-    assert "prefers-reduced-motion" in page
-    assert 'timeZone: "UTC"' in page
-    assert 'rowHead.scope = "row"' in page
-    assert "overflow-x: hidden" in page
-    assert "overflow-wrap: anywhere" in page
-    assert 'align: "inner"' in page
-    assert 'fetch("/api/subscriptions?hours=168&history=0", { signal: AbortSignal.timeout(30000) })' in page
-    assert 'fetch("/api/subscriptions?days=30&history=0")' not in page
-    assert 'fetch("/api/billing?days=30", { signal: AbortSignal.timeout(30000) })' in page
-    assert 'fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) })' in page
-    assert "Refresh failed — showing last good data." in page
-    assert "if (!document.hidden) hydrate();" in page
-    optional_script = page[page.index('fetch("/api/unified-usage?hours=168", { signal'):]
+    assert "codexClaude" not in joined
+    assert "ComparisonBars" not in joined
+    assert "renderAggregateComparisons" not in joined
+    assert 'svgId="fiveHourDonut"' in card
+    assert 'svgId="weeklyDonut"' in card
+    assert 'id="resetRailChips"' in frontend_surfaces.source("components/ResetRail.tsx")
+    assert 'id="providerStatusRows"' in frontend_surfaces.source("components/ProviderStatus.tsx")
+    # Chart.js absence is guarded, not assumed (the vendored UMD global).
+    assert 'typeof Chart === "undefined"' in chart_lib
+    assert 'labelsId="modelTokenLabels"' in card
+    assert "Tokens across provider models" in card
+    assert "stacked: true" in card
+    assert "legend: { display: false" in chart_lib
+    assert "prefers-reduced-motion" in joined
+    assert 'timeZone: "UTC"' in frontend_surfaces.source("lib/format.ts")
+    assert 'scope="row"' in frontend_surfaces.source("components/SeriesTable.tsx")
+    assert "overflow-x: hidden" in frontend_surfaces.app_css()
+    assert "overflow-wrap: anywhere" in frontend_surfaces.app_css()
+    assert 'align: "inner"' in chart_lib
+    assert 'fetch("/api/subscriptions?hours=168&history=0", { signal: AbortSignal.timeout(30000) })' in hook
+    assert 'fetch("/api/subscriptions?days=30&history=0")' not in joined
+    assert 'fetch("/api/billing?days=30", { signal: AbortSignal.timeout(30000) })' in hook
+    assert "Refresh failed — showing last good data." in hook
+    assert "if (!document.hidden && booted.current) hydrate();" in hook
+    # The five-hour and 24h follow-up windows are optional refinements in
+    # their own try blocks, never an all-or-nothing Promise.all — and the
+    # four panel loaders settle independently.
+    optional_script = hook[hook.index('fetch("/api/unified-usage?hours=168", { signal'):]
     assert "Promise.all([" not in optional_script
-    assert "Unified usage unavailable" in page
-    assert "No unified usage events" in page
-    assert "Subscription data unavailable" in page
-    assert "No subscription observations" in page
-    assert "Billing data unavailable" in page
-    assert "No billing transactions" in page
-    assert "Est. spend (list)" in page
-    assert "Billing ledger" in page
-    assert "textContent" in page
-    assert "if (hydrateInFlight) return" in page
-    assert "hydrateInFlight = false" in page
+    assert "Promise.allSettled([" in hook
+    assert 'fetch("/api/unified-usage?hours=5"' in optional_script
+    assert 'fetch("/api/unified-usage?hours=24"' in optional_script
+    assert "Unified usage unavailable" in hook
+    assert "No unified usage events" in hook
+    assert "Subscription data unavailable" in hook
+    assert "No subscription observations" in hook
+    assert "Billing data unavailable" in hook
+    assert "No billing transactions" in hook
+    assert "Est. spend (list)" in card
+    assert "Billing ledger" in frontend_surfaces.source("components/BillingCard.tsx")
+    # Injection safety: React text nodes only, no raw-HTML path.
+    assert "dangerouslySetInnerHTML" not in joined
 
 
 def test_readme_documents_private_ai_dashboard_and_new_projection_compatibility_boundary():

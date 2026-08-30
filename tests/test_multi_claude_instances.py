@@ -20,6 +20,8 @@ from codex_usage_tracker.cli import main
 import codex_usage_tracker.collector as collector_module
 from codex_usage_tracker.collector import collect_all
 import codex_usage_tracker.dashboard as dashboard_module
+
+import frontend_surfaces
 from codex_usage_tracker.dashboard import create_app
 import codex_usage_tracker.quota as quota_module
 from codex_usage_tracker.quota import collect_claude_code_quota
@@ -768,29 +770,33 @@ def test_single_anthropic_account_preserves_labels_and_card_metadata(
     assert provider["series"][0]["provider_account_index"] == 1
     assert provider["series"][0]["provider_account_count"] == 1
 
-    html = client.get("/").get_data(as_text=True)
-    assert "subscriptionUnifiedProviderColor" in html
-    assert "subscriptionUnifiedQuotaDash" in html
-    assert "provider_account_index" in html
-    assert "provider_account_count" in html
-    assert "borderDash: subscriptionUnifiedQuotaDash(row)" in html
+    # React + Vite retarget: the account-aware color/dash helpers live in the
+    # frontend sources now, not the served page.
+    joined = frontend_surfaces.frontend_text()
+    assert "subscriptionUnifiedProviderColor" in joined
+    assert "subscriptionUnifiedQuotaDash" in joined
+    assert "provider_account_index" in joined
+    assert "provider_account_count" in joined
+    assert "borderDash: subscriptionUnifiedQuotaDash(row)" in frontend_surfaces.source(
+        "components/SubscriptionsCard.tsx"
+    )
 
 
-def test_quota_history_removes_provider_small_multiples_and_account_partition_helper(
-    tmp_path,
-):
-    html = create_app(
-        atrium_root=str(tmp_path / "atrium"),
-        ledger=str(tmp_path / "usage.jsonl"),
-    ).test_client().get("/").get_data(as_text=True)
+def test_quota_history_removes_provider_small_multiples_and_account_partition_helper():
+    """React + Vite retarget: the retired small-multiples surfaces and the
+    private account identifiers stay absent from every frontend source and
+    the built app chunk; the account dash rotation survives."""
+    joined = frontend_surfaces.frontend_text() + "\n" + frontend_surfaces.built_app_js()
 
-    assert "subscriptionProviderAccountCards" not in html
-    assert "renderSubscriptionProviderCharts" not in html
-    assert "subscriptionProviderCharts" not in html
-    assert "subscriptionProviderChartGrid" not in html
-    assert "Provider quota history" not in html
-    assert "patterns[(index - 1) % patterns.length]" in html
-    assert "const dashPattern = subscriptionUnifiedQuotaDash(row);" in html
-    assert "account_ref" not in html
-    assert "source_namespace" not in html
-    assert "claude-code-secondary" not in html
+    assert "subscriptionProviderAccountCards" not in joined
+    assert "renderSubscriptionProviderCharts" not in joined
+    assert "subscriptionProviderCharts" not in joined
+    assert "subscriptionProviderChartGrid" not in joined
+    assert "Provider quota history" not in joined
+    assert "patterns[(index - 1) % patterns.length]" in frontend_surfaces.source("lib/quota.ts")
+    assert "const dashPattern = subscriptionUnifiedQuotaDash(row);" in frontend_surfaces.source(
+        "components/SubscriptionsCard.tsx"
+    )
+    assert "account_ref" not in joined
+    assert "source_namespace" not in joined
+    assert "claude-code-secondary" not in joined

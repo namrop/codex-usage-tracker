@@ -1,47 +1,59 @@
-"""Governed Cognition conformance gate for the dashboard template.
+"""Governed Cognition conformance gate for the dashboard frontend.
 
 The kintsugi refactor (Atrium 07_systems/ai_usage_tracker/
 valarin_render_ai_usage_frontend_refactor_kintsugi_2026-08-29.md, akasan
 spoken 2026-08-29): the style layer references tokens only, zero literals.
-The law lives in governed-cognition; the obedience lives here — this test is
-the imported purity scan running in this repo's harness so a regression
-(someone pasting a hex back into the template) fails CI.
+The law lives in governed-cognition; the obedience lives here — this is the
+imported purity scan running in this repo's harness so a regression (someone
+pasting a hex back into the styles) fails CI.
+
+React + Vite retarget (2026-08-30): the single Flask template died; the
+same invariants now bind the frontend sources and the committed build:
+
+- frontend/src/styles/app.css   — the app style layer (was <style> block 1)
+- frontend/src/styles/type-bridge.css — the font bridge (was block 2)
+- frontend/src/**/*.ts(x)       — the app JS layer (was the inline script)
+- frontend/index.html + static/app/index.html — the entry documents
+- static/app/assets/index-*.js / index-*.css  — the built app chunk/sheet
 
 Documented exceptions:
-  - the <style id="gc-type-bridge"> block may declare font-family, but only
-    as var(--gc-font-*) references (mirrors diadem's excluded bridge sheet);
+  - the type bridge may declare font-family, but only as var(--gc-font-*)
+    references (mirrors diadem's excluded bridge sheet);
   - JS may *construct* rgba() strings from resolved token values (the
-    withAlpha helper) — it may not carry color literals.
+    withAlpha helper family) — it may not carry color literals;
+  - the vendor-*.js chunk (React internals) is third-party, exempt like the
+    vendored GC snapshot and Chart.js UMD.
 
 When the governed-cognition repo is present on the host, its own
-conformance.scan_css_text also runs on the main style block for parity with
-the estate gate.
+conformance.scan_css_text also runs on the app sheet for parity with the
+estate gate.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import re
+
+from frontend_surfaces import (
+    GC_SNAPSHOT,
+    app_css,
+    bridge_css,
+    built_app_js,
+    built_css,
+    built_html,
+    entry_html,
+    source_files,
+)
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE = REPO_ROOT / "src" / "codex_usage_tracker" / "templates" / "index.html"
-GC_SNAPSHOT = REPO_ROOT / "src" / "codex_usage_tracker" / "static" / "gc"
 GC_REPO = Path("/srv/pharos/workspaces/governed-cognition")
 
-STYLE_BLOCK_RE = re.compile(r"<style(?P<attrs>[^>]*)>(?P<body>.*?)</style>", re.S)
-SCRIPT_BLOCK_RE = re.compile(r"<script(?P<attrs>[^>]*)>(?P<body>.*?)</script>", re.S)
 COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
 
 # A hex COLOR is 3/4/6/8 hex digits (ids like #topbar are structure, not
 # color) — the diadem/GC purity-scan rule verbatim.
 HEX_COLOR_RE = re.compile(r"#([0-9a-fA-F]{3,8})\b")
 COLOR_FN_LITERAL_RE = re.compile(r"\b(?:rgb|rgba|hsl|hsla)\(\s*[\d.]")
-
-
-def _style_blocks() -> list[tuple[str, str]]:
-    text = TEMPLATE.read_text(encoding="utf-8")
-    return [(m.group("attrs"), m.group("body")) for m in STYLE_BLOCK_RE.finditer(text)]
 
 
 def _hex_colors(body: str) -> list[str]:
@@ -54,56 +66,114 @@ def _hex_colors(body: str) -> list[str]:
 
 
 def test_template_has_exactly_one_bridge_and_one_app_style_block() -> None:
-    blocks = _style_blocks()
-    assert len(blocks) == 2, "expected the app style block plus the type bridge"
-    assert "gc-type-bridge" in blocks[1][0]
+    """The style layer is exactly two sheets — the app adapter layer and the
+    type bridge — imported in that order, and the build bundles exactly one
+    stylesheet (no third sheet can smuggle literals in)."""
+    main = source_files()[
+        next(p for p in source_files() if p.name == "main.tsx")
+    ]
+    app_at = main.index('import "./styles/app.css";')
+    bridge_at = main.index('import "./styles/type-bridge.css";')
+    assert app_at < bridge_at, "app layer must load before the type bridge"
+    css_imports = re.findall(r"import\s+\"[^\"]*\.css\";", main)
+    assert len(css_imports) == 2, "expected the app sheet plus the type bridge, nothing else"
+    styles_dir = [p for p in source_files() if p.suffix == ".css"]
+    assert sorted(p.name for p in styles_dir) == ["app.css", "type-bridge.css"]
+    # One built stylesheet, and the served entry document names it.
+    assert built_css()
+    assert re.search(r'<link rel="stylesheet"[^>]*href="/static/app/assets/index-[^"]+\.css">', built_html())
 
 
 def test_app_style_layer_is_token_pure() -> None:
-    attrs, body = _style_blocks()[0]
-    assert "gc-type-bridge" not in attrs
-    css = COMMENT_RE.sub("", body)
+    """Zero color literals in the app style layer, source AND built: colors
+    resolve through --gc-* tokens (color-mix over var() for alpha), and
+    font-family belongs to the bridge alone."""
+    css = COMMENT_RE.sub("", app_css())
     assert _hex_colors(css) == [], "hex color literal(s) in the app style layer"
     assert not COLOR_FN_LITERAL_RE.search(css), (
         "rgb()/rgba()/hsl() literal in the app style layer — colors resolve "
         "through --gc-* tokens (color-mix over var() for alpha)"
     )
     assert "font-family" not in css, (
-        "font-family belongs in the gc-type-bridge block, families in the theme layer"
+        "font-family belongs in the type-bridge sheet, families in the theme layer"
     )
     assert "var(--" in css, "style layer is not consuming tokens"
+    # The committed build bundles both sheets; the purity scan holds there
+    # too (the bridge adds font-family lines but never colors).
+    built = COMMENT_RE.sub("", built_css())
+    assert _hex_colors(built) == [], "hex color literal(s) in the built stylesheet"
+    assert not COLOR_FN_LITERAL_RE.search(built)
 
 
 def test_type_bridge_only_applies_theme_families() -> None:
-    _attrs, body = _style_blocks()[1]
-    css = COMMENT_RE.sub("", body)
+    """The bridge is font APPLICATION only: every font-family value is a GC
+    font token reference, and no color sneaks in."""
+    css = COMMENT_RE.sub("", bridge_css())
     assert _hex_colors(css) == []
     assert not COLOR_FN_LITERAL_RE.search(css)
-    for match in re.finditer(r"font-family:\s*([^;]+);", css):
-        value = match.group(1).strip()
-        assert re.fullmatch(r"var\(--gc-font-[a-z]+\)", value), (
-            f"type bridge may only reference GC font tokens, got: {value!r}"
+    families = re.findall(r"font-family:\s*([^;]+);", css)
+    assert families, "the bridge exists to apply theme families"
+    for value in families:
+        assert re.fullmatch(r"var\(--gc-font-[a-z]+\)", value.strip()), (
+            f"type bridge may only reference GC font tokens, got: {value.strip()!r}"
         )
 
 
 def test_inline_js_carries_no_color_literals() -> None:
-    text = TEMPLATE.read_text(encoding="utf-8")
-    for match in SCRIPT_BLOCK_RE.finditer(text):
-        if "src=" in match.group("attrs"):
+    """The app JS layer (every frontend source and the built app chunk)
+    carries no color literals — it may only CONSTRUCT rgba() from resolved
+    token values (the withAlpha exception). The vendor chunk is third-party
+    and exempt, like the GC snapshot."""
+    for path, text in source_files().items():
+        if path.suffix not in (".ts", ".tsx", ".html"):
             continue
-        js = match.group("body")
-        quoted_hex = re.findall(r"[\"'`]#[0-9a-fA-F]{3,8}\b", js)
-        assert quoted_hex == [], f"hex color literal(s) in inline JS: {quoted_hex}"
-        assert not COLOR_FN_LITERAL_RE.search(js), (
-            "rgba()/hsl() literal with numeric components in inline JS — "
+        quoted_hex = re.findall(r"[\"'`]#[0-9a-fA-F]{3,8}\b", text)
+        assert quoted_hex == [], f"hex color literal(s) in {path.name}: {quoted_hex}"
+        assert not COLOR_FN_LITERAL_RE.search(text), (
+            f"rgba()/hsl() literal with numeric components in {path.name} — "
             "construct colors from resolved tokens (withAlpha) instead"
         )
+    built = built_app_js()
+    assert re.findall(r"[\"'`]#[0-9a-fA-F]{3,8}\b", built) == [], (
+        "hex color literal(s) in the built app chunk"
+    )
+    assert not COLOR_FN_LITERAL_RE.search(built), (
+        "color-function literal in the built app chunk"
+    )
 
 
 def test_no_external_font_fetch() -> None:
-    text = TEMPLATE.read_text(encoding="utf-8")
-    assert "fonts.googleapis.com" not in text
-    assert "fonts.gstatic.com" not in text
+    """All-local law (kintsugi M1): fonts are the theme layer's vendored
+    woff2 — no Google Fonts fetch anywhere in the frontend or the build."""
+    surfaces = [entry_html(), built_html(), built_css(), built_app_js()]
+    surfaces.extend(source_files().values())
+    for text in surfaces:
+        assert "fonts.googleapis.com" not in text
+        assert "fonts.gstatic.com" not in text
+
+
+def test_gc_loader_stays_a_classic_head_script() -> None:
+    """The theme contract: /static/gc/loader.js is named by the page as a
+    classic synchronous <script> in <head> — never bundled, never
+    type=module — with data-gc-fallback, BEFORE the app bundle, so the theme
+    injects pre-paint and an origin outage falls back to the snapshot. The
+    picker mounts through GovernedCognition.mountSwitcher."""
+    for html in (entry_html(), built_html()):
+        loader = re.search(r"<script[^>]*src=\"/static/gc/loader\.js\"[^>]*>", html)
+        assert loader, "GC loader script tag missing"
+        assert "type=" not in loader.group(0), "loader must stay a classic script"
+        assert 'data-gc-fallback="/static/gc"' in loader.group(0)
+        head = html.index("</head>")
+        assert html.index(loader.group(0)) < head, "loader must load in <head>"
+        module_at = re.search(r"<script type=\"module\"", html)
+        if module_at:
+            assert html.index(loader.group(0)) < module_at.start(), (
+                "loader must run before the app bundle"
+            )
+    joined = "\n".join(source_files().values())
+    assert 'mountSwitcher("#gcSwitcher")' in joined
+    # Chart.js stays the vendored classic script beside it, never bundled.
+    assert '<script src="/static/vendor/chart.umd.min.js"></script>' in built_html()
 
 
 def test_vendored_gc_snapshot_present_and_carries_declared_sets() -> None:
@@ -123,8 +193,8 @@ def test_vendored_gc_snapshot_present_and_carries_declared_sets() -> None:
 
 
 def test_gc_repo_conformance_scan_agrees_when_available() -> None:
-    """Run governed-cognition's own scanner on the app style block when the
-    repo is on this host (parity with the estate gate; skipped elsewhere)."""
+    """Run governed-cognition's own scanner on the app sheet when the repo
+    is on this host (parity with the estate gate; skipped elsewhere)."""
     conformance_path = GC_REPO / "conformance.py"
     if not conformance_path.is_file():
         import pytest
@@ -134,8 +204,7 @@ def test_gc_repo_conformance_scan_agrees_when_available() -> None:
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
-    _attrs, body = _style_blocks()[0]
-    findings = module.scan_css_text(body, "index.html:<style>")
+    findings = module.scan_css_text(app_css(), "frontend/src/styles/app.css")
     assert findings == [], "\n".join(findings)
 
 
@@ -148,6 +217,8 @@ def test_gc_repo_conformance_scan_agrees_when_available() -> None:
 # see any of it. GC's standing marks are the law being pinned here — radius
 # 0 mode-wide, cuts only on the ruled families, the border -> lift swap, and
 # the keeper-tuned 28/24/18/14/12 scale reached only through its tokens.
+# The React conversion moved the sheet to frontend/src/styles/app.css
+# byte-for-byte; the section grammar is unchanged.
 # ---------------------------------------------------------------------------
 
 SLANT_MARKER = "SLANT — the governed-cognition shape axis"
@@ -155,11 +226,11 @@ SLANT_SCOPE = 'html[data-gc-shape="slanted"]'
 
 
 def _slant_split() -> tuple[str, str]:
-    """Return (everything outside the slant section, the slant section) of the
-    app style block, comments included. The section runs from its header
-    comment to the prefers-reduced-motion block, which stays the sheet's last
-    law and is shape-independent."""
-    _attrs, body = _style_blocks()[0]
+    """Return (everything outside the slant section, the slant section) of
+    the app sheet, comments included. The section runs from its header
+    comment to the prefers-reduced-motion block, which stays the sheet's
+    last law and is shape-independent."""
+    body = app_css()
     marker = body.index(SLANT_MARKER)
     start = body.rfind("/*", 0, marker)
     assert start != -1
