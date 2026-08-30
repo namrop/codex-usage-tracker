@@ -150,10 +150,12 @@ def test_dashboard_summary_exposes_banked_reset_credits(tmp_path, monkeypatch):
     assert data.status_code == 200
     assert data.get_json()[0]["rate_limit_reset_credits_available"] == 3
 
+    # The Codex detail section is gone (keeper-ruled 2026-08-30); banked
+    # resets are an accepted loss from the page, but the API keeps serving
+    # them for non-dashboard consumers.
     page = client.get("/")
     assert page.status_code == 200
-    assert b"Banked resets" in page.data
-    assert b"manual" in page.data
+    assert b"Banked resets" not in page.data
 
 
 def _quota_observation(source_id: str, quota_name: str, **updates):
@@ -313,18 +315,17 @@ def test_subscription_provider_overview_and_raw_observation_details_exist(tmp_pa
 
 FOLD_KEYS = (
     "modelTokenSeries",
+    # Estate-wide charts round (keeper-ruled 2026-08-30): the token
+    # composition and cache-hit-rate charts carry the same chart+fold-table
+    # pattern as the model token series.
+    "tokenCompositionSeries",
+    "cacheHitRateSeries",
     "harnessUsage",
     "providerModelUsage",
     "subscriptionWeeklySeries",
     "subscriptionFiveHourSeries",
     "subscriptionsRaw",
     "billingLedger",
-    "tokenLedger",
-    "rawLedger",
-    # Keeper polish round 2026-08-30, item 6: the Codex compatibility
-    # section's duplicate quota storytelling (Usage over time chart plus the
-    # Weekly peak / Chart window / Ledger insights) folds by default.
-    "codexUsageTrend",
 )
 
 COLUMN_TIERED_FOLDS = (
@@ -332,7 +333,6 @@ COLUMN_TIERED_FOLDS = (
     ("providerModelUsage", "tier-provider-model"),
     ("subscriptionsRaw", "tier-quota"),
     ("billingLedger", "tier-billing"),
-    ("tokenLedger", "tier-token-ledger"),
 )
 
 
@@ -395,60 +395,117 @@ def test_fold_state_is_remembered_and_lives_outside_the_rendered_tbodies(tmp_pat
     assert "function foldSummaryText(fold)" in html
 
 
-def test_weekly_usage_card_is_gone_and_the_week_chart_remains(tmp_path, monkeypatch):
-    """Keeper polish round 2026-08-30, item 5: the Weekly usage card duplicated
-    the weekly line of the Usage over time chart directly above it. Markup,
-    build JS, and callsite are removed; the full-width chart stays."""
+def test_codex_detail_section_is_removed_entirely(tmp_path, monkeypatch):
+    """Keeper-ruled 2026-08-30: the Codex detail compatibility section is gone
+    outright — hero, trend fold, correlation charts, token correlation ledger,
+    and raw ledger rows, with all of their JS. The weekly codex quota signal
+    survives in the subscriptions cards and the reset rail; banked resets and
+    plan are accepted losses. The server endpoints those views consumed stay
+    (other consumers may exist); the page just never fetches them."""
     html = _dashboard_root_html(tmp_path, monkeypatch)
 
-    assert 'id="weeklyChart"' not in html
-    assert "buildOrUpdateWeeklyChart" not in html
-    assert "Weekly cap movement" not in html
-    # The surviving chart and its build path are intact.
-    assert 'id="weekChart"' in html
-    assert "buildOrUpdateWeekChart" in html
-    # The one-card detail grid is gone; the token detail grid remains and now
-    # rides the base .detail-grid rule alone.
-    assert 'aria-label="Detail charts"' not in html
-    assert '<section class="detail-grid" aria-label="Token detail charts">' in html
-    assert ".detail-grid.token-grid" not in html
+    assert "Codex detail" not in html
+    assert "Compatibility views" not in html
+    assert "section-label" not in html
+    # The hero and its monitor tiles.
+    for retired in (
+        'id="globalStatus"', 'id="planType"', 'id="currentWeekly"', 'id="resetCredits"',
+        'id="freshness"', "Codex usage monitor", "Limits, resets, and headroom.",
+        "Banked resets",
+    ):
+        assert retired not in html
+    # The trend fold, correlation charts, and both ledger tables.
+    for retired in (
+        "codexUsageTrend", 'id="weekChart"', 'id="tokenUsageChart"',
+        'id="tokenBucketChart"', 'id="tokenDeltaChart"', 'id="cacheHitChart"',
+        # ("Token bucket mix" survives only as a provenance mention in the
+        # replacement chart's comment, so it is not asserted absent.)
+        "Usage over time", "Usage × tokens over time",
+        "Quota movement", "Token correlation ledger", "Ledger rows",
+        'data-fold="tokenLedger"', 'data-fold="rawLedger"', "tier-token-ledger",
+        "detail-grid",
+    ):
+        assert retired not in html
+    # The dead JS went with the markup — render paths, sorters, and the
+    # codex-only chart builders.
+    for retired_js in (
+        "renderHeader", "renderCharts()", "renderTokenLedger", "renderSortedTable",
+        "buildOrUpdateWeekChart", "buildOrUpdateTokenUsageChart",
+        "buildOrUpdateTokenBucketChart", "buildOrUpdateTokenDeltaChart",
+        "buildOrUpdateCacheHitChart", "thresholdPlugin", "endpointLabelPlugin",
+        "state.trend", "state.tokenChart", "state.tokenLedger", "state.sortBy",
+    ):
+        assert retired_js not in html
+    # The page no longer fetches the codex JSONL endpoints at all.
+    for retired_fetch in (
+        '"/api/summary"', '"/api/trend"', '"/api/data', '"/api/token-ledger"',
+        '"/api/token-chart"',
+    ):
+        assert retired_fetch not in html
+    # The refresh button survives the section it used to live in, and the
+    # refresh cycle drives the unified surfaces.
+    assert 'id="refreshUsage"' in html
+    assert "els.refresh.addEventListener" in html
+    assert "if (!document.hidden) hydrate();" in html
 
 
-def test_codex_duplicate_quota_storytelling_folds_with_a_data_derived_summary(
-    tmp_path, monkeypatch
-):
-    """Keeper polish round 2026-08-30, item 6: the Usage over time chart card
-    and the Weekly peak / Chart window / Ledger insights strip fold away by
-    default; the monitor tiles and the three correlation surfaces stay open."""
+def test_frontend_orphaned_codex_endpoints_are_still_served(tmp_path, monkeypatch):
+    """The keeper kept the server side of the removed views: /api/summary,
+    /api/trend, /api/data, /api/token-ledger, and /api/token-chart stay
+    routable for non-dashboard consumers even though the page stopped
+    fetching them."""
+    ledger = tmp_path / "usage.jsonl"
+    _write_usage_ledger(
+        ledger,
+        [{"fetched_at": "2026-06-04T02:00:00+00:00", "weekly_used_pct": 74.0, "weekly_reset_at": 1781137839}],
+    )
+    monkeypatch.setenv("HERMES_STATE_DB_PATH", str(tmp_path / "missing.db"))
+    client = create_app(atrium_root=str(tmp_path / "atrium"), ledger=str(ledger)).test_client()
+
+    for endpoint in ("/api/summary", "/api/trend", "/api/data", "/api/token-ledger", "/api/token-chart"):
+        assert client.get(endpoint).status_code == 200, endpoint
+
+
+def test_estate_wide_token_composition_and_cache_hit_charts_exist(tmp_path, monkeypatch):
+    """Keeper-ruled 2026-08-30: the codex-only Token bucket mix and Cache hit
+    rate charts are replaced by estate-wide charts in the unified section —
+    stacked hourly token composition from bucket_series, and per-provider
+    cache-hit lines from the provider_status_series token sums."""
     html = _dashboard_root_html(tmp_path, monkeypatch)
 
-    fold = re.search(
-        r'<section class="fold" data-fold="codexUsageTrend"(?P<attrs>[^>]*)>', html
-    )
-    assert fold, "codexUsageTrend fold missing"
-    assert 'data-open="false"' in fold.group("attrs")
-    # Summary derives from live insight values, not a table.
-    assert 'data-summary-from="peak:weekPeak|window:windowSpan|ledger:rowCount"' in fold.group(
-        "attrs"
-    )
-    assert "fold.dataset.summaryFrom" in html
+    # Token composition: stacked bars, SERIES bucket colors, chart+fold table.
+    assert "Token composition" in html
+    assert 'id="tokenCompositionChart"' in html
+    assert 'id="tokenCompositionLabels"' in html
+    assert "bucket_series" in html
+    assert "TOKEN_COMPOSITION_BUCKETS" in html
+    for bucket_label in ('"Input"', '"Cache read"', '"Cache write"', '"Output"', '"Reasoning"'):
+        assert bucket_label in html
+    assert 'stack: "composition"' in html
 
-    # The chart, its window toolbar, and the insights strip all live inside
-    # the fold body (fold is containment, never removal).
-    body_start = html.index('id="codexUsageTrendFoldBody"')
-    body_end = html.index("</section>", html.index('aria-label="Derived usage insights"'))
-    folded_region = html[body_start:body_end]
-    assert 'id="weekChart"' in folded_region
-    assert 'id="refreshSummary"' in folded_region
-    assert 'aria-label="Derived usage insights"' in folded_region
-    for insight_id in ("weekPeak", "windowSpan", "rowCount"):
-        assert f'id="{insight_id}"' in folded_region
+    # Cache hit rate: per-provider lines in provider colors, 0-100 percent,
+    # gaps where a provider had no prompt tokens, window-average legend.
+    assert "Cache hit rate" in html
+    assert 'id="cacheHitRateChart"' in html
+    assert 'id="cacheHitRateLabels"' in html
+    assert "function renderCacheHitRate" in html
+    assert "spanGaps: false" in html
+    assert "prompt > 0 ? (cache / prompt) * 100 : null" in html
+    assert "windowAverage" in html
+    # Provider identity rides the same rank-slot mapping every other unified
+    # surface uses.
+    assert html.count("subscriptionUnifiedProviderColor({ provider: row.provider_canonical }, index)") >= 3
+    # The status strip's low-traffic folding rule applies to the chart too.
+    assert 'row.provider !== "unknown" && Number(row.total_events) >= 10' in html
+    assert "Low-traffic fold:" in html
 
-    # Unique surfaces stay unfolded: the monitor tiles and the three
-    # correlation charts are not inside any fold body.
-    for always_open in ("tokenUsageChart", "tokenBucketChart", "cacheHitChart"):
-        assert f'id="{always_open}"' in html
-        assert f'id="{always_open}"' not in folded_region
+    # Both new charts sit in the unified section, after the model token chart
+    # and before the harness fold.
+    model_at = html.index('id="modelTokenChart"')
+    composition_at = html.index('id="tokenCompositionChart"')
+    cache_at = html.index('id="cacheHitRateChart"')
+    harness_at = html.index('data-fold="harnessUsage"')
+    assert model_at < composition_at < cache_at < harness_at
 
 
 def test_captions_are_single_sentence_with_doctrine_at_section_level(
@@ -2207,8 +2264,9 @@ def test_dashboard_page_retires_session_surfaces_and_bounds_its_data_fetch(tmp_p
         'id="sparkChart"', 'id="sparkSession"', 'id="sparkWeekly"', "Spark usage",
     ):
         assert retired not in markup
-    # The page renders 24 rows; it must not pull the whole ledger to do it.
-    assert 'fetch("/api/data?limit=200")' in markup
+    # The Codex detail section followed (keeper-ruled 2026-08-30): the page
+    # no longer fetches the codex JSONL data endpoint at all.
+    assert 'fetch("/api/data' not in markup
 
 
 class TestProviderStatusFeeds:

@@ -1412,6 +1412,75 @@ def test_unified_usage_hour_windows_carry_daily_list_price_estimates(tmp_path, m
     assert "list_price_daily" not in client.get("/api/unified-usage?days=30").get_json()
 
 
+def test_bucket_series_sums_the_five_token_buckets_across_all_providers(
+    tmp_path, monkeypatch
+):
+    """Estate-wide token composition (keeper-ruled 2026-08-30, replacing the
+    codex-only Token bucket mix): per hourly bucket, the five canonical token
+    sums across every provider, on the same UTC grid as model_series and
+    provider_status_series. Reasoning stays a separate series here — the
+    chart shows composition, and the accounted total still never counts it."""
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, 34, 56, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    rows = [
+        _chart_fact(
+            "codex", "2026-07-14T09:00:00Z", harness="hermes", provider="openai-codex",
+            model_requested="requested-codex", input_tokens=10, cache_read_tokens=5,
+            cache_write_tokens=2, output_tokens=3, reasoning_tokens=2,
+        ),
+        _chart_fact(
+            "claude", "2026-07-14T10:30:00Z", harness="claude_code", provider="anthropic",
+            model_requested="claude-sonnet", input_tokens=7, output_tokens=4,
+        ),
+        _chart_fact(
+            "other-hermes", "2026-07-14T11:00:00Z", harness="hermes", provider="anthropic",
+            model_requested="direct-anthropic", input_tokens=2, output_tokens=1,
+        ),
+        _chart_fact(
+            "overlap", "2026-07-14T11:30:00Z", harness="claude_code", provider="openai-codex",
+            model_requested="overlap-model", input_tokens=5,
+        ),
+        # Outside the complete-hour window in both directions: never summed.
+        _chart_fact(
+            "too-old", "2026-07-14T08:59:59Z", harness="claude_code", provider="anthropic",
+            model_requested="old", input_tokens=900,
+        ),
+        _chart_fact(
+            "partial-hour", "2026-07-14T12:00:00Z", harness="hermes", provider="openai-codex",
+            model_requested="future", input_tokens=800,
+        ),
+    ]
+    ledger = tmp_path / "usage.jsonl"
+    ledger.write_text("\n".join(canonical_json(row) for row in rows) + "\n", encoding="utf-8")
+    client = create_app(unified_usage_ledger=str(ledger)).test_client()
+
+    response = client.get("/api/unified-usage?hours=3")
+    assert response.status_code == 200
+    series = response.get_json()["time_series"]
+    bucket_series = series["bucket_series"]
+
+    # The five buckets, summed across providers per complete UTC hour.
+    assert bucket_series == {
+        "input_tokens": [10, 7, 7],
+        "cache_read_tokens": [5, 0, 0],
+        "cache_write_tokens": [2, 0, 0],
+        "output_tokens": [3, 4, 1],
+        "reasoning_tokens": [2, 0, 0],
+    }
+    # Same bucket grid as every other series in the payload.
+    assert all(
+        len(values) == series["bucket_count"] for values in bucket_series.values()
+    )
+    # The window edges never leak in: neither the 800 nor the 900 appears.
+    flat = [value for values in bucket_series.values() for value in values]
+    assert 800 not in flat and 900 not in flat
+
+
 def test_provider_status_series_buckets_traffic_errors_and_dominant_class(
     tmp_path, monkeypatch
 ):
@@ -1445,7 +1514,8 @@ def test_provider_status_series_buckets_traffic_errors_and_dominant_class(
                     model_requested="glm", request_status="error",
                     error_class="RateLimitError"),
         _chart_fact("z-ok-3", "2026-07-14T10:40:00Z", harness="hermes", provider="zai",
-                    model_requested="glm", input_tokens=1, request_status="ok"),
+                    model_requested="glm", input_tokens=1, cache_read_tokens=6,
+                    request_status="ok"),
         # 11:00 — a cancel and a classless error: cancelled is not a failure,
         # and an error with no class still counts as a failure.
         _chart_fact("z-cancel", "2026-07-14T11:01:00Z", harness="hermes", provider="zai",
@@ -1483,12 +1553,19 @@ def test_provider_status_series_buckets_traffic_errors_and_dominant_class(
     assert zai["total_events"] == 8 and zai["total_errors"] == 4
     assert zai["dominant_error_class"] == "APITimeoutError"
     assert zai["provider_canonical"] == "z-ai-glm"
+    # Per-bucket prompt-side token sums for the estate-wide cache-hit chart
+    # (keeper-ruled 2026-08-30): input and cache read ride the same series,
+    # and every row's tokens count regardless of its request_status.
+    assert zai["input_tokens"] == [8, 1, 0]
+    assert zai["cache_read_tokens"] == [0, 6, 0]
 
     anthropic = status["anthropic"]
     assert anthropic["events"] == [0, 0, 1]
     assert anthropic["errors"] == [0, 0, 0]
     assert anthropic["top_error_classes"] == [None, None, None]
     assert anthropic["dominant_error_class"] is None
+    assert anthropic["input_tokens"] == [0, 0, 2]
+    assert anthropic["cache_read_tokens"] == [0, 0, 0]
 
     # The out-of-window rows never reach the strip.
     assert "ShouldNotAppear" not in json.dumps(series)
@@ -1497,6 +1574,8 @@ def test_provider_status_series_buckets_traffic_errors_and_dominant_class(
         len(row["events"]) == series["bucket_count"]
         and len(row["errors"]) == series["bucket_count"]
         and len(row["top_error_classes"]) == series["bucket_count"]
+        and len(row["input_tokens"]) == series["bucket_count"]
+        and len(row["cache_read_tokens"]) == series["bucket_count"]
         for row in series["provider_status_series"]
     )
 
@@ -2203,9 +2282,14 @@ def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independent
     assert b"Chart.js v4.5.1" in chart_asset.data[:100]
     package_data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["tool"]["setuptools"]["package-data"]
     assert "static/vendor/*.js" in package_data["codex_usage_tracker"]
-    assert "Codex detail" in page
+    # The Codex detail compatibility section was removed entirely
+    # (keeper-ruled 2026-08-30); the unified surfaces carry the page alone.
+    assert "Codex detail" not in page
     assert 'fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) })' in page
     assert 'id="modelTokenChart"' in page
+    # Estate-wide replacements for the codex-only token charts.
+    assert 'id="tokenCompositionChart"' in page
+    assert 'id="cacheHitRateChart"' in page
     # Retired surfaces (keeper-ratified flow rework, akasan 2026-08-30): the
     # rank-bar comparison cards and the two-party Codex-vs-Claude chart are
     # replaced by the quota donuts, status strip, and reset rail.

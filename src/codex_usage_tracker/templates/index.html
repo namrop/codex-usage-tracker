@@ -42,14 +42,12 @@
         --text: var(--gc-fg);
         --muted: var(--gc-fg-soft);
         --muted-2: var(--gc-muted);
-        --session: var(--gc-cat-ai-usage-series-rank-rank-4);
         --weekly: var(--gc-cat-ai-usage-series-rank-rank-7);
         --spark-session: var(--gc-cat-ai-usage-series-rank-rank-10);
         --spark-weekly: var(--gc-cat-ai-usage-series-rank-rank-3);
         --warning: var(--gc-role-threshold);
         --danger: var(--gc-role-violation);
         --ok: var(--gc-role-stability);
-        --cyan: var(--gc-extra-cyan, var(--gc-role-info));
         --sky: var(--gc-role-info);
         --copper: var(--gc-cat-ai-usage-series-rank-rank-6);
         --token: var(--gc-cat-ai-usage-series-rank-rank-1);
@@ -102,27 +100,8 @@
         max-width: 100%;
       }
 
-      /* The Codex compatibility hero keeps display type modest so its status
-       * column reads as a peer, not a footnote (polish round item 2). */
-      .hero {
-        display: grid;
-        grid-template-columns: minmax(280px, 1fr) minmax(300px, 1fr);
-        gap: 16px;
-        align-items: stretch;
-      }
-
-      .hero .title-panel {
-        padding: 18px 20px 16px;
-      }
-
-      .hero h1 {
-        font-size: clamp(1.5rem, 2.6vw, 2.4rem);
-      }
-
       .title-panel,
-      .status-panel,
-      .card,
-      .insight {
+      .card {
         background: color-mix(in srgb, var(--panel) 92%, transparent);
         border: 1px solid var(--line-soft);
         border-radius: var(--radius);
@@ -172,46 +151,6 @@
         margin-top: 12px;
         color: var(--muted);
         line-height: 1.55;
-      }
-
-      .status-panel {
-        padding: 18px;
-        display: grid;
-        grid-template-rows: auto 1fr auto;
-        gap: 14px;
-      }
-
-      .status-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-      }
-
-      .status-pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        width: fit-content;
-        border: 1px solid color-mix(in srgb, var(--ok) 55%, transparent);
-        border-radius: 999px;
-        padding: 7px 11px;
-        color: var(--ok);
-        background: color-mix(in srgb, var(--ok) 12%, transparent);
-        font-weight: 700;
-      }
-
-      .status-pill.capped {
-        color: var(--danger);
-        border-color: color-mix(in srgb, var(--danger) 55%, transparent);
-        background: color-mix(in srgb, var(--danger) 12%, transparent);
-      }
-
-      .dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: currentColor;
       }
 
       /* Ceded lane — violation role (ruled: ceded joins violation). One
@@ -301,12 +240,6 @@
         font-size: 0.8rem;
       }
 
-      .mini-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-      }
-
       .metric {
         min-width: 0;
         border: 1px solid var(--line-soft);
@@ -331,8 +264,7 @@
         letter-spacing: -0.04em;
       }
 
-      .metric .hint,
-      .freshness {
+      .metric .hint {
         color: var(--muted);
         font-size: 0.86rem;
         line-height: 1.45;
@@ -362,29 +294,6 @@
        * reach it — this rule makes the attribute mean what it says. */
       .spend-spark[hidden] {
         display: none;
-      }
-
-      .insights {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(170px, 1fr));
-        gap: 12px;
-      }
-
-      .insight {
-        padding: 13px 14px;
-        display: grid;
-        gap: 7px;
-      }
-
-      .insight strong {
-        font-size: 1.05rem;
-        letter-spacing: -0.015em;
-      }
-
-      .insight span {
-        color: var(--muted);
-        font-size: 0.9rem;
-        line-height: 1.35;
       }
 
       .card {
@@ -434,7 +343,6 @@
         font: inherit;
       }
 
-      .toggle,
       .refresh-btn {
         border: 1px solid var(--line);
         border-radius: 999px;
@@ -445,29 +353,14 @@
         transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
       }
 
-      .toggle:hover,
       .refresh-btn:hover {
         transform: translateY(-1px);
         border-color: var(--muted);
       }
 
-      .toggle.active {
-        background: color-mix(in srgb, var(--warning) 18%, transparent);
-        border-color: var(--weekly);
-        color: var(--weekly);
-      }
-
       .chart-wrap {
         position: relative;
         min-height: 278px;
-      }
-
-      .chart-wrap.week {
-        min-height: 430px;
-      }
-
-      .chart-wrap.token-wide {
-        min-height: 390px;
       }
 
       /* ------------------------------------------------------------------
@@ -968,42 +861,18 @@
         min-width: 620px;
       }
 
-      /* The codexUsageTrend fold (item 6) holds a chart plus insight tiles
-       * rather than a bleed-to-the-edge table, so it carries inner padding. */
-      .fold[data-fold="codexUsageTrend"] .fold-body {
-        padding: 0 12px 12px;
-      }
-
-      .fold[data-fold="codexUsageTrend"] .insights {
-        margin-top: 12px;
-      }
-
       /* Column tiers — the same law one level down: hidden columns are still
        * rendered cells, just not shown. Essential tier is the default; the
        * "all columns" toggle lifts the tier, never re-renders the table. */
       .fold[data-cols="essential"] .tier-harness :is(th, td):is(:nth-child(3), :nth-child(4), :nth-child(5), :nth-child(6), :nth-child(7)),
       .fold[data-cols="essential"] .tier-provider-model :is(th, td):is(:nth-child(3), :nth-child(5), :nth-child(6), :nth-child(7), :nth-child(8), :nth-child(9)),
       .fold[data-cols="essential"] .tier-quota :is(th, td):is(:nth-child(3), :nth-child(4), :nth-child(9), :nth-child(10), :nth-child(11), :nth-child(12), :nth-child(13)),
-      .fold[data-cols="essential"] .tier-billing :is(th, td):is(:nth-child(7), :nth-child(8), :nth-child(9)),
-      .fold[data-cols="essential"] .tier-token-ledger :is(th, td):is(:nth-child(5), :nth-child(6), :nth-child(7), :nth-child(8), :nth-child(10), :nth-child(11), :nth-child(12)) {
+      .fold[data-cols="essential"] .tier-billing :is(th, td):is(:nth-child(7), :nth-child(8), :nth-child(9)) {
         display: none;
       }
 
       .fold[data-cols="essential"] .table-wrap table {
         min-width: 0;
-      }
-
-      .detail-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
-      }
-
-      .series-key {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        margin-top: 10px;
       }
 
       .key-pill {
@@ -1049,10 +918,6 @@
         text-transform: uppercase;
       }
 
-      th.sortable {
-        cursor: pointer;
-      }
-
       td:not(:first-child),
       th:not(:first-child) {
         text-align: right;
@@ -1064,14 +929,6 @@
 
       .mono {
         font-size: 0.82rem;
-      }
-
-      #ledgerPath {
-        display: block;
-        max-width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
       }
 
       /* Five tiles now (events, tokens, priced spend, soonest reset,
@@ -1328,31 +1185,14 @@
         padding: 12px 0;
       }
 
-      .section-label {
-        margin-top: 14px;
-        padding-top: 18px;
-        border-top: 2px solid var(--weekly);
-      }
-
-      .color-session { color: var(--session); }
-      .color-weekly { color: var(--weekly); }
-      .color-spark-session { color: var(--spark-session); }
-      .color-spark-weekly { color: var(--spark-weekly); }
-      .color-reset { color: var(--cyan); }
       .color-token { color: var(--token); }
       .negative { color: var(--danger); }
       .neutral { color: var(--muted); }
 
       @media (max-width: 1100px) {
-        .hero,
         .ops-hero,
-        .detail-grid,
         .window-pair {
           grid-template-columns: 1fr;
-        }
-
-        .insights {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
         }
       }
 
@@ -1362,13 +1202,10 @@
         }
 
         .title-panel,
-        .status-panel,
         .card {
           border-radius: 6px;
         }
 
-        .mini-grid,
-        .insights,
         .ops-digest {
           grid-template-columns: 1fr;
         }
@@ -1414,10 +1251,6 @@
           display: grid;
           grid-template-columns: 1fr;
         }
-
-        .chart-wrap.week {
-          min-height: 340px;
-        }
       }
 
       /* ============================================================
@@ -1456,12 +1289,10 @@
         --gc-cut: var(--gc-cut-xl);
       }
 
-      html[data-gc-shape="slanted"] .card,
-      html[data-gc-shape="slanted"] .status-panel {
+      html[data-gc-shape="slanted"] .card {
         --gc-cut: var(--gc-cut-lg);
       }
 
-      html[data-gc-shape="slanted"] .insight,
       html[data-gc-shape="slanted"] .subscription-quota-history,
       html[data-gc-shape="slanted"] .window-card,
       html[data-gc-shape="slanted"] .subscription-provider-card {
@@ -1482,9 +1313,7 @@
        * enclosed them, and clip-path shears a painted border at the cut. -- */
       html[data-gc-shape="slanted"] :is(
           .title-panel,
-          .status-panel,
           .card,
-          .insight,
           .metric,
           .digest-item,
           .subscription-quota-history,
@@ -1509,11 +1338,9 @@
       /* -- octagon family: pills, badges, buttons. All four corners, on
        * the published pill tier (a card cut would swallow a pill). -- */
       html[data-gc-shape="slanted"] :is(
-          .status-pill,
           .lane-notice,
           .reset-chip,
           .subscription-badge,
-          .toggle,
           .refresh-btn,
           .fold-cols,
           .status-badge
@@ -1570,7 +1397,6 @@
       h1,
       h2,
       .metric .value,
-      .insight strong,
       .subscription-window-title,
       .subscription-quota-value {
         font-family: var(--gc-font-display);
@@ -1623,6 +1449,9 @@
             <h2 id="unifiedUsageTitle">Unified usage · 7 days</h2>
             <p class="caption">Canonical token totals and request estimates; reasoning is diagnostic and never counted twice.</p>
             <p class="caption">Bucketed surfaces use complete UTC hours (countdowns run in wall-clock time), and legend quota percentages are each provider’s own cap — never shares of one pool, never drawn as slices.</p>
+          </div>
+          <div class="toolbar" aria-label="Refresh controls">
+            <button class="refresh-btn" id="refreshUsage">Refresh</button>
           </div>
         </div>
         <div id="unifiedUsageState" class="empty-state">Loading unified usage…</div>
@@ -1700,6 +1529,56 @@
               </div>
               <div class="fold-body" id="modelTokenSeriesFoldBody" role="region" aria-labelledby="modelTokenSeriesFoldToggle">
                 <div class="table-wrap"><table><caption>Accounted tokens per complete UTC hour by provider and model</caption><thead><tr id="modelTokenTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="modelTokenTableBody"></tbody></table></div>
+              </div>
+            </section>
+          </section>
+          <section class="usage-chart" aria-labelledby="tokenCompositionTitle">
+            <h3 id="tokenCompositionTitle">Token composition</h3>
+            <p class="caption">Hourly input, cache read, cache write, output, and reasoning tokens summed across every provider.</p>
+            <p id="tokenCompositionSummary" class="chart-summary" aria-live="polite">Loading token composition…</p>
+            <div class="usage-chart-layout">
+              <div class="chart-wrap unified">
+                <canvas id="tokenCompositionChart" aria-label="Stacked hourly token composition across all providers"></canvas>
+              </div>
+              <div id="tokenCompositionLabels" class="direct-labels" aria-label="Token bucket totals"></div>
+            </div>
+            <section class="fold" data-fold="tokenCompositionSeries" data-open="false" data-row-noun="hour" data-col-noun="series">
+              <div class="fold-head">
+                <h4 class="fold-heading">
+                  <button type="button" class="fold-toggle" id="tokenCompositionSeriesFoldToggle" aria-expanded="false" aria-controls="tokenCompositionSeriesFoldBody">
+                    <span class="fold-caret" aria-hidden="true">▸</span>
+                    <span class="fold-label">Hourly composition data</span>
+                    <span class="fold-summary" data-fold-summary>—</span>
+                  </button>
+                </h4>
+              </div>
+              <div class="fold-body" id="tokenCompositionSeriesFoldBody" role="region" aria-labelledby="tokenCompositionSeriesFoldToggle">
+                <div class="table-wrap"><table><caption>Token buckets per complete UTC hour across all providers</caption><thead><tr id="tokenCompositionTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="tokenCompositionTableBody"></tbody></table></div>
+              </div>
+            </section>
+          </section>
+          <section class="usage-chart" aria-labelledby="cacheHitRateTitle">
+            <h3 id="cacheHitRateTitle">Cache hit rate</h3>
+            <p class="caption">Cache-read share of each provider’s prompt tokens per hour, with gaps where a provider sent no prompt tokens.</p>
+            <p id="cacheHitRateSummary" class="chart-summary" aria-live="polite">Loading cache hit rate…</p>
+            <div class="usage-chart-layout">
+              <div class="chart-wrap unified">
+                <canvas id="cacheHitRateChart" aria-label="Cache hit rate per provider from 0 to 100 percent"></canvas>
+              </div>
+              <div id="cacheHitRateLabels" class="direct-labels" aria-label="Provider window-average cache hit rates"></div>
+            </div>
+            <section class="fold" data-fold="cacheHitRateSeries" data-open="false" data-row-noun="hour" data-col-noun="series">
+              <div class="fold-head">
+                <h4 class="fold-heading">
+                  <button type="button" class="fold-toggle" id="cacheHitRateSeriesFoldToggle" aria-expanded="false" aria-controls="cacheHitRateSeriesFoldBody">
+                    <span class="fold-caret" aria-hidden="true">▸</span>
+                    <span class="fold-label">Hourly cache data</span>
+                    <span class="fold-summary" data-fold-summary>—</span>
+                  </button>
+                </h4>
+              </div>
+              <div class="fold-body" id="cacheHitRateSeriesFoldBody" role="region" aria-labelledby="cacheHitRateSeriesFoldToggle">
+                <div class="table-wrap"><table><caption>Cache hit rate per complete UTC hour by provider</caption><thead><tr id="cacheHitRateTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="cacheHitRateTableBody"></tbody></table></div>
               </div>
             </section>
           </section>
@@ -1854,230 +1733,6 @@
         </div>
       </section>
 
-      <header class="section-label">
-        <p class="eyebrow">Compatibility views</p>
-        <h2>Codex detail</h2>
-        <p class="caption">Legacy Codex JSONL quota and token-correlation views retained for compatibility.</p>
-      </header>
-
-      <section class="hero" aria-label="Codex usage summary">
-        <div class="title-panel">
-          <p class="eyebrow">Codex usage monitor</p>
-          <h1>Limits, resets, and headroom.</h1>
-          <p class="subtitle">Local Codex and Spark ledger snapshots, with every chart pinned to 0–100%.</p>
-        </div>
-
-        <aside class="status-panel">
-          <div class="status-row">
-            <div class="status-pill" id="globalStatus"><span class="dot"></span><span>Loading</span></div>
-            <div class="micro-label" id="planType">plan · —</div>
-          </div>
-          <div class="mini-grid">
-            <div class="metric">
-              <div class="label">Weekly</div>
-              <div class="value color-weekly" id="currentWeekly">—</div>
-              <div class="hint" id="weeklyReset">reset: —</div>
-            </div>
-            <div class="metric">
-              <div class="label">Banked resets</div>
-              <div class="value color-reset" id="resetCredits">—</div>
-              <div class="hint" id="resetCreditsHint">manual consumption only</div>
-            </div>
-          </div>
-          <div class="freshness" id="freshness">Waiting for the first ledger sample.</div>
-        </aside>
-      </section>
-
-      <!-- Keeper polish round 2026-08-30, item 6: the quota storytelling the
-           monitor tiles already tell (the weekly line and the Weekly peak /
-           Chart window / Ledger insights) folds away by default. The fold
-           summary re-derives from the insight values on every hydrate. -->
-      <section class="card">
-        <section class="fold" data-fold="codexUsageTrend" data-open="false" data-summary-from="peak:weekPeak|window:windowSpan|ledger:rowCount">
-          <div class="fold-head">
-            <h2 class="fold-heading">
-              <button type="button" class="fold-toggle" id="codexUsageTrendFoldToggle" aria-expanded="false" aria-controls="codexUsageTrendFoldBody">
-                <span class="fold-caret" aria-hidden="true">▸</span>
-                <span class="fold-label">Usage over time</span>
-                <span class="fold-summary" data-fold-summary>—</span>
-              </button>
-            </h2>
-          </div>
-          <div class="fold-body" id="codexUsageTrendFoldBody" role="region" aria-labelledby="codexUsageTrendFoldToggle">
-            <div class="card-header">
-              <div class="card-title">
-                <p class="caption">Codex weekly quota position per ledger sample, pinned to 0–100%.</p>
-              </div>
-              <div class="toolbar" aria-label="Chart window controls">
-                <button class="toggle" data-window="24">24 samples</button>
-                <button class="toggle active" data-window="168">Full week</button>
-                <button class="refresh-btn" id="refreshSummary">Refresh</button>
-              </div>
-            </div>
-            <div class="chart-wrap week">
-              <canvas id="weekChart" aria-label="Codex usage chart from 0 to 100 percent"></canvas>
-            </div>
-            <div class="series-key" aria-hidden="true">
-              <span class="key-pill"><span class="swatch" style="--series-color: var(--weekly)"></span>Weekly</span>
-            </div>
-            <section class="insights" aria-label="Derived usage insights">
-              <div class="insight">
-                <div class="micro-label">Weekly peak</div>
-                <strong id="weekPeak">—</strong>
-                <span id="weekPeakHint">Highest weekly usage in the current window.</span>
-              </div>
-              <div class="insight">
-                <div class="micro-label">Chart window</div>
-                <strong id="windowSpan">—</strong>
-                <span id="windowSpanHint">Samples currently plotted.</span>
-              </div>
-              <div class="insight">
-                <div class="micro-label">Ledger</div>
-                <strong id="rowCount">—</strong>
-                <span id="ledgerPath" class="mono">ledger unavailable</span>
-              </div>
-            </section>
-          </div>
-        </section>
-      </section>
-
-      <section class="card">
-        <div class="card-header">
-          <div class="card-title">
-            <h2>Usage × tokens over time</h2>
-            <p class="caption">Hermes Codex token volume per sample window (left axis, bars) against the resulting session and weekly quota positions (right axis, 0–100% lines).</p>
-          </div>
-        </div>
-        <div class="chart-wrap token-wide">
-          <canvas id="tokenUsageChart" aria-label="Token volume bars with session and weekly usage percentage lines"></canvas>
-        </div>
-        <div class="series-key" aria-hidden="true">
-          <span class="key-pill"><span class="swatch" style="--series-color: var(--token)"></span>Total tokens</span>
-          <span class="key-pill"><span class="swatch" style="--series-color: var(--session)"></span>Session usage</span>
-          <span class="key-pill"><span class="swatch" style="--series-color: var(--weekly)"></span>Weekly usage</span>
-        </div>
-      </section>
-
-      <section class="detail-grid" aria-label="Token detail charts">
-        <article class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <h2>Token bucket mix</h2>
-              <p class="caption">Stacked token buckets per sample window.</p>
-            </div>
-          </div>
-          <div class="chart-wrap">
-            <canvas id="tokenBucketChart" aria-label="Stacked token buckets over time"></canvas>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <h2>Quota movement</h2>
-              <p class="caption">Session and weekly percentage deltas per token window, including reset drops.</p>
-            </div>
-          </div>
-          <div class="chart-wrap">
-            <canvas id="tokenDeltaChart" aria-label="Quota percentage movement per token window"></canvas>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <h2>Cache hit rate</h2>
-              <p class="caption">Prompt-cache share from Hermes buckets; gaps mean no prompt tokens in that window.</p>
-            </div>
-          </div>
-          <div class="chart-wrap">
-            <canvas id="cacheHitChart" aria-label="Cache hit rate over token windows from 0 to 100 percent"></canvas>
-          </div>
-        </article>
-      </section>
-
-      <section class="card" aria-labelledby="tokenLedgerTitle">
-        <div class="card-header">
-          <div class="card-title">
-            <h2 id="tokenLedgerTitle">Token correlation ledger</h2>
-            <p class="caption">Hermes token buckets joined to adjacent Codex usage snapshots, mapping each window’s tokens to the next quota percentage movement.</p>
-          </div>
-          <span class="micro-label">usage × tokens</span>
-        </div>
-        <section class="fold" data-fold="tokenLedger" data-open="false" data-cols="essential" data-row-noun="window" data-metrics="4:calls|9:tokens">
-          <div class="fold-head">
-            <h3 class="fold-heading">
-              <button type="button" class="fold-toggle" id="tokenLedgerFoldToggle" aria-expanded="false" aria-controls="tokenLedgerFoldBody">
-                <span class="fold-caret" aria-hidden="true">▸</span>
-                <span class="fold-label">Correlation rows</span>
-                <span class="fold-summary" data-fold-summary>—</span>
-              </button>
-            </h3>
-            <button type="button" class="fold-cols" data-fold-cols aria-pressed="false" aria-controls="tokenLedgerFoldBody">All columns</button>
-          </div>
-          <div class="fold-body" id="tokenLedgerFoldBody" role="region" aria-labelledby="tokenLedgerFoldToggle">
-            <div class="table-wrap">
-              <table class="tier-token-ledger">
-                <thead>
-                  <tr>
-                    <th>Window (local)</th>
-                    <th>Δ Session</th>
-                    <th>Δ Weekly</th>
-                    <th>Calls</th>
-                    <th>Input</th>
-                    <th>Cache read</th>
-                    <th>Output</th>
-                    <th>Reasoning</th>
-                    <th>Total</th>
-                    <th>Cache hit</th>
-                    <th>Tokens / session %</th>
-                    <th>Tokens / weekly %</th>
-                  </tr>
-                </thead>
-                <tbody id="tokenLedgerBody"></tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-      </section>
-
-      <section class="card" aria-labelledby="rawLedgerTitle">
-        <div class="card-header">
-          <div class="card-title">
-            <h2 id="rawLedgerTitle">Ledger rows</h2>
-            <p class="caption">Latest 24 rows. Click a header to sort.</p>
-          </div>
-          <span class="micro-label">open rows</span>
-        </div>
-        <section class="fold" data-fold="rawLedger" data-open="false" data-row-noun="sample">
-          <div class="fold-head">
-            <h3 class="fold-heading">
-              <button type="button" class="fold-toggle" id="rawLedgerFoldToggle" aria-expanded="false" aria-controls="rawLedgerFoldBody">
-                <span class="fold-caret" aria-hidden="true">▸</span>
-                <span class="fold-label">Ledger samples</span>
-                <span class="fold-summary" data-fold-summary>—</span>
-              </button>
-            </h3>
-          </div>
-          <div class="fold-body" id="rawLedgerFoldBody" role="region" aria-labelledby="rawLedgerFoldToggle">
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th class="sortable" data-key="fetched_at" data-type="date">Fetched at</th>
-                    <th class="sortable" data-key="session_used_pct" data-type="num">Session</th>
-                    <th class="sortable" data-key="weekly_used_pct" data-type="num">Weekly</th>
-                    <th class="sortable" data-key="spark_session_used_pct" data-type="num">Spark session</th>
-                    <th class="sortable" data-key="spark_weekly_used_pct" data-type="num">Spark weekly</th>
-                    <th class="sortable" data-key="rate_limit_reset_credits_available" data-type="num">Banked resets</th>
-                  </tr>
-                </thead>
-                <tbody id="rawTableBody"></tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-      </section>
     </main>
 
     <script>
@@ -2116,25 +1771,16 @@
       let HARNESS_COLORS = {};
       function refreshPalette() {
         Object.assign(SERIES, {
-          session: getColor("--session"),
-          weekly: getColor("--weekly"),
-          sparkSession: getColor("--spark-session"),
-          sparkWeekly: getColor("--spark-weekly"),
           muted: getColor("--muted"),
           line: getColor("--line-soft"),
-          warning: getColor("--warning"),
-          danger: getColor("--danger"),
-          token: getColor("--token"),
           input: getColor("--sky"),
           cacheRead: getColor("--spark-session"),
           cacheWrite: getColor("--copper"),
           output: getColor("--weekly"),
           reasoning: getColor("--spark-weekly"),
-          text: getColor("--text"),
           grid: withAlpha(getColor("--line"), 0.10),
           gridSoft: withAlpha(getColor("--line"), 0.08),
           tooltipBg: withAlpha(getColor("--bg"), 0.96),
-          fontBody: getCss("--gc-font-body") || "sans-serif",
         });
         UNIFIED_RANK_COLORS = Array.from({ length: 10 }, (_unused, index) => (
           getColor(`--gc-cat-ai-usage-series-rank-rank-${index + 1}`)
@@ -2182,137 +1828,31 @@
       }
       const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-      const state = {
-        window: 168,
-        trend: [],
-        tokenChart: [],
-        table: [],
-        tokenLedger: [],
-        sortBy: "fetched_at",
-        sortDir: "desc",
-      };
+      // Cross-loader data stashes only — whichever loader finishes last
+      // re-renders with complete joins (donut legends want quota rows from
+      // the subscriptions loader; the rail is quota-only).
+      const state = {};
       let hydrateInFlight = false;
 
       const els = {
-        globalStatus: document.getElementById("globalStatus"),
-        planType: document.getElementById("planType"),
-        currentWeekly: document.getElementById("currentWeekly"),
-        weeklyReset: document.getElementById("weeklyReset"),
-        resetCredits: document.getElementById("resetCredits"),
-        resetCreditsHint: document.getElementById("resetCreditsHint"),
-        freshness: document.getElementById("freshness"),
-        weekPeak: document.getElementById("weekPeak"),
-        weekPeakHint: document.getElementById("weekPeakHint"),
-        windowSpan: document.getElementById("windowSpan"),
-        windowSpanHint: document.getElementById("windowSpanHint"),
-        rowCount: document.getElementById("rowCount"),
-        ledgerPath: document.getElementById("ledgerPath"),
-        tableBody: document.getElementById("rawTableBody"),
-        tokenLedgerBody: document.getElementById("tokenLedgerBody"),
-        refresh: document.getElementById("refreshSummary"),
+        refresh: document.getElementById("refreshUsage"),
       };
 
       const canvases = {
         modelToken: document.getElementById("modelTokenChart"),
-        week: document.getElementById("weekChart"),
-        tokenUsage: document.getElementById("tokenUsageChart"),
-        tokenBucket: document.getElementById("tokenBucketChart"),
-        tokenDelta: document.getElementById("tokenDeltaChart"),
-        cacheHit: document.getElementById("cacheHitChart"),
+        tokenComposition: document.getElementById("tokenCompositionChart"),
+        cacheHitRate: document.getElementById("cacheHitRateChart"),
       };
 
       let modelTokenChart;
-      let weekChart;
-      let tokenUsageChart;
-      let tokenBucketChart;
-      let tokenDeltaChart;
-      let cacheHitChart;
+      let tokenCompositionChart;
+      let cacheHitRateChart;
       let subscriptionUnifiedWeeklyChart;
       let subscriptionUnifiedFiveHourChart;
       // content.hidden cannot tell rendered observations from the "unavailable"
       // placeholder cards, which are also visible; this flag can.
       let subscriptionsHaveRenderedData = false;
 
-      // Opt-in per chart: options.plugins.thresholdPlugin = { axis: "<scaleId>", value: 80 }.
-      // Charts that leave it unset get no line, so token-count axes stop drawing "80%"
-      // at eighty tokens.
-      const thresholdPlugin = {
-        id: "thresholdPlugin",
-        defaults: { axis: null, value: 80 },
-        afterDraw(chart, _args, opts) {
-          const axisId = opts && opts.axis;
-          if (!axisId) return;
-          const yScale = chart.scales[axisId];
-          const area = chart.chartArea;
-          if (!yScale || !area) return;
-          const threshold = Number(opts.value);
-          if (!Number.isFinite(threshold)) return;
-          const ctx = chart.ctx;
-          const y = yScale.getPixelForValue(threshold);
-          if (!Number.isFinite(y) || y < area.top || y > area.bottom) return;
-          ctx.save();
-          ctx.beginPath();
-          ctx.setLineDash([5, 6]);
-          ctx.moveTo(area.left, y);
-          ctx.lineTo(area.right, y);
-          ctx.lineWidth = 1;
-          ctx.strokeStyle = SERIES.warning;
-          ctx.globalAlpha = 0.6;
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.globalAlpha = 0.75;
-          ctx.fillStyle = SERIES.warning;
-          ctx.font = "11px " + SERIES.fontBody;
-          ctx.fillText(`${threshold}%`, area.right - 30, y - 6);
-          ctx.restore();
-        },
-      };
-
-      // Opt-in per chart: options.plugins.endpointLabelPlugin = { enabled: true }.
-      const endpointLabelPlugin = {
-        id: "endpointLabelPlugin",
-        defaults: { enabled: false },
-        afterDatasetsDraw(chart, _args, opts) {
-          if (!opts || opts.enabled !== true) return;
-          const ctx = chart.ctx;
-          const area = chart.chartArea;
-          const labels = [];
-          chart.data.datasets.forEach((dataset, datasetIndex) => {
-            const meta = chart.getDatasetMeta(datasetIndex);
-            if (meta.hidden) return;
-            const lastIndex = dataset.data.map((value) => value !== null && value !== undefined && Number.isFinite(Number(value))).lastIndexOf(true);
-            if (lastIndex < 0) return;
-            const point = meta.data[lastIndex];
-            if (!point) return;
-            labels.push({
-              text: dataset.label,
-              color: dataset.borderColor,
-              x: Math.min(point.x + 8, area.right - 104),
-              y: Math.max(area.top + 16, Math.min(area.bottom - 10, point.y)),
-            });
-          });
-
-          labels.sort((a, b) => a.y - b.y);
-          for (let i = 1; i < labels.length; i += 1) {
-            if (labels[i].y - labels[i - 1].y < 16) labels[i].y = labels[i - 1].y + 16;
-          }
-          for (let i = labels.length - 2; i >= 0; i -= 1) {
-            if (labels[i + 1].y > area.bottom - 8) labels[i + 1].y = area.bottom - 8;
-            if (labels[i + 1].y - labels[i].y < 16) labels[i].y = labels[i + 1].y - 16;
-          }
-
-          ctx.save();
-          ctx.font = "12px " + SERIES.fontBody;
-          labels.forEach((label) => {
-            const y = Math.max(area.top + 16, Math.min(area.bottom - 8, label.y));
-            ctx.fillStyle = label.color;
-            ctx.fillText(label.text, label.x, y);
-          });
-          ctx.restore();
-        },
-      };
-
-      if (typeof Chart !== "undefined") Chart.register(thresholdPlugin, endpointLabelPlugin);
 
       // Timezone policy: UTC-bucketed surfaces (anything headed "UTC hour") render
       // through formatUtcHour; point-in-time sample timestamps render local through
@@ -2352,41 +1892,11 @@
         })} UTC`;
       }
 
-      function resetTimestamp(value) {
-        if (!value && value !== 0) return null;
-        const numeric = Number(value);
-        if (!Number.isFinite(numeric)) return null;
-        return new Date(numeric * 1000);
-      }
-
-      function formatReset(value) {
-        const dt = resetTimestamp(value);
-        if (!dt) return "reset: unknown";
-        const now = Date.now();
-        const deltaMs = dt.getTime() - now;
-        const abs = Math.abs(deltaMs);
-        const hours = Math.floor(abs / 3600000);
-        const minutes = Math.round((abs % 3600000) / 60000);
-        const clock = dt.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-        if (deltaMs <= 0) return `reset passed · ${clock}`;
-        if (hours >= 24) return `resets in ${Math.round(hours / 24)}d, ${clock}`;
-        if (hours >= 1) return `resets in ${hours}h ${minutes}m`;
-        return `resets in ${minutes}m`;
-      }
-
       function percent(value, digits = 1) {
         if (value === null || value === undefined) return "—";
         const asNum = Number(value);
         if (!Number.isFinite(asNum)) return "—";
         return `${asNum.toFixed(digits)}%`;
-      }
-
-      function signedPercent(value, digits = 1) {
-        if (value === null || value === undefined) return "—";
-        const asNum = Number(value);
-        if (!Number.isFinite(asNum)) return "—";
-        const sign = asNum > 0 ? "+" : "";
-        return `${sign}${asNum.toFixed(digits)}%`;
       }
 
       function intFormat(value) {
@@ -2395,115 +1905,10 @@
         return new Intl.NumberFormat().format(Math.round(asNum));
       }
 
-      function resetCreditsHint(value) {
-        const asNum = Number(value);
-        if (!Number.isFinite(asNum)) return "manual reserve: unknown";
-        const rounded = Math.round(asNum);
-        if (rounded <= 0) return "no banked manual resets";
-        if (rounded === 1) return "1 manual reset available";
-        return `${intFormat(rounded)} manual resets available`;
-      }
-
       function compactIntFormat(value) {
         const asNum = Number(value);
         if (!Number.isFinite(asNum)) return "—";
         return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(asNum);
-      }
-
-      function ratioFormat(value) {
-        if (value === null || value === undefined) return "—";
-        const asNum = Number(value);
-        if (!Number.isFinite(asNum)) return "—";
-        return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(asNum);
-      }
-
-      function deltaClass(value) {
-        const asNum = Number(value);
-        if (!Number.isFinite(asNum)) return "neutral";
-        if (asNum < 0) return "negative";
-        if (asNum > 0) return "color-token";
-        return "neutral";
-      }
-
-      function numeric(value) {
-        const asNum = Number(value);
-        return Number.isFinite(asNum) ? asNum : null;
-      }
-
-      function trendSlice() {
-        const source = state.trend.slice();
-        return source.slice(Math.max(0, source.length - state.window));
-      }
-
-      function tokenSlice() {
-        const source = state.tokenChart.slice();
-        return source.slice(Math.max(0, source.length - state.window));
-      }
-
-      function buildLabels(rows) {
-        return rows.map((row) => formatTimestamp(row.fetched_at));
-      }
-
-      function buildTokenLabels(rows) {
-        return rows.map((row) => formatTimestamp(row.window_end));
-      }
-
-      function percentageChartOptions({ legend = false, endpointLabels = false } = {}) {
-        return {
-          maintainAspectRatio: false,
-          responsive: true,
-          interaction: { mode: "index", intersect: false },
-          animation: { duration: 260 },
-          elements: { line: { borderWidth: 2 }, point: { radius: 0, hitRadius: 10, hoverRadius: 3 } },
-          scales: {
-            y: {
-              min: 0,
-              max: 100,
-              border: { color: SERIES.line },
-              ticks: {
-                color: SERIES.muted,
-                stepSize: 25,
-                callback: (value) => `${value}%`,
-              },
-              grid: { color: SERIES.grid },
-            },
-            x: {
-              border: { color: SERIES.line },
-              ticks: {
-                color: SERIES.muted,
-                autoSkip: true,
-                maxRotation: 0,
-                minRotation: 0,
-                maxTicksLimit: state.window > 24 ? 9 : 6,
-              },
-              grid: { display: false },
-            },
-          },
-          plugins: {
-            thresholdPlugin: { axis: "y", value: 80 },
-            endpointLabelPlugin: { enabled: Boolean(endpointLabels) },
-            legend: {
-              display: legend && !endpointLabels,
-              labels: { color: SERIES.text, usePointStyle: true, boxWidth: 8 },
-            },
-            tooltip: {
-              displayColors: false,
-              backgroundColor: SERIES.tooltipBg,
-              borderColor: SERIES.line,
-              borderWidth: 1,
-              padding: 10,
-              callbacks: {
-                label: (context) => `${context.dataset.label}: ${percent(context.parsed.y)}`,
-              },
-            },
-          },
-        };
-      }
-
-      function refreshChartOptions(chart, options) {
-        chart.options.scales.x.ticks.maxTicksLimit = options.scales.x.ticks.maxTicksLimit;
-        chart.options.plugins.legend.display = options.plugins.legend.display;
-        chart.update();
       }
 
       function lineDataset(label, data, color, extra = {}) {
@@ -2529,97 +1934,6 @@
           borderWidth: 1,
           borderRadius: 4,
           ...extra,
-        };
-      }
-
-      function tokenVolumeChartOptions() {
-        return {
-          maintainAspectRatio: false,
-          responsive: true,
-          interaction: { mode: "index", intersect: false },
-          animation: { duration: 260 },
-          scales: {
-            yTokens: {
-              type: "linear",
-              position: "left",
-              beginAtZero: true,
-              border: { color: SERIES.line },
-              ticks: { color: SERIES.muted, callback: (value) => compactIntFormat(value) },
-              grid: { color: SERIES.grid },
-              title: { display: true, text: "tokens", color: SERIES.muted },
-            },
-            yUsage: {
-              type: "linear",
-              position: "right",
-              min: 0,
-              max: 100,
-              border: { color: SERIES.line },
-              ticks: { color: SERIES.muted, callback: (value) => `${value}%` },
-              grid: { drawOnChartArea: false },
-              title: { display: true, text: "quota used", color: SERIES.muted },
-            },
-            x: {
-              border: { color: SERIES.line },
-              ticks: { color: SERIES.muted, autoSkip: true, maxRotation: 0, minRotation: 0, maxTicksLimit: state.window > 24 ? 9 : 6 },
-              grid: { display: false },
-            },
-          },
-          plugins: {
-            thresholdPlugin: { axis: "yUsage", value: 80 },
-            legend: { display: true, labels: { color: SERIES.text, usePointStyle: true, boxWidth: 8 } },
-            tooltip: {
-              displayColors: true,
-              backgroundColor: SERIES.tooltipBg,
-              borderColor: SERIES.line,
-              borderWidth: 1,
-              padding: 10,
-              callbacks: {
-                label: (context) => context.dataset.yAxisID === "yUsage"
-                  ? `${context.dataset.label}: ${percent(context.parsed.y)}`
-                  : `${context.dataset.label}: ${intFormat(context.parsed.y)}`,
-              },
-            },
-          },
-        };
-      }
-
-      function tokenBucketChartOptions({ stacked = false, pct = false, delta = false } = {}) {
-        return {
-          maintainAspectRatio: false,
-          responsive: true,
-          interaction: { mode: "index", intersect: false },
-          animation: { duration: 260 },
-          scales: {
-            y: {
-              beginAtZero: !delta,
-              min: pct ? 0 : undefined,
-              max: pct ? 100 : undefined,
-              stacked,
-              border: { color: SERIES.line },
-              ticks: { color: SERIES.muted, callback: (value) => pct || delta ? `${value}%` : compactIntFormat(value) },
-              grid: { color: SERIES.grid },
-            },
-            x: {
-              stacked,
-              border: { color: SERIES.line },
-              ticks: { color: SERIES.muted, autoSkip: true, maxRotation: 0, minRotation: 0, maxTicksLimit: state.window > 24 ? 7 : 5 },
-              grid: { display: false },
-            },
-          },
-          plugins: {
-            legend: { display: true, labels: { color: SERIES.text, usePointStyle: true, boxWidth: 8 } },
-            tooltip: {
-              backgroundColor: SERIES.tooltipBg,
-              borderColor: SERIES.line,
-              borderWidth: 1,
-              padding: 10,
-              callbacks: {
-                label: (context) => pct || delta
-                  ? `${context.dataset.label}: ${signedPercent(context.parsed.y)}`
-                  : `${context.dataset.label}: ${intFormat(context.parsed.y)}`,
-              },
-            },
-          },
         };
       }
 
@@ -2690,7 +2004,7 @@
         });
       }
 
-      function renderSeriesTable(headId, bodyId, bucketStarts, rows) {
+      function renderSeriesTable(headId, bodyId, bucketStarts, rows, formatCell = intFormat) {
         const head = document.getElementById(headId);
         const body = document.getElementById(bodyId);
         head.textContent = "";
@@ -2714,7 +2028,7 @@
           tableRow.appendChild(rowHead);
           rows.forEach((row) => {
             const cell = document.createElement("td");
-            cell.textContent = intFormat(Array.isArray(row.values) ? row.values[index] : 0);
+            cell.textContent = formatCell(Array.isArray(row.values) ? row.values[index] : 0);
             tableRow.appendChild(cell);
           });
           body.appendChild(tableRow);
@@ -2763,59 +2077,177 @@
 
       }
 
-      function renderHeader(summary) {
-        const capped = summary.limit_reached || summary.allowed === false;
-        els.globalStatus.classList.toggle("capped", Boolean(capped));
-        els.globalStatus.innerHTML = `<span class="dot"></span><span>${capped ? "Capped" : "Ready"}</span>`;
-        els.planType.textContent = `plan · ${summary.plan_type || "—"}`;
-        els.currentWeekly.textContent = percent(summary.current_weekly_used_pct);
-        els.weeklyReset.textContent = formatReset(summary.weekly_reset_at);
-        els.resetCredits.textContent = intFormat(summary.rate_limit_reset_credits_available);
-        els.resetCreditsHint.textContent = resetCreditsHint(summary.rate_limit_reset_credits_available);
-        els.freshness.textContent = `Last sample ${formatTimestamp(summary.last_fetched_at)} · first sample ${formatTimestamp(summary.first_fetched_at)}.`;
-        els.rowCount.textContent = `${summary.total_rows || 0} rows`;
-        els.ledgerPath.textContent = summary.ledger_path || "ledger unavailable";
-        els.ledgerPath.title = summary.ledger_path || "";
-      }
+      // Estate-wide token composition (keeper-ruled 2026-08-30, replacing the
+      // codex-only Token bucket mix): the five canonical token buckets summed
+      // across every provider, stacked per complete UTC hour. Bucket colors
+      // are the established SERIES entries; reasoning stays its own series
+      // because this chart shows composition, not the accounted total.
+      const TOKEN_COMPOSITION_BUCKETS = Object.freeze([
+        ["input_tokens", "Input", "input"],
+        ["cache_read_tokens", "Cache read", "cacheRead"],
+        ["cache_write_tokens", "Cache write", "cacheWrite"],
+        ["output_tokens", "Output", "output"],
+        ["reasoning_tokens", "Reasoning", "reasoning"],
+      ]);
 
-      function findPeak(rows, key) {
-        return rows.reduce((best, row) => {
-          const value = numeric(row[key]);
-          if (value === null) return best;
-          if (!best || value > best.value) return { value, row };
-          return best;
-        }, null);
-      }
-
-      function renderInsights() {
-        const rows = trendSlice();
-        const weekPeak = findPeak(rows, "weekly_used_pct");
-        const first = rows[0];
-        const last = rows[rows.length - 1];
-
-        els.weekPeak.textContent = weekPeak ? percent(weekPeak.value) : "—";
-        els.weekPeakHint.textContent = weekPeak ? `Peaked ${formatTimestamp(weekPeak.row.fetched_at)}.` : "No weekly samples in this window.";
-        els.windowSpan.textContent = rows.length ? `${rows.length} samples` : "—";
-        els.windowSpanHint.textContent = first && last ? `${formatTimestamp(first.fetched_at)} → ${formatTimestamp(last.fetched_at)}.` : "No ledger rows to chart.";
-      }
-
-      function buildOrUpdateWeekChart() {
-        const rows = trendSlice();
-        const labels = buildLabels(rows);
-        const datasets = [
-          lineDataset("Weekly", rows.map((row) => row.weekly_used_pct), SERIES.weekly, { borderWidth: 2.5 }),
-        ];
-
-        const options = percentageChartOptions({ endpointLabels: true });
-        if (!weekChart) {
-          weekChart = new Chart(canvases.week, { type: "line", data: { labels, datasets }, options });
-          return;
-        }
-        weekChart.data.labels = labels;
-        weekChart.data.datasets.forEach((dataset, index) => {
-          dataset.data = datasets[index].data;
+      function renderTokenComposition(timeSeries) {
+        if (!timeSeries || !Array.isArray(timeSeries.bucket_starts)) throw new Error("time series unavailable");
+        const bucketSeries = timeSeries.bucket_series;
+        if (!bucketSeries || typeof bucketSeries !== "object") throw new Error("bucket series unavailable");
+        const labels = timeSeries.bucket_starts.map((value) => formatUtcHour(value, window.innerWidth <= 640));
+        const rows = TOKEN_COMPOSITION_BUCKETS.map(([field, label]) => {
+          const values = Array.isArray(bucketSeries[field])
+            ? bucketSeries[field]
+            : timeSeries.bucket_starts.map(() => 0);
+          return {
+            label,
+            values,
+            total_tokens: values.reduce((sum, value) => sum + Number(value || 0), 0),
+          };
         });
-        refreshChartOptions(weekChart, options);
+        const colors = TOKEN_COMPOSITION_BUCKETS.map(([, , seriesKey]) => SERIES[seriesKey]);
+        const datasets = rows.map((row, index) => barDataset(
+          row.label,
+          row.values,
+          colors[index],
+          { stack: "composition", borderRadius: 1 },
+        ));
+        const options = unifiedTokenChartOptions({ stacked: true });
+        if (!tokenCompositionChart) {
+          tokenCompositionChart = new Chart(canvases.tokenComposition, {
+            type: "bar",
+            data: { labels, datasets },
+            options,
+          });
+        } else {
+          replaceChartData(tokenCompositionChart, labels, datasets, options);
+        }
+        renderDirectLabels("tokenCompositionLabels", rows, colors);
+        renderSeriesTable("tokenCompositionTableHead", "tokenCompositionTableBody", timeSeries.bucket_starts, rows);
+        const compositionTotal = rows.reduce((sum, row) => sum + row.total_tokens, 0);
+        document.getElementById("tokenCompositionSummary").textContent = `${compactIntFormat(compositionTotal)} tokens across five buckets and every provider in complete UTC hours.`;
+      }
+
+      // Estate-wide cache hit rate (keeper-ruled 2026-08-30, replacing the
+      // codex-only chart): per provider per hour, cache reads over prompt
+      // tokens (input + cache read). An hour with no prompt tokens is null —
+      // the line gaps instead of lying at zero.
+      function cacheHitRateChartOptions() {
+        return {
+          maintainAspectRatio: false,
+          responsive: true,
+          interaction: { mode: "index", intersect: false },
+          animation: REDUCED_MOTION ? false : { duration: 260 },
+          elements: { line: { borderWidth: 2.4 }, point: { radius: 0, hitRadius: 10, hoverRadius: 3 } },
+          scales: {
+            y: {
+              min: 0,
+              max: 100,
+              border: { color: SERIES.line },
+              ticks: { color: SERIES.muted, stepSize: 25, callback: (value) => `${value}%` },
+              grid: { color: SERIES.gridSoft },
+            },
+            x: {
+              border: { color: SERIES.line },
+              ticks: {
+                color: SERIES.muted,
+                autoSkip: true,
+                maxRotation: 0,
+                minRotation: 0,
+                align: "inner",
+                maxTicksLimit: window.innerWidth <= 640 ? 4 : 7,
+              },
+              grid: { display: false },
+            },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              displayColors: false,
+              backgroundColor: SERIES.tooltipBg,
+              borderColor: SERIES.line,
+              borderWidth: 1,
+              padding: 10,
+              callbacks: {
+                label: (context) => `${context.dataset.label}: ${percent(context.parsed.y)}`,
+              },
+            },
+          },
+        };
+      }
+
+      function renderCacheHitRate(timeSeries) {
+        if (!timeSeries || !Array.isArray(timeSeries.bucket_starts) || !Array.isArray(timeSeries.provider_status_series)) {
+          throw new Error("time series unavailable");
+        }
+        const labels = timeSeries.bucket_starts.map((value) => formatUtcHour(value, window.innerWidth <= 640));
+        const all = timeSeries.provider_status_series.filter((row) => (
+          Array.isArray(row.input_tokens) && Array.isArray(row.cache_read_tokens)
+        ));
+        // The same low-traffic folding rule the status strip applies:
+        // "unknown" and providers under 10 events in the window fold out of
+        // the chart and into the summary line.
+        const shown = all.filter((row) => row.provider !== "unknown" && Number(row.total_events) >= 10);
+        const folded = all.filter((row) => row.provider === "unknown" || Number(row.total_events) < 10);
+        const rows = shown.map((row, index) => {
+          let promptTotal = 0;
+          let cacheTotal = 0;
+          const values = timeSeries.bucket_starts.map((_unused, bucket) => {
+            const cache = Number(row.cache_read_tokens[bucket] || 0);
+            const prompt = Number(row.input_tokens[bucket] || 0) + cache;
+            promptTotal += prompt;
+            cacheTotal += cache;
+            return prompt > 0 ? (cache / prompt) * 100 : null;
+          });
+          return {
+            provider: row.provider,
+            label: row.provider,
+            color: subscriptionUnifiedProviderColor({ provider: row.provider_canonical }, index),
+            windowAverage: promptTotal > 0 ? (cacheTotal / promptTotal) * 100 : null,
+            values,
+          };
+        });
+        const datasets = rows.map((row) => lineDataset(row.label, row.values, row.color, { spanGaps: false }));
+        const options = cacheHitRateChartOptions();
+        if (!cacheHitRateChart) {
+          cacheHitRateChart = new Chart(canvases.cacheHitRate, { type: "line", data: { labels, datasets }, options });
+        } else {
+          replaceChartData(cacheHitRateChart, labels, datasets, options);
+        }
+        const labelHost = document.getElementById("cacheHitRateLabels");
+        labelHost.textContent = "";
+        rows.forEach((row) => {
+          const item = document.createElement("div");
+          item.className = "direct-label";
+          const swatch = document.createElement("span");
+          swatch.className = "swatch";
+          swatch.style.setProperty("--series-color", row.color);
+          const label = document.createElement("strong");
+          label.textContent = row.provider;
+          const average = document.createElement("span");
+          average.textContent = row.windowAverage === null ? "no prompt tokens" : `${percent(row.windowAverage)} avg`;
+          item.append(swatch, label, average);
+          labelHost.appendChild(item);
+        });
+        renderSeriesTable(
+          "cacheHitRateTableHead",
+          "cacheHitRateTableBody",
+          timeSeries.bucket_starts,
+          rows,
+          (value) => (value === null || value === undefined ? "—" : percent(value)),
+        );
+        const summaryParts = [
+          rows.length
+            ? `${rows.length} provider${rows.length === 1 ? "" : "s"} charted over complete UTC hours; gaps mean no prompt tokens that hour.`
+            : "No provider met the traffic bar for the cache chart in this window.",
+        ];
+        if (folded.length) {
+          const foldedNames = folded
+            .map((row) => `${row.provider} (${intFormat(row.total_events)} events)`)
+            .join(", ");
+          summaryParts.push(`Low-traffic fold: ${foldedNames}.`);
+        }
+        document.getElementById("cacheHitRateSummary").textContent = summaryParts.join(" ");
       }
 
       function replaceChartData(chart, labels, datasets, options) {
@@ -2825,163 +2257,17 @@
         chart.update();
       }
 
-      function buildOrUpdateTokenUsageChart() {
-        const rows = tokenSlice();
-        const labels = buildTokenLabels(rows);
-        const datasets = [
-          barDataset("Total tokens", rows.map((row) => row.total_tokens), SERIES.token, { yAxisID: "yTokens", order: 2 }),
-          lineDataset("Session usage", rows.map((row) => row.session_used_pct), SERIES.session, { yAxisID: "yUsage", order: 1, borderWidth: 2.5 }),
-          lineDataset("Weekly usage", rows.map((row) => row.weekly_used_pct), SERIES.weekly, { yAxisID: "yUsage", order: 0, borderWidth: 2.5 }),
-        ];
-        const options = tokenVolumeChartOptions();
-        if (!tokenUsageChart) {
-          tokenUsageChart = new Chart(canvases.tokenUsage, { type: "bar", data: { labels, datasets }, options });
-          return;
-        }
-        replaceChartData(tokenUsageChart, labels, datasets, options);
-      }
-
-      function buildOrUpdateTokenBucketChart() {
-        const rows = tokenSlice();
-        const labels = buildTokenLabels(rows);
-        const datasets = [
-          barDataset("Input", rows.map((row) => row.input_tokens), SERIES.input, { stack: "tokens" }),
-          barDataset("Cache read", rows.map((row) => row.cache_read_tokens), SERIES.cacheRead, { stack: "tokens" }),
-          barDataset("Cache write", rows.map((row) => row.cache_write_tokens), SERIES.cacheWrite, { stack: "tokens" }),
-          barDataset("Output", rows.map((row) => row.output_tokens), SERIES.output, { stack: "tokens" }),
-          barDataset("Reasoning", rows.map((row) => row.reasoning_tokens), SERIES.reasoning, { stack: "tokens" }),
-        ];
-        const options = tokenBucketChartOptions({ stacked: true });
-        if (!tokenBucketChart) {
-          tokenBucketChart = new Chart(canvases.tokenBucket, { type: "bar", data: { labels, datasets }, options });
-          return;
-        }
-        replaceChartData(tokenBucketChart, labels, datasets, options);
-      }
-
-      function buildOrUpdateTokenDeltaChart() {
-        const rows = tokenSlice();
-        const labels = buildTokenLabels(rows);
-        const datasets = [
-          barDataset("Δ Session", rows.map((row) => row.session_delta_pct), SERIES.session),
-          barDataset("Δ Weekly", rows.map((row) => row.weekly_delta_pct), SERIES.weekly),
-        ];
-        const options = tokenBucketChartOptions({ delta: true });
-        if (!tokenDeltaChart) {
-          tokenDeltaChart = new Chart(canvases.tokenDelta, { type: "bar", data: { labels, datasets }, options });
-          return;
-        }
-        replaceChartData(tokenDeltaChart, labels, datasets, options);
-      }
-
-      function buildOrUpdateCacheHitChart() {
-        const rows = tokenSlice();
-        const labels = buildTokenLabels(rows);
-        const datasets = [lineDataset("Cache hit", rows.map((row) => row.cache_hit_pct), SERIES.cacheRead, { borderWidth: 2.5 })];
-        const options = tokenBucketChartOptions({ pct: true });
-        if (!cacheHitChart) {
-          cacheHitChart = new Chart(canvases.cacheHit, { type: "line", data: { labels, datasets }, options });
-          return;
-        }
-        replaceChartData(cacheHitChart, labels, datasets, options);
-      }
-
-      function renderTable() {
-        const rows = state.table.slice(0, 24);
-        els.tableBody.textContent = "";
-        rows.forEach((row) => appendTextRow(els.tableBody, [
-          formatTimestamp(row.fetched_at), percent(row.session_used_pct), percent(row.weekly_used_pct),
-          percent(row.spark_session_used_pct), percent(row.spark_weekly_used_pct),
-          intFormat(row.rate_limit_reset_credits_available),
-        ]));
-      }
-
-      function renderTokenLedger() {
-        const rows = state.tokenLedger.slice(0, 24);
-        els.tokenLedgerBody.textContent = "";
-        rows.forEach((row) => {
-          const tr = document.createElement("tr");
-          const values = [
-            `${formatTimestamp(row.window_start)} → ${formatTimestamp(row.window_end)}`,
-            signedPercent(row.session_delta_pct), signedPercent(row.weekly_delta_pct), intFormat(row.api_calls),
-            intFormat(row.input_tokens), intFormat(row.cache_read_tokens), intFormat(row.output_tokens),
-            intFormat(row.reasoning_tokens), intFormat(row.total_tokens), percent(row.cache_hit_pct),
-            ratioFormat(row.tokens_per_session_pct), ratioFormat(row.tokens_per_weekly_pct),
-          ];
-          values.forEach((value, index) => {
-            const cell = document.createElement("td");
-            cell.textContent = value;
-            if (index === 1) cell.className = deltaClass(row.session_delta_pct);
-            if (index === 2) cell.className = deltaClass(row.weekly_delta_pct);
-            if (index === 3 && Array.isArray(row.models)) cell.title = row.models.join(", ");
-            tr.appendChild(cell);
-          });
-          els.tokenLedgerBody.appendChild(tr);
-        });
-      }
-
-      function compareValues(a, b, key, type, dir) {
-        const av = a[key];
-        const bv = b[key];
-        if (type === "num") {
-          const nA = numeric(av) ?? Number.NEGATIVE_INFINITY;
-          const nB = numeric(bv) ?? Number.NEGATIVE_INFINITY;
-          return dir === "asc" ? nA - nB : nB - nA;
-        }
-        const parsedA = type === "date" && av ? new Date(av).getTime() : NaN;
-        const parsedB = type === "date" && bv ? new Date(bv).getTime() : NaN;
-        if (Number.isFinite(parsedA) && Number.isFinite(parsedB)) {
-          return dir === "asc" ? parsedA - parsedB : parsedB - parsedA;
-        }
-        return dir === "asc" ? String(av || "").localeCompare(String(bv || "")) : String(bv || "").localeCompare(String(av || ""));
-      }
-
-      function renderSortedTable() {
-        state.table = [...state.table].sort((a, b) => compareValues(a, b, state.sortBy, state.sortBy === "fetched_at" ? "date" : "num", state.sortDir));
-        renderTable();
-      }
-
-      function renderCharts() {
-        buildOrUpdateWeekChart();
-        buildOrUpdateTokenUsageChart();
-        buildOrUpdateTokenBucketChart();
-        buildOrUpdateTokenDeltaChart();
-        buildOrUpdateCacheHitChart();
-        renderInsights();
-      }
-
+      // One hydrate cycle = the four private-panel loaders (unified usage,
+      // subscriptions, billing, provider status feeds). Each loader owns its
+      // panel's failure text; the button state only tracks the cycle.
       async function hydrate() {
         if (hydrateInFlight) return;
         hydrateInFlight = true;
         els.refresh.disabled = true;
         els.refresh.textContent = "Refreshing…";
-        const privatePanelsPromise = loadPrivatePanels();
         try {
-          const [summaryRes, trendRes, dataRes, tokenLedgerRes, tokenChartRes] = await Promise.all([
-            fetch("/api/summary"),
-            fetch("/api/trend"),
-            fetch("/api/data?limit=200"),
-            fetch("/api/token-ledger"),
-            fetch("/api/token-chart"),
-          ]);
-          if (!summaryRes.ok || !trendRes.ok || !dataRes.ok || !tokenLedgerRes.ok || !tokenChartRes.ok) throw new Error("API request failed");
-          const summary = await summaryRes.json();
-          const trend = await trendRes.json();
-          const data = await dataRes.json();
-          const tokenLedger = await tokenLedgerRes.json();
-          const tokenChart = await tokenChartRes.json();
-          state.trend = Array.isArray(trend) ? trend : [];
-          state.tokenChart = Array.isArray(tokenChart) ? tokenChart : [];
-          state.table = Array.isArray(data) ? data : [];
-          state.tokenLedger = Array.isArray(tokenLedger) ? tokenLedger : [];
-          renderHeader(summary);
-          renderCharts();
-          renderTokenLedger();
-          renderSortedTable();
-        } catch (error) {
-          els.freshness.textContent = `Refresh failed: ${error.message}`;
+          await loadPrivatePanels();
         } finally {
-          await privatePanelsPromise;
           els.refresh.disabled = false;
           els.refresh.textContent = "Refresh";
           hydrateInFlight = false;
@@ -3589,6 +2875,16 @@
             renderUnifiedCharts(data.time_series);
           } catch (chartError) {
             document.getElementById("modelTokenSummary").textContent = "Model chart unavailable; aggregate tables remain current.";
+          }
+          try {
+            renderTokenComposition(data.time_series);
+          } catch (chartError) {
+            document.getElementById("tokenCompositionSummary").textContent = "Token composition chart unavailable; aggregate tables remain current.";
+          }
+          try {
+            renderCacheHitRate(data.time_series);
+          } catch (chartError) {
+            document.getElementById("cacheHitRateSummary").textContent = "Cache hit rate chart unavailable; the provider status strip remains current.";
           }
           try {
             const fiveResponse = await fetch("/api/unified-usage?hours=5", { signal: AbortSignal.timeout(30000) });
@@ -4461,30 +3757,6 @@
           loadProviderStatusFeeds(),
         ]);
       }
-
-      document.querySelectorAll(".toggle").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          document.querySelectorAll(".toggle").forEach((node) => node.classList.remove("active"));
-          btn.classList.add("active");
-          state.window = Number(btn.dataset.window || 168);
-          renderCharts();
-          renderSortedTable();
-        });
-      });
-
-      document.querySelectorAll("th.sortable").forEach((th) => {
-        th.addEventListener("click", () => {
-          const key = th.dataset.key;
-          if (!key) return;
-          if (state.sortBy === key) {
-            state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
-          } else {
-            state.sortBy = key;
-            state.sortDir = "desc";
-          }
-          renderSortedTable();
-        });
-      });
 
       // ---- Ledger fold controller ------------------------------------------
       // Keeper-ruled 2026-08-29: ledger tables and their wide columns are
