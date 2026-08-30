@@ -133,6 +133,11 @@ def _codex_snapshot_observations(
             ("five_hour", "session_used_pct", "session_reset_at"),
             ("week", "weekly_used_pct", "weekly_reset_at"),
         )
+        # A window the plan no longer reports (the session window retired
+        # upstream 2026-07-12) must not become an all-None observation — it
+        # rendered as a permanent "Unavailable" card (keeper defect report
+        # 2026-08-30). Absent window = no row, not an alarming null row.
+        if snapshot.get(used_field) is not None
     ]
     if "spark_session_used_pct" in snapshot or "spark_weekly_used_pct" in snapshot:
         for name, used_field, reset_field in (

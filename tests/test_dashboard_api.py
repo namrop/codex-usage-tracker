@@ -2079,8 +2079,13 @@ def test_dashboard_page_retires_session_surfaces_and_bounds_its_data_fetch(tmp_p
     page = client.get("/")
     assert page.status_code == 200
     markup = page.data.decode("utf-8")
-    assert "Session window retired upstream (2026-07-12)" in markup
-    for retired in ('id="sessionChart"', 'id="sessionBarChart"', 'id="currentSession"', 'id="sessionPeak"'):
+    # The retired-window explainer card and the spark surfaces were removed
+    # outright (keeper ruling 2026-08-30) — the retirement stays total.
+    assert "Session window retired upstream" not in markup
+    for retired in (
+        'id="sessionChart"', 'id="sessionBarChart"', 'id="currentSession"', 'id="sessionPeak"',
+        'id="sparkChart"', 'id="sparkSession"', 'id="sparkWeekly"', "Spark usage",
+    ):
         assert retired not in markup
     # The page renders 24 rows; it must not pull the whole ledger to do it.
     assert 'fetch("/api/data?limit=200")' in markup

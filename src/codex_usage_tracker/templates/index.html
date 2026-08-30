@@ -1682,16 +1682,6 @@
               <div class="hint" id="weeklyReset">reset: —</div>
             </div>
             <div class="metric">
-              <div class="label">Spark session</div>
-              <div class="value color-spark-session" id="sparkSession">—</div>
-              <div class="hint" id="sparkSessionReset">reset: —</div>
-            </div>
-            <div class="metric">
-              <div class="label">Spark weekly</div>
-              <div class="value color-spark-weekly" id="sparkWeekly">—</div>
-              <div class="hint" id="sparkWeeklyReset">reset: —</div>
-            </div>
-            <div class="metric">
               <div class="label">Banked resets</div>
               <div class="value color-reset" id="resetCredits">—</div>
               <div class="hint" id="resetCreditsHint">manual consumption only</div>
@@ -1706,15 +1696,6 @@
           <div class="micro-label">Weekly peak</div>
           <strong id="weekPeak">—</strong>
           <span id="weekPeakHint">Highest weekly usage in the current window.</span>
-        </div>
-        <div class="insight">
-          <div class="micro-label">Session window</div>
-          <strong>Retired</strong>
-          <span>
-            Session window retired upstream (2026-07-12): the plan now reports a weekly
-            window only, so session usage, its charts, and its resets are gone. Weekly and
-            Spark carry the live signal.
-          </span>
         </div>
         <div class="insight">
           <div class="micro-label">Chart window</div>
@@ -1748,8 +1729,6 @@
         </div>
         <div class="series-key" aria-hidden="true">
           <span class="key-pill"><span class="swatch" style="--series-color: var(--weekly)"></span>Weekly</span>
-          <span class="key-pill"><span class="swatch" style="--series-color: var(--spark-session)"></span>Spark session</span>
-          <span class="key-pill"><span class="swatch" style="--series-color: var(--spark-weekly)"></span>Spark weekly</span>
         </div>
       </section>
 
@@ -1763,18 +1742,6 @@
           </div>
           <div class="chart-wrap">
             <canvas id="weeklyChart" aria-label="Weekly usage detail chart from 0 to 100 percent"></canvas>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <h2>Spark usage</h2>
-              <p class="caption">Spark session and weekly usage on the same scale.</p>
-            </div>
-          </div>
-          <div class="chart-wrap">
-            <canvas id="sparkChart" aria-label="Spark usage detail chart from 0 to 100 percent"></canvas>
           </div>
         </article>
       </section>
@@ -2020,11 +1987,7 @@
         globalStatus: document.getElementById("globalStatus"),
         planType: document.getElementById("planType"),
         currentWeekly: document.getElementById("currentWeekly"),
-        sparkSession: document.getElementById("sparkSession"),
-        sparkWeekly: document.getElementById("sparkWeekly"),
         weeklyReset: document.getElementById("weeklyReset"),
-        sparkSessionReset: document.getElementById("sparkSessionReset"),
-        sparkWeeklyReset: document.getElementById("sparkWeeklyReset"),
         resetCredits: document.getElementById("resetCredits"),
         resetCreditsHint: document.getElementById("resetCreditsHint"),
         freshness: document.getElementById("freshness"),
@@ -2043,7 +2006,6 @@
         modelToken: document.getElementById("modelTokenChart"),
         week: document.getElementById("weekChart"),
         weekly: document.getElementById("weeklyChart"),
-        spark: document.getElementById("sparkChart"),
         tokenUsage: document.getElementById("tokenUsageChart"),
         tokenBucket: document.getElementById("tokenBucketChart"),
         tokenDelta: document.getElementById("tokenDeltaChart"),
@@ -2053,7 +2015,6 @@
       let modelTokenChart;
       let weekChart;
       let weeklyChart;
-      let sparkChart;
       let tokenUsageChart;
       let tokenBucketChart;
       let tokenDeltaChart;
@@ -2600,11 +2561,7 @@
         els.globalStatus.innerHTML = `<span class="dot"></span><span>${capped ? "Capped" : "Ready"}</span>`;
         els.planType.textContent = `plan · ${summary.plan_type || "—"}`;
         els.currentWeekly.textContent = percent(summary.current_weekly_used_pct);
-        els.sparkSession.textContent = percent(summary.current_spark_session_used_pct);
-        els.sparkWeekly.textContent = percent(summary.current_spark_weekly_used_pct);
         els.weeklyReset.textContent = formatReset(summary.weekly_reset_at);
-        els.sparkSessionReset.textContent = formatReset(summary.spark_session_reset_at);
-        els.sparkWeeklyReset.textContent = formatReset(summary.spark_weekly_reset_at);
         els.resetCredits.textContent = intFormat(summary.rate_limit_reset_credits_available);
         els.resetCreditsHint.textContent = resetCreditsHint(summary.rate_limit_reset_credits_available);
         els.freshness.textContent = `Last sample ${formatTimestamp(summary.last_fetched_at)} · first sample ${formatTimestamp(summary.first_fetched_at)}.`;
@@ -2639,8 +2596,6 @@
         const labels = buildLabels(rows);
         const datasets = [
           lineDataset("Weekly", rows.map((row) => row.weekly_used_pct), SERIES.weekly, { borderWidth: 2.5 }),
-          lineDataset("Spark session", rows.map((row) => row.spark_session_used_pct), SERIES.sparkSession),
-          lineDataset("Spark weekly", rows.map((row) => row.spark_weekly_used_pct), SERIES.sparkWeekly),
         ];
 
         const options = percentageChartOptions({ endpointLabels: true });
@@ -2670,31 +2625,6 @@
         weeklyChart.data.labels = labels;
         weeklyChart.data.datasets[0].data = values;
         refreshChartOptions(weeklyChart, percentageChartOptions());
-      }
-
-      function buildOrUpdateSparkChart() {
-        const rows = trendSlice();
-        const labels = buildLabels(rows);
-        const sessionValues = rows.map((row) => row.spark_session_used_pct);
-        const weeklyValues = rows.map((row) => row.spark_weekly_used_pct);
-        if (!sparkChart) {
-          sparkChart = new Chart(canvases.spark, {
-            type: "line",
-            data: {
-              labels,
-              datasets: [
-                lineDataset("Spark session", sessionValues, SERIES.sparkSession),
-                lineDataset("Spark weekly", weeklyValues, SERIES.sparkWeekly),
-              ],
-            },
-            options: percentageChartOptions({ legend: true }),
-          });
-          return;
-        }
-        sparkChart.data.labels = labels;
-        sparkChart.data.datasets[0].data = sessionValues;
-        sparkChart.data.datasets[1].data = weeklyValues;
-        refreshChartOptions(sparkChart, percentageChartOptions({ legend: true }));
       }
 
       function replaceChartData(chart, labels, datasets, options) {
@@ -2823,7 +2753,6 @@
       function renderCharts() {
         buildOrUpdateWeekChart();
         buildOrUpdateWeeklyChart();
-        buildOrUpdateSparkChart();
         buildOrUpdateTokenUsageChart();
         buildOrUpdateTokenBucketChart();
         buildOrUpdateTokenDeltaChart();

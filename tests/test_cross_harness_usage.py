@@ -370,8 +370,9 @@ def test_codex_quota_reconciles_retained_weekly_only_raw_payload(tmp_path):
     )
 
     facts = {fact["quota_name"]: fact for fact in codex_quota_observations(ledger, "ns:codex")}
-    assert facts["five_hour"]["used_value"] is None
-    assert facts["five_hour"]["resets_at"] is None
+    # The retired session window emits NO row rather than an all-None one
+    # (keeper ruling 2026-08-30: null rows rendered as "Unavailable" cards).
+    assert "five_hour" not in facts
     assert facts["week"]["used_value"] == "15"
     assert facts["week"]["remaining_value"] == "85"
     assert facts["week"]["resets_at"] == "2026-07-19T19:39:02Z"
@@ -427,7 +428,8 @@ def test_codex_quota_nulls_and_opencode_partial_coverage(tmp_path):
         json.dumps({"id":"snap","fetched_at":"2026-07-12T12:00:00Z","session_used_pct":20,"weekly_used_pct":None,"session_reset_at":None,"weekly_reset_at":1783861200,"raw_payload":{"authorization":"secret"}})+"\n"
     )
     facts=codex_quota_observations(ledger,"ns:codex")
-    assert len(facts)==2 and facts[0]["used_value"] == "20" and facts[1]["used_value"] is None
+    # Null weekly emits no row (keeper ruling 2026-08-30); the live window survives.
+    assert len(facts)==1 and facts[0]["quota_name"]=="five_hour" and facts[0]["used_value"] == "20"
     assert all("raw_payload" not in f for f in facts)
     quotas=derive_opencode_go_quotas([event(provider="opencode-go", harness="opencode", x_opencode_quota_cost_usd="3")],"ns:go",now=datetime(2026,7,12,tzinfo=timezone.utc))
     assert {q["quota_name"] for q in quotas}=={"five_hour","week","month"}
