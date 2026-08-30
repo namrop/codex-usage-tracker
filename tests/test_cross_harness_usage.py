@@ -121,6 +121,31 @@ def test_hermes_sidecar_layout_and_cost_micro_mapping(tmp_path):
     assert by["u3"]["purpose"] == "x_aux_approval"
 
 
+def test_hermes_sidecar_model_reported_passes_through_and_gap_fires_only_when_absent(tmp_path):
+    db = tmp_path / "usage_events.db"
+    con = sqlite3.connect(db)
+    con.execute("""CREATE TABLE usage_events (
+      id INTEGER PRIMARY KEY, event_uid TEXT, timestamp REAL, harness TEXT, session_id TEXT, run_id TEXT,
+      source TEXT, purpose TEXT, record_kind TEXT, usage_source TEXT, measurement_confidence TEXT,
+      provider TEXT, model TEXT, model_reported TEXT, api_mode TEXT, billing_base_url TEXT, billing_mode TEXT,
+      input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+      reasoning_tokens INTEGER, cost_usd_micro INTEGER, cost_status TEXT, cost_source TEXT,
+      pricing_version TEXT, latency_ms INTEGER, request_status TEXT, error_class TEXT, api_call_index INTEGER,
+      created_at REAL)""")
+    con.executemany("INSERT INTO usage_events VALUES (" + ",".join("?" * 31) + ")", [
+      (1,"u1",1783857600,"hermes","s1","r","discord","main","api_attempt","provider_reported","exact","zai","glm-5.3","glm-5.3-air",None,None,"",10,20,0,0,5,None,"unknown","none",None,None,"ok",None,1,1783857600),
+      (2,"u2",1783857601,"hermes","s2","r","discord","main","api_attempt","provider_reported","exact","zai","glm-5.3",None,None,None,"",10,20,0,0,5,None,"unknown","none",None,None,"ok",None,1,1783857601),
+      (3,"u3",1783857602,"hermes","s3","r","discord","main","api_attempt","provider_reported","exact","zai","glm-5.3","   ",None,None,"",10,20,0,0,5,None,"unknown","none",None,None,"ok",None,1,1783857602),
+    ])
+    con.commit(); con.close()
+    by = {r["source_event_id"]: r for r in collect_hermes_usage(db, "ns:hermes")}
+    assert by["u1"]["model_reported"] == "glm-5.3-air"
+    assert "model_reported" not in by["u1"]["attribution_gaps"]
+    # NULL and whitespace-only values are genuinely absent, so only they flag.
+    assert by["u2"]["model_reported"] is None and "model_reported" in by["u2"]["attribution_gaps"]
+    assert by["u3"]["model_reported"] is None and "model_reported" in by["u3"]["attribution_gaps"]
+
+
 def test_hermes_database_without_event_tables_yields_zero_rows(tmp_path):
     db = tmp_path / "state.db"
     con = sqlite3.connect(db)
