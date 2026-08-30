@@ -185,6 +185,28 @@ Optional args:
 - `--host HOST` (default `127.0.0.1`)
 - `--port PORT` (default `5174`)
 
+#### Frontend build (React + Vite)
+
+The dashboard frontend is a React + Vite app in `frontend/` that builds into
+the Flask package's static dir (`src/codex_usage_tracker/static/app/`); the
+`/` route serves the built entry document. The build output is committed, so
+Python-only checkouts and installed wheels serve the dashboard without node.
+After changing anything under `frontend/`, rebuild and commit the output:
+
+```bash
+cd frontend
+npm install        # first time only
+npm run build      # type-checks, then builds into ../src/codex_usage_tracker/static/app/
+```
+
+For live-reload development, `npm run dev` serves the app on Vite's dev port
+and proxies `/api` and `/static` to a Flask dashboard running on
+`127.0.0.1:5174`. The Governed Cognition loader (`/static/gc/loader.js`) and
+the vendored Chart.js UMD stay classic `<head>` scripts by contract — never
+bundled — so the theme injects before first paint and the app bundle carries
+no third-party color literals (`tests/test_theme_conformance.py` enforces
+this).
+
 The top-level **AI Usage** view loads unified usage, subscriptions, and billing
 independently, so one absent or unavailable private ledger does not hide the
 other panels. Request-cost estimates remain separate from posted billing facts.
@@ -192,9 +214,10 @@ Multiple accounts for the same subscription provider remain independent in the
 private weekly chart as anonymized `account 1`, `account 2`, … lines; they are
 never summed, and repeated-provider lines retain the provider color while using
 different dash patterns. Raw account/source identities are not returned.
-The existing Codex charts and tables remain available under **Codex detail** as
-a compatibility view; `--ledger` still means the legacy Codex JSONL ledger and
-is not repurposed for canonical usage.
+The Codex detail compatibility view was removed outright (keeper-ruled
+2026-08-30); its server endpoints stay routable for non-dashboard consumers.
+`--ledger` still means the legacy Codex JSONL ledger and is not repurposed
+for canonical usage.
 
 Dashboard routes:
 
