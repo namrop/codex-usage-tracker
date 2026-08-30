@@ -381,7 +381,9 @@ def test_fold_state_is_remembered_and_lives_outside_the_rendered_tbodies(tmp_pat
     assert 'FOLD_OPEN_KEY = "aiUsage.fold.open"' in html
     assert 'FOLD_COLS_KEY = "aiUsage.fold.cols"' in html
     # Unset preference means collapsed / essential, never remembered-open.
-    assert "const isOpen = openPrefs[key] === true;" in html
+    # ?expand=all is a one-load debug/print affordance; unset prefs still
+    # default collapsed and the affordance writes nothing back.
+    assert "const isOpen = expandAll || openPrefs[key] === true;" in html
     assert "const allColumns = colPrefs[key] === true;" in html
     # Summaries re-derive from the rows in hand whenever a renderer rewrites a
     # tbody, so the 60s hydrate refreshes them without disturbing fold state.

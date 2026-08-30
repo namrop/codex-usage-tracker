@@ -1431,7 +1431,7 @@
           <div class="panel-grid">
             <div class="metric"><div class="label">Events</div><div class="value" id="unifiedEvents">—</div><div class="hint" id="unifiedEventsHint">—</div></div>
             <div class="metric"><div class="label">Total tokens</div><div class="value color-token" id="unifiedTotalTokens">—</div><div class="hint" id="unifiedWindow">—</div></div>
-            <div class="metric"><div class="label">Priced spend</div><div class="value" id="unifiedPricedSpend">—</div><div class="hint" id="unifiedPricedSpendHint">—</div></div>
+            <div class="metric"><div class="label">Est. spend (list)</div><div class="value" id="unifiedPricedSpend">—</div><div class="hint" id="unifiedPricedSpendHint">—</div></div>
             <div class="metric"><div class="label">Soonest reset</div><div class="value mono" id="unifiedSoonestReset">—</div><div class="hint" id="unifiedSoonestResetHint">—</div></div>
             <div class="metric" id="unifiedSubstitutionTile"><div class="label">Substitution watch</div><div class="value" id="unifiedSubstitutions">—</div><div class="hint" id="unifiedSubstitutionsHint">—</div></div>
           </div>
@@ -3196,6 +3196,23 @@
           : "No provider traffic in the window.";
       }
 
+      function renderListPriceHint() {
+        const hint = document.getElementById("unifiedPricedSpendHint");
+        if (!hint) return;
+        const week = state.listPriceWeek || {};
+        const day = state.listPriceDay || null;
+        const five = state.donutFive && state.donutFive.totals ? state.donutFive.totals.list_price : null;
+        const parts = [];
+        if (day) parts.push(`24h $${day.estimate_usd}`);
+        if (five) parts.push(`5h $${five.estimate_usd}`);
+        const share = week.priced_token_share;
+        if (share !== undefined && share < 0.999) {
+          parts.push(`${Math.round(share * 100)}% of tokens priced`);
+        }
+        parts.push("list-price estimate");
+        hint.textContent = parts.join(" · ");
+      }
+
       async function loadUnifiedUsage() {
         try {
           const response = await fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) });
@@ -3225,11 +3242,14 @@
           const totals = data.totals || {};
           const pricedEvents = Number(totals.priced_events || 0);
           const unpricedEvents = Number(totals.unpriced_events || 0);
-          // One priced-spend tile (retirement #3): estimated is the value,
-          // actual + the unpriced mass live in the caption.
-          document.getElementById("unifiedPricedSpend").textContent = `$${totals.estimated_cost_usd || "0"}`;
-          document.getElementById("unifiedPricedSpendHint").textContent =
-            `${intFormat(pricedEvents)} priced · ${intFormat(unpricedEvents)} unpriced (subscription-included) · actual $${totals.actual_cost_usd || "0"}`;
+          // Est. spend at LIST prices (keeper-ruled 2026-08-30): the
+          // subscription lanes report $0 actual, so the tile answers "what
+          // would this traffic cost at list." Week is the value; 24h and 5h
+          // fill in as their windows arrive; coverage keeps the gaps honest.
+          const listWeek = totals.list_price || {};
+          document.getElementById("unifiedPricedSpend").textContent = `$${listWeek.estimate_usd || "0"} wk`;
+          state.listPriceWeek = listWeek;
+          renderListPriceHint();
           // Substitution watch: NULL model_reported never counts; zero is the
           // healthy reading and any nonzero wears the violation role.
           const substituted = Number(totals.substituted_events || 0);
@@ -3266,9 +3286,19 @@
             if (fiveResponse.ok) {
               state.donutFive = await fiveResponse.json();
               renderDonuts();
+              renderListPriceHint();
             }
           } catch (fiveError) {
             // last-good law: an earlier five-hour donut stays on a failed refresh.
+          }
+          try {
+            const dayResponse = await fetch("/api/unified-usage?hours=24", { signal: AbortSignal.timeout(30000) });
+            if (dayResponse.ok) {
+              state.listPriceDay = (await dayResponse.json()).totals.list_price;
+              renderListPriceHint();
+            }
+          } catch (dayError) {
+            // ditto.
           }
         } catch (error) {
           const content = document.getElementById("unifiedUsageContent");
@@ -4155,7 +4185,10 @@
           const colsToggle = fold.querySelector("[data-fold-cols]");
 
           // Default is collapsed / essential columns when the key is unset.
-          const isOpen = openPrefs[key] === true;
+          // ?expand=all opens everything for one load — a debug/print
+          // affordance; it does not write prefs.
+          const expandAll = new URLSearchParams(location.search).has("expand");
+          const isOpen = expandAll || openPrefs[key] === true;
           fold.dataset.open = isOpen ? "true" : "false";
           if (toggle) {
             toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");

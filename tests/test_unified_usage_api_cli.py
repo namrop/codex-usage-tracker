@@ -2181,7 +2181,7 @@ def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independent
     assert "No subscription observations" in page
     assert "Billing data unavailable" in page
     assert "No billing transactions" in page
-    assert "Priced spend" in page
+    assert "Est. spend (list)" in page
     assert "Billing ledger" in page
     assert "textContent" in page
     assert "if (hydrateInFlight) return" in page

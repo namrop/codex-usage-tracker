@@ -112,46 +112,65 @@ def _load_token_windows(
     """Aggregate openai-codex attempt events inside usage-sample windows."""
     if not windows:
         return {}
-    path = Path(state_db_path).expanduser()
+    state_path = Path(state_db_path).expanduser()
     totals = {window: _empty_token_totals() for window in windows}
-    if not path.exists():
-        return totals
 
+    # Hermes moved usage events out of state.db into the usage_events.db
+    # sidecar (keeper ruling 2026-08-24) and the legacy llm_usage_events
+    # table was dropped with that generation — this reader silently returned
+    # zeros for five days before the blank charts were noticed (keeper
+    # defect report 2026-08-30). Prefer the sidecar beside state.db; keep
+    # the legacy table as the fallback for old snapshots.
+    candidates = (
+        (state_path.with_name("usage_events.db"), "usage_events"),
+        (state_path, "llm_usage_events"),
+    )
+    rows = None
     start_epoch = min(start.timestamp() for start, _ in windows)
     end_epoch = max(end.timestamp() for _, end in windows)
-    try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            """
-            SELECT
-                timestamp,
-                session_id,
-                model,
-                api_call_index,
-                record_kind,
-                usage_source,
-                measurement_confidence,
-                COALESCE(input_tokens, 0) AS input_tokens,
-                COALESCE(cache_read_tokens, 0) AS cache_read_tokens,
-                COALESCE(cache_write_tokens, 0) AS cache_write_tokens,
-                COALESCE(output_tokens, 0) AS output_tokens,
-                COALESCE(reasoning_tokens, 0) AS reasoning_tokens
-            FROM llm_usage_events
-            WHERE provider = 'openai-codex'
-              AND timestamp >= ?
-              AND timestamp < ?
-            ORDER BY timestamp ASC
-            """,
-            (start_epoch, end_epoch),
-        ).fetchall()
-    except sqlite3.Error:
-        return totals
-    finally:
+    for path, table in candidates:
+        if not path.exists():
+            continue
         try:
-            conn.close()  # type: ignore[name-defined]
-        except Exception:
-            pass
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            try:
+                present = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()
+                if present is None:
+                    continue
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                        timestamp,
+                        session_id,
+                        model,
+                        api_call_index,
+                        record_kind,
+                        usage_source,
+                        measurement_confidence,
+                        COALESCE(input_tokens, 0) AS input_tokens,
+                        COALESCE(cache_read_tokens, 0) AS cache_read_tokens,
+                        COALESCE(cache_write_tokens, 0) AS cache_write_tokens,
+                        COALESCE(output_tokens, 0) AS output_tokens,
+                        COALESCE(reasoning_tokens, 0) AS reasoning_tokens
+                    FROM {table}
+                    WHERE provider = 'openai-codex'
+                      AND timestamp >= ?
+                      AND timestamp < ?
+                    ORDER BY timestamp ASC
+                    """,
+                    (start_epoch, end_epoch),
+                ).fetchall()
+                break
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            continue
+    if rows is None:
+        return totals
 
     # Window count is tiny (<=168 in the dashboard), so a linear scan is clearer
     # than trying to align SQLite date buckets with irregular usage samples.

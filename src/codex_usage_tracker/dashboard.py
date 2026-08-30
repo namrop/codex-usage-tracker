@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, TypeAlias
 from flask import Flask, jsonify, render_template, request
 
 from .capability_matrix import get_capability_matrix
+from .list_pricing import estimate_list_price
 from .codex_call_accounting import build_codex_accounting_rows
 from .jsonl_store import newest_first, read_jsonl
 from .ledger import reconcile_snapshot_windows
@@ -1575,6 +1576,7 @@ def create_app(
             bucket["total_tokens"] = sum(bucket[field] for field in token_fields if field != "reasoning_tokens")
         for bucket in by_harness.values():
             bucket["total_tokens"] = sum(bucket[field] for field in token_fields if field != "reasoning_tokens")
+        totals["list_price"] = estimate_list_price(grouped.values())
         coverage = {
             "exact_events": sum(row.get("measurement_confidence") == "exact" for row in rows),
             "reconstructed_events": sum(row.get("measurement_confidence") == "reconstructed" for row in rows),
