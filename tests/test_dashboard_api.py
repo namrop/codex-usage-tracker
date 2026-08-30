@@ -321,6 +321,10 @@ FOLD_KEYS = (
     "billingLedger",
     "tokenLedger",
     "rawLedger",
+    # Keeper polish round 2026-08-30, item 6: the Codex compatibility
+    # section's duplicate quota storytelling (Usage over time chart plus the
+    # Weekly peak / Chart window / Ledger insights) folds by default.
+    "codexUsageTrend",
 )
 
 COLUMN_TIERED_FOLDS = (
@@ -389,6 +393,110 @@ def test_fold_state_is_remembered_and_lives_outside_the_rendered_tbodies(tmp_pat
     # tbody, so the 60s hydrate refreshes them without disturbing fold state.
     assert "new MutationObserver" in html
     assert "function foldSummaryText(fold)" in html
+
+
+def test_weekly_usage_card_is_gone_and_the_week_chart_remains(tmp_path, monkeypatch):
+    """Keeper polish round 2026-08-30, item 5: the Weekly usage card duplicated
+    the weekly line of the Usage over time chart directly above it. Markup,
+    build JS, and callsite are removed; the full-width chart stays."""
+    html = _dashboard_root_html(tmp_path, monkeypatch)
+
+    assert 'id="weeklyChart"' not in html
+    assert "buildOrUpdateWeeklyChart" not in html
+    assert "Weekly cap movement" not in html
+    # The surviving chart and its build path are intact.
+    assert 'id="weekChart"' in html
+    assert "buildOrUpdateWeekChart" in html
+    # The one-card detail grid is gone; the token detail grid remains and now
+    # rides the base .detail-grid rule alone.
+    assert 'aria-label="Detail charts"' not in html
+    assert '<section class="detail-grid" aria-label="Token detail charts">' in html
+    assert ".detail-grid.token-grid" not in html
+
+
+def test_codex_duplicate_quota_storytelling_folds_with_a_data_derived_summary(
+    tmp_path, monkeypatch
+):
+    """Keeper polish round 2026-08-30, item 6: the Usage over time chart card
+    and the Weekly peak / Chart window / Ledger insights strip fold away by
+    default; the monitor tiles and the three correlation surfaces stay open."""
+    html = _dashboard_root_html(tmp_path, monkeypatch)
+
+    fold = re.search(
+        r'<section class="fold" data-fold="codexUsageTrend"(?P<attrs>[^>]*)>', html
+    )
+    assert fold, "codexUsageTrend fold missing"
+    assert 'data-open="false"' in fold.group("attrs")
+    # Summary derives from live insight values, not a table.
+    assert 'data-summary-from="peak:weekPeak|window:windowSpan|ledger:rowCount"' in fold.group(
+        "attrs"
+    )
+    assert "fold.dataset.summaryFrom" in html
+
+    # The chart, its window toolbar, and the insights strip all live inside
+    # the fold body (fold is containment, never removal).
+    body_start = html.index('id="codexUsageTrendFoldBody"')
+    body_end = html.index("</section>", html.index('aria-label="Derived usage insights"'))
+    folded_region = html[body_start:body_end]
+    assert 'id="weekChart"' in folded_region
+    assert 'id="refreshSummary"' in folded_region
+    assert 'aria-label="Derived usage insights"' in folded_region
+    for insight_id in ("weekPeak", "windowSpan", "rowCount"):
+        assert f'id="{insight_id}"' in folded_region
+
+    # Unique surfaces stay unfolded: the monitor tiles and the three
+    # correlation charts are not inside any fold body.
+    for always_open in ("tokenUsageChart", "tokenBucketChart", "cacheHitChart"):
+        assert f'id="{always_open}"' in html
+        assert f'id="{always_open}"' not in folded_region
+
+
+def test_captions_are_single_sentence_with_doctrine_at_section_level(
+    tmp_path, monkeypatch
+):
+    """Keeper polish round 2026-08-30, item 7: card captions say what the
+    surface shows in one sentence; shared doctrine lives once at section
+    level."""
+    html = _dashboard_root_html(tmp_path, monkeypatch)
+
+    # The pool/slices doctrine appears exactly once, on the unified section
+    # header, not per-donut.
+    assert html.count("never shares of one pool") == 1
+    assert html.count("never drawn as slices") == 1
+    # The tokens-vs-dollars doctrine appears exactly once, on the
+    # Subscriptions header, not on each twin utilization chart.
+    assert html.count("never tokens or dollars") == 1
+    assert "this does not compare tokens or dollars" not in html
+    # The UTC policy note lives once at section level.
+    assert html.count("complete UTC hours (countdowns run in wall-clock time)") == 1
+
+
+def test_subscription_meters_never_draw_a_lying_bar(tmp_path, monkeypatch):
+    """Keeper polish round 2026-08-30, items 8-10: lifetime/unknown windows and
+    used>limit rows render balance-style (no used/limit bar), null-sided
+    usd/credits quotas render as balances with a role accent, and kimi's
+    provider_unit limit-100 scale displays as a percentage."""
+    html = _dashboard_root_html(tmp_path, monkeypatch)
+    script = html.split("async function loadSubscriptions()", 1)[1].split(
+        "async function loadBilling()", 1
+    )[0]
+
+    # Item 8: the meterless gate covers lifetime, unknown, and used > limit,
+    # and the authoritative-bar gate excludes those rows.
+    assert 'windowKindText === "lifetime"' in script
+    assert 'windowKindText === "unknown"' in script
+    assert "usedNumber > limitNumber" in script
+    assert "!balanceOnly" in script and "!meterless" in script
+    assert '"Spent"' in script
+    # Item 9: balance rendering with stability/violation accents.
+    assert '"Balance"' in script
+    assert 'remainingNumber > 0 ? "stability" : "violation"' in script
+    assert ".subscription-quota-value.role-stability" in html
+    assert ".subscription-quota-value.role-violation" in html
+    # Item 10: provider_unit with limit 100 displays as %, provenance in the
+    # tooltip, canonical unit untouched server-side.
+    assert 'rawUnit === "provider_unit" && limitNumber === 100' in script
+    assert "normalized 0–100 scale reported by the provider" in script
 
 
 def test_stale_notices_name_the_failing_lane(tmp_path, monkeypatch):
@@ -1841,8 +1949,13 @@ def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_ex
     assert "Unified weekly subscription utilization" in history
     assert "Unified five-hour subscription utilization" in history
     assert "normalized 0–100% scale" in history
-    assert "does not compare tokens or dollars" in history
-    assert "weekly data is never substituted" in history
+    # Caption diet (2026-08-30 polish, item 7): the tokens-vs-dollars doctrine
+    # moved from the twin chart captions to the Subscriptions section header,
+    # and the no-substitution rule is carried by the dynamic
+    # missingQuotaMessage summary rather than restated in the caption.
+    assert "does not compare tokens or dollars" not in history
+    assert "never tokens or dollars" in html
+    assert "weekly data is not substituted" in html
     for prefix, period in (
         ("subscriptionUnifiedWeekly", "weekly"),
         ("subscriptionUnifiedFiveHour", "five-hour"),

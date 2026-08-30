@@ -968,6 +968,16 @@
         min-width: 620px;
       }
 
+      /* The codexUsageTrend fold (item 6) holds a chart plus insight tiles
+       * rather than a bleed-to-the-edge table, so it carries inner padding. */
+      .fold[data-fold="codexUsageTrend"] .fold-body {
+        padding: 0 12px 12px;
+      }
+
+      .fold[data-fold="codexUsageTrend"] .insights {
+        margin-top: 12px;
+      }
+
       /* Column tiers — the same law one level down: hidden columns are still
        * rendered cells, just not shown. Essential tier is the default; the
        * "all columns" toggle lifts the tier, never re-renders the table. */
@@ -981,10 +991,6 @@
 
       .fold[data-cols="essential"] .table-wrap table {
         min-width: 0;
-      }
-
-      .detail-grid.token-grid {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
 
       .detail-grid {
@@ -1288,6 +1294,16 @@
         overflow-wrap: anywhere;
       }
 
+      /* Balance-style stats (items 8–9): the held amount carries a role
+       * accent — stability while positive, violation at zero or below. */
+      .subscription-quota-value.role-stability {
+        color: var(--ok);
+      }
+
+      .subscription-quota-value.role-violation {
+        color: var(--danger);
+      }
+
       .subscription-progress {
         height: 8px;
         overflow: hidden;
@@ -1331,7 +1347,6 @@
         .hero,
         .ops-hero,
         .detail-grid,
-        .detail-grid.token-grid,
         .window-pair {
           grid-template-columns: 1fr;
         }
@@ -1606,7 +1621,8 @@
         <div class="card-header">
           <div class="card-title">
             <h2 id="unifiedUsageTitle">Unified usage · 7 days</h2>
-            <p class="caption">Canonical token totals and request estimates. Reasoning is diagnostic and is not counted twice.</p>
+            <p class="caption">Canonical token totals and request estimates; reasoning is diagnostic and never counted twice.</p>
+            <p class="caption">Bucketed surfaces use complete UTC hours (countdowns run in wall-clock time), and legend quota percentages are each provider’s own cap — never shares of one pool, never drawn as slices.</p>
           </div>
         </div>
         <div id="unifiedUsageState" class="empty-state">Loading unified usage…</div>
@@ -1623,7 +1639,7 @@
           <div class="window-pair">
             <section class="window-card" aria-labelledby="fiveHourDonutTitle">
               <h3 id="fiveHourDonutTitle">Five-hour throughput by provider</h3>
-              <p class="caption">Accounted tokens over the last five complete UTC hours, split by provider; each provider’s cache share rides its legend line. Quota percentages in the legend are that provider’s own cap — they are not shares of one pool and are never drawn as slices.</p>
+              <p class="caption">Accounted tokens over the last five complete UTC hours, split by provider.</p>
               <p id="fiveHourDonutSummary" class="chart-summary" aria-live="polite">Loading five-hour throughput…</p>
               <div class="donut-layout">
                 <svg id="fiveHourDonut" class="donut" viewBox="0 0 200 200" role="img" aria-describedby="fiveHourDonutSummary"></svg>
@@ -1632,7 +1648,7 @@
             </section>
             <section class="window-card" aria-labelledby="resetRailTitle">
               <h3 id="resetRailTitle">Reset countdowns</h3>
-              <p class="caption">Every provider quota window that reports an exact reset time, soonest first. Countdowns run in wall-clock time; every bucketed surface on this page stays UTC.</p>
+              <p class="caption">Every provider quota window that reports an exact reset time, soonest first.</p>
               <p id="resetRailSummary" class="chart-summary" aria-live="polite">Loading subscription windows…</p>
               <ul id="resetRailChips" class="reset-chips" aria-label="Quota reset countdowns"></ul>
             </section>
@@ -1641,7 +1657,7 @@
           <div class="window-pair">
             <section class="window-card" aria-labelledby="weeklyDonutTitle">
               <h3 id="weeklyDonutTitle">Seven-day throughput by provider</h3>
-              <p class="caption">The same split across the seven-day window. A provider with throughput but no reported quota row shows its share alone.</p>
+              <p class="caption">The same provider split across the seven-day window.</p>
               <p id="weeklyDonutSummary" class="chart-summary" aria-live="polite">Loading seven-day throughput…</p>
               <div class="donut-layout">
                 <svg id="weeklyDonut" class="donut" viewBox="0 0 200 200" role="img" aria-describedby="weeklyDonutSummary"></svg>
@@ -1650,7 +1666,7 @@
             </section>
             <section class="window-card" aria-labelledby="providerStatusTitle">
               <h3 id="providerStatusTitle">Provider API status · 48 hours</h3>
-              <p class="caption">The badge is the provider’s own status API (statuspage feeds, polled server-side); providers without a public feed say so. The cells beneath are what our calls observed per complete UTC hour — a dim cell carried no traffic, an absence of evidence, not a clean hour.</p>
+              <p class="caption">Provider status-feed badges over observed per-UTC-hour call health, where a dim cell means no traffic rather than a clean hour.</p>
               <p id="providerStatusSummary" class="chart-summary" aria-live="polite">Loading provider status…</p>
               <div id="providerStatusRows" class="status-rows"></div>
               <ul class="status-key" aria-hidden="true">
@@ -1664,7 +1680,7 @@
 
           <section class="usage-chart" aria-labelledby="modelTokenTitle">
             <h3 id="modelTokenTitle">Tokens across provider models</h3>
-            <p class="caption">Hourly accounted tokens by reported model when available, otherwise requested model. The five largest series remain visible; the rest roll into Other.</p>
+            <p class="caption">Hourly accounted tokens by model, with the five largest series visible and the rest rolled into Other.</p>
             <p id="modelTokenSummary" class="chart-summary" aria-live="polite">Loading model token series…</p>
             <div class="usage-chart-layout">
               <div class="chart-wrap unified">
@@ -1724,7 +1740,7 @@
         <div class="card-header">
           <div class="card-title">
             <h2 id="subscriptionsTitle">Subscriptions</h2>
-            <p class="caption">Provider quota windows, authority, reset times, and observation freshness.</p>
+            <p class="caption">Provider quota windows, authority, reset times, and observation freshness; normalized utilization charts compare percentages only — never tokens or dollars.</p>
             <p class="caption">Usage events above, subscription quota observations here, and billing facts below are separate record classes. No quota estimate is a billing fact.</p>
           </div>
         </div>
@@ -1734,7 +1750,7 @@
             <div class="subscription-unified-history-grid">
               <article class="subscription-unified-history-card" aria-labelledby="subscriptionUnifiedWeeklyTitle">
                 <h3 id="subscriptionUnifiedWeeklyTitle">Unified weekly subscription utilization</h3>
-                <p id="subscriptionUnifiedWeeklyDescription" class="caption">Each provider’s explicitly mapped primary weekly-equivalent quota on a normalized 0–100% scale; this does not compare tokens or dollars.</p>
+                <p id="subscriptionUnifiedWeeklyDescription" class="caption">Each provider’s explicitly mapped primary weekly-equivalent quota on a normalized 0–100% scale.</p>
                 <p id="subscriptionUnifiedWeeklySummary" class="chart-summary" aria-live="polite">Loading weekly subscription quota history…</p>
                 <div class="subscription-quota-chart-layout">
                   <div class="subscription-quota-chart-wrap">
@@ -1765,7 +1781,7 @@
               </article>
               <article class="subscription-unified-history-card" aria-labelledby="subscriptionUnifiedFiveHourTitle">
                 <h3 id="subscriptionUnifiedFiveHourTitle">Unified five-hour subscription utilization</h3>
-                <p id="subscriptionUnifiedFiveHourDescription" class="caption">Each provider’s explicitly mapped comparable five-hour quota on a normalized 0–100% scale; this does not compare tokens or dollars. OpenAI / Codex reports no comparable five-hour quota in the canonical ledger, and weekly data is never substituted. The chart plots the last 48 hours — a week of five-hour sawtooth is unreadable; the folded hourly table keeps the full window.</p>
+                <p id="subscriptionUnifiedFiveHourDescription" class="caption">Each provider’s explicitly mapped comparable five-hour quota over the last 48 hours on a normalized 0–100% scale (the folded hourly table keeps the full week).</p>
                 <p id="subscriptionUnifiedFiveHourSummary" class="chart-summary" aria-live="polite">Loading five-hour subscription quota history…</p>
                 <div class="subscription-quota-chart-layout">
                   <div class="subscription-quota-chart-wrap">
@@ -1816,7 +1832,7 @@
       </section>
 
       <section class="card" aria-labelledby="billingTitle">
-        <div class="card-header"><div class="card-title"><h2 id="billingTitle">Billing ledger · 30 days</h2><p class="caption">Posted and pending billing facts. This section is explicitly separate from request estimates above.</p></div></div>
+        <div class="card-header"><div class="card-title"><h2 id="billingTitle">Billing ledger · 30 days</h2><p class="caption">Posted and pending billing facts — a record class explicitly separate from the request estimates above.</p></div></div>
         <div id="billingState" class="empty-state">Loading billing facts…</div>
         <div id="billingContent" hidden>
           <div id="billingTotals" class="series-key"></div>
@@ -1848,10 +1864,7 @@
         <div class="title-panel">
           <p class="eyebrow">Codex usage monitor</p>
           <h1>Limits, resets, and headroom.</h1>
-          <p class="subtitle">
-            Local ledger snapshots for Codex and Spark. Every chart stays pinned to 0–100%,
-            so caps, resets, and sudden drops stay visible.
-          </p>
+          <p class="subtitle">Local Codex and Spark ledger snapshots, with every chart pinned to 0–100%.</p>
         </div>
 
         <aside class="status-panel">
@@ -1875,69 +1888,64 @@
         </aside>
       </section>
 
-      <section class="insights" aria-label="Derived usage insights">
-        <div class="insight">
-          <div class="micro-label">Weekly peak</div>
-          <strong id="weekPeak">—</strong>
-          <span id="weekPeakHint">Highest weekly usage in the current window.</span>
-        </div>
-        <div class="insight">
-          <div class="micro-label">Chart window</div>
-          <strong id="windowSpan">—</strong>
-          <span id="windowSpanHint">Samples currently plotted.</span>
-        </div>
-        <div class="insight">
-          <div class="micro-label">Ledger</div>
-          <strong id="rowCount">—</strong>
-          <span id="ledgerPath" class="mono">ledger unavailable</span>
-        </div>
-      </section>
-
+      <!-- Keeper polish round 2026-08-30, item 6: the quota storytelling the
+           monitor tiles already tell (the weekly line and the Weekly peak /
+           Chart window / Ledger insights) folds away by default. The fold
+           summary re-derives from the insight values on every hydrate. -->
       <section class="card">
-        <div class="card-header">
-          <div class="card-title">
-            <h2>Usage over time</h2>
-            <p class="caption">
-              Full week is the default. It shows pressure building, reset cliffs, and short
-              session bursts without changing the y-axis.
-            </p>
+        <section class="fold" data-fold="codexUsageTrend" data-open="false" data-summary-from="peak:weekPeak|window:windowSpan|ledger:rowCount">
+          <div class="fold-head">
+            <h2 class="fold-heading">
+              <button type="button" class="fold-toggle" id="codexUsageTrendFoldToggle" aria-expanded="false" aria-controls="codexUsageTrendFoldBody">
+                <span class="fold-caret" aria-hidden="true">▸</span>
+                <span class="fold-label">Usage over time</span>
+                <span class="fold-summary" data-fold-summary>—</span>
+              </button>
+            </h2>
           </div>
-          <div class="toolbar" aria-label="Chart window controls">
-            <button class="toggle" data-window="24">24 samples</button>
-            <button class="toggle active" data-window="168">Full week</button>
-            <button class="refresh-btn" id="refreshSummary">Refresh</button>
-          </div>
-        </div>
-        <div class="chart-wrap week">
-          <canvas id="weekChart" aria-label="Codex usage chart from 0 to 100 percent"></canvas>
-        </div>
-        <div class="series-key" aria-hidden="true">
-          <span class="key-pill"><span class="swatch" style="--series-color: var(--weekly)"></span>Weekly</span>
-        </div>
-      </section>
-
-      <section class="detail-grid" aria-label="Detail charts">
-        <article class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <h2>Weekly usage</h2>
-              <p class="caption">Weekly cap movement and reset drops.</p>
+          <div class="fold-body" id="codexUsageTrendFoldBody" role="region" aria-labelledby="codexUsageTrendFoldToggle">
+            <div class="card-header">
+              <div class="card-title">
+                <p class="caption">Codex weekly quota position per ledger sample, pinned to 0–100%.</p>
+              </div>
+              <div class="toolbar" aria-label="Chart window controls">
+                <button class="toggle" data-window="24">24 samples</button>
+                <button class="toggle active" data-window="168">Full week</button>
+                <button class="refresh-btn" id="refreshSummary">Refresh</button>
+              </div>
             </div>
+            <div class="chart-wrap week">
+              <canvas id="weekChart" aria-label="Codex usage chart from 0 to 100 percent"></canvas>
+            </div>
+            <div class="series-key" aria-hidden="true">
+              <span class="key-pill"><span class="swatch" style="--series-color: var(--weekly)"></span>Weekly</span>
+            </div>
+            <section class="insights" aria-label="Derived usage insights">
+              <div class="insight">
+                <div class="micro-label">Weekly peak</div>
+                <strong id="weekPeak">—</strong>
+                <span id="weekPeakHint">Highest weekly usage in the current window.</span>
+              </div>
+              <div class="insight">
+                <div class="micro-label">Chart window</div>
+                <strong id="windowSpan">—</strong>
+                <span id="windowSpanHint">Samples currently plotted.</span>
+              </div>
+              <div class="insight">
+                <div class="micro-label">Ledger</div>
+                <strong id="rowCount">—</strong>
+                <span id="ledgerPath" class="mono">ledger unavailable</span>
+              </div>
+            </section>
           </div>
-          <div class="chart-wrap">
-            <canvas id="weeklyChart" aria-label="Weekly usage detail chart from 0 to 100 percent"></canvas>
-          </div>
-        </article>
+        </section>
       </section>
 
       <section class="card">
         <div class="card-header">
           <div class="card-title">
             <h2>Usage × tokens over time</h2>
-            <p class="caption">
-              Hermes Codex token volume per sample window against the resulting session and weekly quota positions.
-              Token bars use the left axis; quota lines stay pinned to 0–100% on the right axis.
-            </p>
+            <p class="caption">Hermes Codex token volume per sample window (left axis, bars) against the resulting session and weekly quota positions (right axis, 0–100% lines).</p>
           </div>
         </div>
         <div class="chart-wrap token-wide">
@@ -1950,7 +1958,7 @@
         </div>
       </section>
 
-      <section class="detail-grid token-grid" aria-label="Token detail charts">
+      <section class="detail-grid" aria-label="Token detail charts">
         <article class="card">
           <div class="card-header">
             <div class="card-title">
@@ -1992,10 +2000,7 @@
         <div class="card-header">
           <div class="card-title">
             <h2 id="tokenLedgerTitle">Token correlation ledger</h2>
-            <p class="caption">
-              Hermes token buckets joined to adjacent Codex usage snapshots. Each row maps
-              tokens sent during a sample window to the next quota percentage movement.
-            </p>
+            <p class="caption">Hermes token buckets joined to adjacent Codex usage snapshots, mapping each window’s tokens to the next quota percentage movement.</p>
           </div>
           <span class="micro-label">usage × tokens</span>
         </div>
@@ -2210,7 +2215,6 @@
       const canvases = {
         modelToken: document.getElementById("modelTokenChart"),
         week: document.getElementById("weekChart"),
-        weekly: document.getElementById("weeklyChart"),
         tokenUsage: document.getElementById("tokenUsageChart"),
         tokenBucket: document.getElementById("tokenBucketChart"),
         tokenDelta: document.getElementById("tokenDeltaChart"),
@@ -2219,7 +2223,6 @@
 
       let modelTokenChart;
       let weekChart;
-      let weeklyChart;
       let tokenUsageChart;
       let tokenBucketChart;
       let tokenDeltaChart;
@@ -2815,23 +2818,6 @@
         refreshChartOptions(weekChart, options);
       }
 
-      function buildOrUpdateWeeklyChart() {
-        const rows = trendSlice();
-        const labels = buildLabels(rows);
-        const values = rows.map((row) => row.weekly_used_pct);
-        if (!weeklyChart) {
-          weeklyChart = new Chart(canvases.weekly, {
-            type: "line",
-            data: { labels, datasets: [lineDataset("Weekly", values, SERIES.weekly, { borderWidth: 2.5 })] },
-            options: percentageChartOptions(),
-          });
-          return;
-        }
-        weeklyChart.data.labels = labels;
-        weeklyChart.data.datasets[0].data = values;
-        refreshChartOptions(weeklyChart, percentageChartOptions());
-      }
-
       function replaceChartData(chart, labels, datasets, options) {
         chart.data.labels = labels;
         chart.data.datasets = datasets;
@@ -2957,7 +2943,6 @@
 
       function renderCharts() {
         buildOrUpdateWeekChart();
-        buildOrUpdateWeeklyChart();
         buildOrUpdateTokenUsageChart();
         buildOrUpdateTokenBucketChart();
         buildOrUpdateTokenDeltaChart();
@@ -4122,10 +4107,21 @@
               ? maxAgeCandidate
               : 21600;
           const hasQuotaValue = (value) => value !== null && value !== undefined && value !== "";
+          const quotaNumberText = (value) => {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return String(value);
+            return Number.isInteger(num) ? String(num) : num.toFixed(2);
+          };
           const quotaAmount = (value, unit) => {
             if (!hasQuotaValue(value)) return "Unavailable";
-            const unitText = hasQuotaValue(unit) ? ` ${String(unit)}` : "";
-            return `${String(value)}${unitText}`;
+            if (!hasQuotaValue(unit)) return quotaNumberText(value);
+            const unitText = String(unit);
+            if (unitText === "%") return `${quotaNumberText(value)}%`;
+            if (unitText.toLowerCase() === "usd") {
+              const num = Number(value);
+              if (Number.isFinite(num)) return `${num < 0 ? "−" : ""}$${Math.abs(num).toFixed(2)}`;
+            }
+            return `${quotaNumberText(value)} ${unitText}`;
           };
           const readableProviderName = (group) => {
             if (providerDisplayNames[group.key]) return providerDisplayNames[group.key];
@@ -4160,6 +4156,7 @@
             stat.appendChild(label);
             stat.appendChild(value);
             parent.appendChild(stat);
+            return value;
           };
           const presentationExplanation = (row, confidence) => {
             const parts = [];
@@ -4271,29 +4268,79 @@
               windowHeader.appendChild(badges);
               windowCard.appendChild(windowHeader);
 
+              const usedNumber = hasQuotaValue(row.used_value) ? Number(row.used_value) : NaN;
+              const limitNumber = hasQuotaValue(row.limit_value) ? Number(row.limit_value) : NaN;
+              const remainingNumber = hasQuotaValue(row.remaining_value) ? Number(row.remaining_value) : NaN;
+              const rawUnit = hasQuotaValue(row.unit) ? String(row.unit) : "";
+              // `provider_unit` with a limit of 100 is a normalized percentage
+              // (kimi), so it displays as one; the provider's own unit name
+              // stays in the tooltip (item 10 — display only, canonical data
+              // untouched).
+              const normalizedPercent = rawUnit === "provider_unit" && limitNumber === 100;
+              const displayUnit = normalizedPercent ? "%" : rawUnit;
+              const unitProvenance = normalizedPercent
+                ? "provider_unit — normalized 0–100 scale reported by the provider"
+                : "";
+              const windowKindText = String(row.window_kind || "").toLowerCase();
+              const balanceUnit = rawUnit.toLowerCase() === "usd" || rawUnit.toLowerCase() === "credits";
+              // Lifetime/unknown windows have no cap to fill toward, and
+              // used > limit means the two figures are different meters
+              // (item 8 — openrouter's lifetime key spend vs credit limit), so
+              // neither gets a used/limit bar.
+              const meterless = windowKindText === "lifetime"
+                || windowKindText === "unknown"
+                || (Number.isFinite(usedNumber) && Number.isFinite(limitNumber) && usedNumber > limitNumber);
+              // A balance is an amount held, not a fraction of a cap (item 9 —
+              // deepseek account_balance).
+              const balanceOnly = balanceUnit
+                && (!hasQuotaValue(row.used_value) || !hasQuotaValue(row.limit_value));
+              const balanceRole = Number.isFinite(remainingNumber)
+                ? (remainingNumber > 0 ? "stability" : "violation")
+                : "";
+
               const metadata = document.createElement("p");
               metadata.className = "subscription-window-meta";
               const metadataParts = [];
               if (hasQuotaValue(row.harness)) metadataParts.push(`Harness: ${String(row.harness)}`);
               if (hasQuotaValue(row.quota_scope)) metadataParts.push(`Scope: ${String(row.quota_scope)}`);
-              metadataParts.push(`Unit: ${hasQuotaValue(row.unit) ? String(row.unit) : "unavailable"}`);
+              metadataParts.push(`Unit: ${displayUnit || "unavailable"}`);
               metadata.textContent = metadataParts.join(" · ");
+              if (unitProvenance) metadata.title = unitProvenance;
               windowCard.appendChild(metadata);
 
               const quotaGrid = document.createElement("div");
               quotaGrid.className = "subscription-quota-grid";
-              const usedText = quotaAmount(row.used_value, row.unit);
-              const limitText = quotaAmount(row.limit_value, row.unit);
-              const usedAndLimit = !hasQuotaValue(row.used_value) && !hasQuotaValue(row.limit_value)
-                ? "Unavailable"
-                : `${usedText} / ${limitText}`;
-              addQuotaStat(quotaGrid, "Used / limit", usedAndLimit);
-              addQuotaStat(quotaGrid, "Remaining", quotaAmount(row.remaining_value, row.unit));
+              if (balanceOnly) {
+                const balanceValue = addQuotaStat(quotaGrid, "Balance", quotaAmount(row.remaining_value, displayUnit));
+                if (balanceRole) balanceValue.classList.add(`role-${balanceRole}`);
+                if (Number.isFinite(usedNumber)) {
+                  addQuotaStat(quotaGrid, "Spent", quotaAmount(row.used_value, displayUnit));
+                }
+              } else if (meterless) {
+                addQuotaStat(quotaGrid, "Spent", quotaAmount(row.used_value, displayUnit));
+                const remainingValue = addQuotaStat(quotaGrid, "Remaining", quotaAmount(row.remaining_value, displayUnit));
+                if (balanceUnit && balanceRole) remainingValue.classList.add(`role-${balanceRole}`);
+                if (hasQuotaValue(row.limit_value)) {
+                  remainingValue.title = `Provider-reported limit: ${quotaAmount(row.limit_value, displayUnit)}`;
+                }
+              } else {
+                const usedText = quotaAmount(row.used_value, displayUnit);
+                const limitText = quotaAmount(row.limit_value, displayUnit);
+                const usedAndLimit = !hasQuotaValue(row.used_value) && !hasQuotaValue(row.limit_value)
+                  ? "Unavailable"
+                  : `${usedText} / ${limitText}`;
+                const usedValueEl = addQuotaStat(quotaGrid, "Used / limit", usedAndLimit);
+                const remainingValueEl = addQuotaStat(quotaGrid, "Remaining", quotaAmount(row.remaining_value, displayUnit));
+                if (unitProvenance) {
+                  usedValueEl.title = unitProvenance;
+                  remainingValueEl.title = unitProvenance;
+                }
+              }
               windowCard.appendChild(quotaGrid);
 
-              const usedNumber = hasQuotaValue(row.used_value) ? Number(row.used_value) : NaN;
-              const limitNumber = hasQuotaValue(row.limit_value) ? Number(row.limit_value) : NaN;
-              const ratioIsAuthoritative = confidence.key === "exact"
+              const ratioIsAuthoritative = !balanceOnly
+                && !meterless
+                && confidence.key === "exact"
                 && Number.isFinite(usedNumber)
                 && Number.isFinite(limitNumber)
                 && limitNumber > 0;
@@ -4489,6 +4536,20 @@
       // no server field. It re-derives on every tbody mutation, so the hydrate
       // cycle keeps it honest while the table stays folded.
       function foldSummaryText(fold) {
+        // Folds without a table derive their summary from named value elements
+        // inside the fold body ("label:elementId" specs, item 6). Those
+        // elements sit under the same MutationObserver as the tbodies, so the
+        // hydrate cycle keeps this summary honest too.
+        if (fold.dataset.summaryFrom) {
+          const parts = fold.dataset.summaryFrom.split("|").map((spec) => {
+            const [label, id] = spec.split(":");
+            const node = document.getElementById(id);
+            const text = node ? node.textContent.trim() : "";
+            if (!text || text === "—") return null;
+            return label ? `${label} ${text}` : text;
+          }).filter(Boolean);
+          return parts.length ? parts.join(" · ") : "no samples yet";
+        }
         const body = fold.querySelector("tbody");
         const rows = body ? body.querySelectorAll(":scope > tr").length : 0;
         const singular = fold.dataset.rowNoun || "row";
