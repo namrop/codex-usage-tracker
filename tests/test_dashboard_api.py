@@ -217,7 +217,9 @@ def test_subscription_api_projects_only_safe_normalized_extension_presentations(
         quota_ledger=str(quota_ledger),
     ).test_client()
 
-    response = client.get("/api/subscriptions")
+    # The fixture observations are pinned dates, so an explicit window keeps
+    # them visible now that unbounded reads default to the latest eight days.
+    response = client.get("/api/subscriptions?days=36500")
     assert response.status_code == 200
     payload = response.get_json()
     expected_fields = {
@@ -465,7 +467,8 @@ def test_subscription_chart_is_opt_in_and_preserves_days_history_contract(tmp_pa
         "/api/subscriptions?days=30&history=1"
     ).get_json()
 
-    assert set(payload) == {"freshness", "latest", "observations"}
+    assert set(payload) == {"freshness", "latest", "observations", "window"}
+    assert payload["window"] == {"days": 30}
 
 
 def test_subscription_hours_default_excludes_history_and_rejects_history_opt_in(tmp_path):

@@ -1397,11 +1397,11 @@ def test_private_sqlite_endpoints_match_jsonl_and_unknown_suffix_fails_closed(tm
     append_sqlite_facts(usage_db, usage_rows, fact_type="usage_event_v1")
     append_sqlite_facts(quota_db, quota_rows, fact_type="quota_observation_v1")
 
-    query = "?provider=openrouter&harness=test&purpose=main&model_requested=requested"
+    query = "?provider=openrouter&harness=test&purpose=main&model_requested=requested&days=36500"
     jsonl_client = create_app(unified_usage_ledger=str(usage_jsonl), quota_ledger=str(quota_jsonl)).test_client()
     sqlite_client = create_app(unified_usage_ledger=str(usage_db), quota_ledger=str(quota_db)).test_client()
     assert sqlite_client.get("/api/unified-usage" + query).get_json() == jsonl_client.get("/api/unified-usage" + query).get_json()
-    assert sqlite_client.get("/api/subscriptions?provider=openrouter&quota_name=weekly").get_json() == jsonl_client.get("/api/subscriptions?provider=openrouter&quota_name=weekly").get_json()
+    assert sqlite_client.get("/api/subscriptions?provider=openrouter&quota_name=weekly&days=36500").get_json() == jsonl_client.get("/api/subscriptions?provider=openrouter&quota_name=weekly&days=36500").get_json()
 
     bad = create_app(unified_usage_ledger=str(tmp_path / "usage.txt")).test_client()
     response = bad.get("/api/unified-usage")
@@ -1435,7 +1435,16 @@ def test_subscriptions_bounded_latest_only_option_filters_sqlite_and_jsonl_histo
     append_sqlite_facts(sqlite, rows, fact_type="quota_observation_v1")
 
     clients = [create_app(quota_ledger=str(path)).test_client() for path in (jsonl, sqlite)]
-    assert all(len(client.get("/api/subscriptions").get_json()["observations"]) == 2 for client in clients)
+    assert all(len(client.get("/api/subscriptions?days=30").get_json()["observations"]) == 2 for client in clients)
+    # Unbounded reads default to the latest eight days (keeper ruling
+    # 2026-08-29), so the 2026-07-01 observation drops out at frozen
+    # 2026-07-14 while the 2026-07-13 one stays.
+    defaulted = [client.get("/api/subscriptions").get_json() for client in clients]
+    assert all(len(payload["observations"]) == 1 for payload in defaulted)
+    assert all(
+        payload["window"] == {"days": None, "default_days": 8, "next_before": "2026-07-06T12:00:00Z"}
+        for payload in defaulted
+    )
     bounded = [client.get("/api/subscriptions?days=2&history=0") for client in clients]
 
     assert all(response.status_code == 200 for response in bounded)
@@ -1466,7 +1475,7 @@ def test_billing_api_signed_totals_safe_allowlist_filters_and_separate_costs(tmp
     )], fact_type="usage_event_v1")
     client = create_app(unified_usage_ledger=str(usage_db), billing_ledger=str(billing_db)).test_client()
 
-    result = client.get("/api/billing?provider=openrouter&status=posted").get_json()
+    result = client.get("/api/billing?provider=openrouter&status=posted&days=36500").get_json()
     assert result["totals_by_currency"] == [
         {"amount": "4", "currency": "EUR"},
         {"amount": "10", "currency": "USD"},
@@ -1479,7 +1488,7 @@ def test_billing_api_signed_totals_safe_allowlist_filters_and_separate_costs(tmp
     safe = {"provider", "occurred_at", "billing_period_start", "billing_period_end", "transaction_kind", "status", "amount", "currency", "description_code"}
     assert result["transactions"] and all(set(row) == safe for row in result["transactions"])
     assert "99" not in json.dumps(result)
-    assert len(client.get("/api/billing?currency=EUR&transaction_kind=charge").get_json()["transactions"]) == 1
+    assert len(client.get("/api/billing?currency=EUR&transaction_kind=charge&days=36500").get_json()["transactions"]) == 1
 
 
 @pytest.mark.parametrize("query", ["days=nope", "days=-1"])
@@ -2734,7 +2743,7 @@ def test_private_api_enforces_request_wide_row_bound(tmp_path, monkeypatch):
     usage = tmp_path / "usage.sqlite3"
     append_sqlite_facts(usage, [_usage_fact(f"u-{index}") for index in range(3)], fact_type="usage_event_v1")
     monkeypatch.setattr(dashboard_module, "_PRIVATE_API_MAX_ROWS", 2)
-    response = create_app(unified_usage_ledger=str(usage)).test_client().get("/api/unified-usage")
+    response = create_app(unified_usage_ledger=str(usage)).test_client().get("/api/unified-usage?days=36500")
     assert response.status_code == 413
     assert response.get_json() == {"error": "ledger query exceeds private API row limit"}
 
@@ -2822,9 +2831,132 @@ def test_sqlite_private_api_uses_one_stable_query_snapshot(tmp_path, monkeypatch
 
     monkeypatch.setattr(dashboard_module, "_PRIVATE_API_SQLITE_LIMIT", 2)
     monkeypatch.setattr(dashboard_module, "query_sqlite_facts", observed_query)
-    response = create_app(unified_usage_ledger=str(usage)).test_client().get("/api/unified-usage")
+    response = create_app(unified_usage_ledger=str(usage)).test_client().get("/api/unified-usage?days=36500")
     assert response.status_code == 200
     assert calls == 1
     assert observed_kwargs is not None
     assert observed_kwargs["contract_validation"] is False
     assert sum(bucket["events"] for bucket in response.get_json()["by_provider_model"]) == 3
+
+
+def _pinned_usage_fact(source_event_id, occurred_at, provider):
+    return dict(
+        _usage_fact(source_event_id),
+        occurred_at=occurred_at,
+        recorded_at=occurred_at,
+        provider=provider,
+    )
+
+
+def test_unified_usage_defaults_unbounded_reads_to_latest_eight_days(tmp_path):
+    # Keeper ruling 2026-08-29: a query with no window returns the latest rows
+    # an 8-day reconstruction needs instead of tripping the row-cap 413.
+    recent_at = (
+        (datetime.now(timezone.utc) - timedelta(days=1)).replace(microsecond=0)
+        .isoformat().replace("+00:00", "Z")
+    )
+    old_at = (
+        (datetime.now(timezone.utc) - timedelta(days=30)).replace(microsecond=0)
+        .isoformat().replace("+00:00", "Z")
+    )
+    rows = [
+        _pinned_usage_fact("recent", recent_at, "recent-provider"),
+        _pinned_usage_fact("old", old_at, "old-provider"),
+    ]
+    jsonl = tmp_path / "usage.jsonl"
+    jsonl.write_text("\n".join(canonical_json(row) for row in rows) + "\n", encoding="utf-8")
+    sqlite_path = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(sqlite_path, rows, fact_type="usage_event_v1")
+    for ledger in (jsonl, sqlite_path):
+        client = create_app(unified_usage_ledger=str(ledger)).test_client()
+        response = client.get("/api/unified-usage")
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload["window"]["event_count"] == 1
+        assert payload["window"]["days"] is None
+        assert payload["window"]["default_days"] == 8
+        assert payload["window"]["next_before"].endswith("Z")
+        assert [bucket["provider"] for bucket in payload["by_provider_model"]] == ["recent-provider"]
+        # Explicit days keeps its now-anchored, upper-unbounded semantics.
+        explicit = client.get("/api/unified-usage?days=36500").get_json()
+        assert explicit["window"]["event_count"] == 2
+        assert explicit["window"]["days"] == 36500
+        assert "default_days" not in explicit["window"]
+        assert "next_before" not in explicit["window"]
+
+
+def test_unified_usage_before_cursor_pages_are_disjoint_and_complete(tmp_path):
+    # Cursor paging is timestamp-bounded: each page is the half-open window
+    # [before - days, before), so a fact on the shared boundary lands in
+    # exactly one page for both ledger backends.
+    facts = [
+        _pinned_usage_fact("a", "2026-07-12T12:00:00Z", "provider-a"),
+        _pinned_usage_fact("b", "2026-07-11T00:00:00Z", "provider-b"),  # page boundary
+        _pinned_usage_fact("c", "2026-07-10T06:00:00Z", "provider-c"),
+        _pinned_usage_fact("d", "2026-07-09T00:00:00Z", "provider-d"),  # page-2 lower bound
+        _pinned_usage_fact("e", "2026-07-13T00:00:00Z", "provider-e"),  # == before, excluded
+    ]
+    jsonl = tmp_path / "usage.jsonl"
+    jsonl.write_text("\n".join(canonical_json(row) for row in facts) + "\n", encoding="utf-8")
+    sqlite_path = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(sqlite_path, facts, fact_type="usage_event_v1")
+
+    def providers(payload):
+        return {bucket["provider"] for bucket in payload["by_provider_model"]}
+
+    for ledger in (jsonl, sqlite_path):
+        client = create_app(unified_usage_ledger=str(ledger)).test_client()
+        first = client.get("/api/unified-usage?days=2&before=2026-07-13T00:00:00Z").get_json()
+        assert first["window"]["before"] == "2026-07-13T00:00:00Z"
+        assert first["window"]["next_before"] == "2026-07-11T00:00:00Z"
+        assert providers(first) == {"provider-a", "provider-b"}
+        second = client.get(
+            "/api/unified-usage?days=2&before=" + first["window"]["next_before"]
+        ).get_json()
+        assert providers(second) == {"provider-c", "provider-d"}
+        assert second["window"]["next_before"] == "2026-07-09T00:00:00Z"
+        # Without days, a cursor page keeps the default eight-day length.
+        defaulted = client.get("/api/unified-usage?before=2026-07-13T00:00:00Z").get_json()
+        assert defaulted["window"]["default_days"] == 8
+        assert defaulted["window"]["next_before"] == "2026-07-05T00:00:00Z"
+        assert providers(defaulted) == {"provider-a", "provider-b", "provider-c", "provider-d"}
+
+
+def test_private_api_rejects_malformed_before_and_before_with_hours(tmp_path):
+    usage = tmp_path / "usage.jsonl"
+    usage.write_text("", encoding="utf-8")
+    client = create_app(unified_usage_ledger=str(usage)).test_client()
+    for query in ("before=nope", "before=1783857600"):
+        response = client.get("/api/unified-usage?" + query)
+        assert response.status_code == 400
+        assert response.get_json() == {"error": "before must be an RFC 3339 timestamp"}
+    mixed = client.get("/api/unified-usage?hours=3&before=2026-07-13T00:00:00Z")
+    assert mixed.status_code == 400
+    assert "hours" in mixed.get_json()["error"]
+
+
+def test_billing_defaults_unbounded_reads_to_latest_eight_days(tmp_path):
+    recent_at = (
+        (datetime.now(timezone.utc) - timedelta(days=1)).replace(microsecond=0)
+        .isoformat().replace("+00:00", "Z")
+    )
+    ledger = tmp_path / "billing.jsonl"
+    ledger.write_text(
+        "\n".join(
+            canonical_json(row)
+            for row in (
+                _billing_fact("recent", "charge", "5", occurred_at=recent_at),
+                _billing_fact("old", "charge", "7"),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    client = create_app(billing_ledger=str(ledger)).test_client()
+    defaulted = client.get("/api/billing").get_json()
+    assert [row["amount"] for row in defaulted["transactions"]] == ["5"]
+    assert defaulted["window"]["days"] is None
+    assert defaulted["window"]["default_days"] == 8
+    explicit = client.get("/api/billing?days=36500").get_json()
+    assert len(explicit["transactions"]) == 2
+    assert explicit["window"] == {"days": 36500}
