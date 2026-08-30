@@ -349,6 +349,13 @@ def _collect_summary_line(result: dict[str, Any]) -> str:
             # Name the lane, not just the count: a healthy heartbeat with one
             # degraded lane is the exact state this pipeline used to hide.
             fields.append("degraded=" + ",".join(degraded))
+        ceded = sorted(
+            name for name, lane in lanes.items() if (lane or {}).get("ceded")
+        )
+        if ceded:
+            # A ceded lane exhausted its retries and was skipped; the run
+            # still exits 0, so the journal line is where the cede surfaces.
+            fields.append("ceded=" + ",".join(ceded))
     report = (result.get("paths") or {}).get("report")
     if report:
         fields.append(f"report={report}")

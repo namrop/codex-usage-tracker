@@ -12,7 +12,8 @@ import json
 import os
 from pathlib import Path
 import sqlite3
-from typing import Any, Iterable, Mapping
+import time
+from typing import Any, Callable, Iterable, Mapping
 
 from .claude_instances import ClaudeInstance, normalize_claude_instances
 from .canonical_ledger import (
@@ -356,6 +357,17 @@ SCOPE_HEARTBEATS = {
 }
 LANE_HEALTH_SCHEMA_VERSION = 1
 
+# A failing lane is retried before it is ceded (keeper-ruled 2026-08-29):
+# three attempts total, with a short growing pause between them
+# (backoff * attempt_number → 2s then 4s by default). Tests inject their
+# own ``lane_sleep`` through ``collect_all``.
+LANE_ATTEMPTS = 3
+LANE_BACKOFF_SECONDS = 2.0
+
+
+def _default_lane_sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
 
 def lane_health_name(scope: str) -> str:
     return f"lanes-{scope}.json"
@@ -421,6 +433,11 @@ def update_lane_health(
             "rows_written": int(outcome.get("rows_written") or 0),
             "quarantined_count": int(outcome.get("quarantined_count") or 0),
             "discovered": int(outcome.get("discovered") or 0),
+            # A ceded lane exhausted its retries this run and was skipped so
+            # the rest of the collection could land. ``last_success_at``
+            # deliberately does not advance — freshness and the watchdog key
+            # off it.
+            "ceded": bool(outcome.get("ceded")),
         }
     return _write_health_json(
         directory,
@@ -640,6 +657,12 @@ def _reconcile_finalized_claude_rows(
 class StrictSourcesError(RuntimeError):
     """Strict-source policy failure carrying sanitized lane diagnostics.
 
+    Since the graceful-lane ruling (2026-08-29), a lane that fails to read
+    or persist is retried and then ceded — it degrades the run's lane
+    accounting but never fails the run. This exception is therefore raised
+    only for unadjudicated identity conflicts: quarantined re-derivations
+    that retrying cannot resolve and that require adjudication.
+
     The CLI prints the exception type only for arbitrary failures because
     exception messages can embed credentials and private paths. This
     subclass carries the structured warnings payload (source names and
@@ -685,8 +708,19 @@ def collect_all(
     strict_sources: bool = False,
     adjudication_store: str | Path | None = None,
     report_dir: str | Path | None = None,
+    lane_attempts: int = LANE_ATTEMPTS,
+    lane_backoff_seconds: float = LANE_BACKOFF_SECONDS,
+    lane_sleep: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
-    """Collect independently persistable usage and/or quota source batches."""
+    """Collect independently persistable usage and/or quota source batches.
+
+    A lane that fails to read or persist is retried (``lane_attempts`` total
+    attempts, pausing ``lane_backoff_seconds * attempt_number`` between them)
+    and then ceded: skipped for this run while every remaining lane still
+    collects, persists, and reports. The run itself always completes — even
+    when every lane cedes — so the heartbeat and per-lane health stay honest
+    and the external watchdog owns the alerting.
+    """
     configured_claude_instances = normalize_claude_instances(claude_instances)
     claude_usage_source_keys = (
         {instance.source_key for instance in configured_claude_instances}
@@ -734,6 +768,9 @@ def collect_all(
     resolutions: list[dict[str, Any]] = []
     generated_corrections = 0
 
+    sleep = lane_sleep if lane_sleep is not None else _default_lane_sleep
+    attempts = max(1, int(lane_attempts))
+
     def _lane(source: str) -> dict[str, Any]:
         return lanes.setdefault(
             source,
@@ -743,8 +780,34 @@ def collect_all(
                 "rows_written": 0,
                 "quarantined_count": 0,
                 "discovered": 0,
+                "ceded": False,
             },
         )
+
+    def _attempt_lane(operation: Callable[[], Any]) -> tuple[Any, str | None]:
+        """Run one lane operation with bounded retries and growing backoff.
+
+        Returns ``(value, None)`` on success or ``(None, error_class)`` after
+        the final attempt fails. Only the exception's type name escapes —
+        messages can embed credentials and private paths.
+        """
+        error_class: str | None = None
+        for attempt in range(1, attempts + 1):
+            if attempt > 1:
+                sleep(lane_backoff_seconds * (attempt - 1))
+            try:
+                return operation(), None
+            except Exception as exc:
+                error_class = type(exc).__name__
+        return None, error_class
+
+    def _cede_lane(source: str, error_class: str) -> None:
+        """Give up on one lane for this run without failing the collection."""
+        lane = _lane(source)
+        lane["succeeded"] = False
+        lane["ceded"] = True
+        lane["last_error_class"] = error_class
+        warnings.append({"source": source, "error": error_class})
 
     def collect_source(
         source: str,
@@ -753,14 +816,17 @@ def collect_all(
         require_rows: bool = False,
     ) -> list[dict[str, Any]]:
         lane = _lane(source)
-        try:
+
+        def read() -> list[dict[str, Any]]:
             rows = list(collect())
             if require_rows and not rows:
                 raise ValueError(f"{source} returned no rows")
-        except Exception as exc:
-            warnings.append({"source": source, "error": type(exc).__name__})
+            return rows
+
+        rows, error_class = _attempt_lane(read)
+        if error_class is not None:
             sources[source] = _source_result(0)
-            lane["last_error_class"] = type(exc).__name__
+            _cede_lane(source, error_class)
             return []
         sources[source] = _source_result(len(rows))
         lane["discovered"] = len(rows)
@@ -779,11 +845,19 @@ def collect_all(
         fact_type: str,
     ) -> tuple[AppendResult, int]:
         nonlocal generated_corrections
+        lane = _lane(source)
+        if lane["ceded"]:
+            # The read side already ceded this lane for this run; an empty
+            # append would only dress the cede up as ledger activity.
+            return AppendResult(discovered=0, appended=0, replayed=0), 0
         prepared_rows = list(rows)
         hermes_sidecar_source = source == "hermes" and fact_type == "usage_event_v1"
+        claude_reconciled = (
+            source in claude_usage_source_keys and fact_type == "usage_event_v1"
+        )
         equivalent_fields = (
             frozenset({"occurred_at", "recorded_at"})
-            if source in claude_usage_source_keys and fact_type == "usage_event_v1"
+            if claude_reconciled
             else (
                 # The Hermes sidecar stores exact integer micro-USD; canonical
                 # rows ingested from the retired state.db layout carry
@@ -794,9 +868,12 @@ def collect_all(
                 else frozenset()
             )
         )
-        if source in claude_usage_source_keys and fact_type == "usage_event_v1":
-            append_result, summaries, reconciliation = (
-                _append_canonical_ledger_quarantined_reconciled(
+
+        def write() -> tuple[AppendResult, tuple[ConflictSummary, ...], Any]:
+            # Canonical appends are replay-safe, so retrying one batch after a
+            # torn attempt replays what already landed instead of duplicating.
+            if claude_reconciled:
+                return _append_canonical_ledger_quarantined_reconciled(
                     path,
                     prepared_rows,
                     fact_type=fact_type,
@@ -804,7 +881,21 @@ def collect_all(
                     reconcile=_reconcile_finalized_claude_rows,
                     equivalent_changed_fields=equivalent_fields,
                 )
+            batch_result, batch_summaries = _append_canonical_ledger_quarantined(
+                path,
+                prepared_rows,
+                fact_type=fact_type,
+                dry_run=dry_run,
+                equivalent_changed_fields=equivalent_fields,
             )
+            return batch_result, batch_summaries, None
+
+        outcome, error_class = _attempt_lane(write)
+        if error_class is not None:
+            _cede_lane(source, error_class)
+            return AppendResult(discovered=0, appended=0, replayed=0), 0
+        append_result, summaries, reconciliation = outcome
+        if reconciliation is not None:
             generated, reconciled_resolutions = reconciliation
             generated_corrections += generated
             for resolution in reconciled_resolutions:
@@ -813,17 +904,8 @@ def collect_all(
                     resolutions.append(entry)
                 else:
                     stabilized_replays.append(entry)
-        else:
-            append_result, summaries = _append_canonical_ledger_quarantined(
-                path,
-                prepared_rows,
-                fact_type=fact_type,
-                dry_run=dry_run,
-                equivalent_changed_fields=equivalent_fields,
-            )
         quarantined = [summary for summary in summaries if summary.resolution == "quarantined"]
         stabilized = [summary for summary in summaries if summary.resolution == "canonical_replay"]
-        lane = _lane(source)
         lane["rows_written"] = append_result.appended
         lane["quarantined_count"] = len(quarantined)
         if quarantined:
@@ -1120,7 +1202,10 @@ def collect_all(
         result["billing"] = asdict(billing_result)
 
     result["lanes"] = lanes
+    ceded_lanes = sorted(name for name, lane in lanes.items() if lane.get("ceded"))
+    result["ceded"] = ceded_lanes
     result["counts"] = {
+        "ceded": len(ceded_lanes),
         "conflicts": len(conflicts),
         "stabilized_replays": len(stabilized_replays),
         "resolutions": len(resolutions),
@@ -1160,6 +1245,10 @@ def collect_all(
             # A missing or read-only health directory must not turn a
             # successful collection into a failed one.
             pass
-    if strict_sources and (warnings or conflicts):
+    # A ceded lane never fails the run (keeper-ruled 2026-08-29): its retries
+    # are exhausted, its health record carries the error class, and the
+    # watchdog owns the alerting. Strict sources still refuses unadjudicated
+    # identity conflicts — retrying cannot resolve those.
+    if strict_sources and conflicts:
         raise StrictSourcesError(warnings, report_path=paths.get("report"))
     return result

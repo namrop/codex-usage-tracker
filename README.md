@@ -266,10 +266,18 @@ Use `--scope usage` or `--scope quota` to run the independently schedulable lane
 The usage scope reads and writes only usage sources/the usage ledger. The quota
 scope reads the Codex/OpenCode quota sources plus enabled provider probes and
 writes only the quota ledger. Out-of-scope default paths are not preflighted or
-created; billing remains bound only by the compatibility `all` scope. Scheduled
-health-signaled runs should add `--strict-sources`; this keeps partial source
-failures from refreshing a success heartbeat even though already-valid independent
-source batches remain durably appended.
+created; billing remains bound only by the compatibility `all` scope.
+
+A lane that fails to read or persist never fails the run (keeper-ruled
+2026-08-29): it is retried twice more with a short growing backoff and then
+ceded — skipped for that run while every remaining lane still collects and
+appends. A ceded lane keeps its `last_error_class` and does not advance
+`last_success_at` in `health/lanes-<scope>.json`, the per-run
+`health/collect-<scope>-last.json` report names it, and the summary line's
+`lanes=N/M` / `ceded=` fields surface it; the external watchdog owns the
+alerting. Scheduled health-signaled runs should still add `--strict-sources`,
+which now fails the run only for unadjudicated identity conflicts —
+quarantined re-derivations that retrying cannot resolve.
 
 Use `--dry-run` to validate adapters, type bindings, and replay/conflict behavior
 without creating locks, changing permissions, or writing ledger artifacts. Use
