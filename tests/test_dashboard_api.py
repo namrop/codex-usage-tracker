@@ -2152,3 +2152,17 @@ class TestProviderStatusFeeds:
         assert payload["providers"]["kimi-coding"]["feed_url"].startswith("https://status.moonshot.cn")
         # No public feed found for these (verified 2026-08-30) — honest, not inferred.
         assert payload["feedless"] == ["deepseek", "openrouter", "opencode-go", "zai"] or payload["feedless"] == sorted(["zai", "deepseek", "openrouter", "opencode-go"])
+
+
+def test_page_and_apis_are_never_browser_cached(tmp_path):
+    """Keeper report 2026-08-30: a heuristically-cached page hid two deploys.
+    HTML and API responses carry no-store; vendored static may cache."""
+    from codex_usage_tracker.dashboard import create_app
+
+    client = create_app(ledger=str(tmp_path / "codex.jsonl")).test_client()
+    assert client.get("/").headers["Cache-Control"] == "no-store"
+    assert client.get("/api/summary").headers["Cache-Control"] == "no-store"
+    # Flask stamps static with its own revalidation policy (no-cache +
+    # ETag) — acceptable; the load-bearing claim is that it is NOT no-store.
+    static = client.get("/static/vendor/chart.umd.min.js")
+    assert static.headers.get("Cache-Control", "") != "no-store"

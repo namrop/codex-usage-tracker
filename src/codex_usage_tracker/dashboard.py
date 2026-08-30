@@ -1866,6 +1866,19 @@ def create_app(
             payload = None
         return jsonify({"latest": payload, "path": str(files[0])})
 
+    @app.after_request
+    def _cache_policy(response):
+        """The page and APIs must never be browser-cached: the operator was
+        served a stale page for hours because Flask emits no cache headers at
+        all and browsers cache heuristically (keeper report 2026-08-30, "is
+        this live? I don't see it"). Vendored static assets may cache briefly.
+        """
+        if request.path.startswith("/static/"):
+            response.headers.setdefault("Cache-Control", "max-age=3600")
+        else:
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     return app
 
 
