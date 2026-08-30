@@ -1768,7 +1768,21 @@ def create_app(
                 heartbeat_name="quota-collect.ok",
                 lane_health_name="lanes-quota.json",
             ),
-            "latest": [project(row) for row in latest],
+            # A latest observation with neither used nor remaining NOR an
+            # explicit provider_state is a historical null (e.g. the
+            # upstream-retired codex session window, whose old all-None rows
+            # stay newest forever because collection stopped emitting that
+            # window) — it rendered as a permanent "Unavailable" card. Empty
+            # observation = no card. A null row that CARRIES provider_state
+            # ("inactive_or_not_reported") is an honest signal and stays.
+            "latest": [
+                project(row)
+                for row in latest
+                if row.get("used_value") is not None
+                or row.get("remaining_value") is not None
+                or row.get("x_provider_state") is not None
+                or row.get("x_coverage") is not None
+            ],
             "observations": [project(row) for row in rows] if include_history else [],
         }
         if window_meta:
