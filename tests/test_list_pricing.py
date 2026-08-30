@@ -23,8 +23,8 @@ def test_opus_tier_math_covers_all_four_rates():
         input_tokens=1_000_000, output_tokens=100_000,
         cache_read_tokens=10_000_000, cache_write_tokens=500_000,
     )])
-    # 15 + 7.5 + 15 + 9.375
-    assert result["estimate_usd"] == "46.88"
+    # 5 + 2.5 + 5 + 3.125 → 15.62 (round-half-even, the repo's parity rule)
+    assert result["estimate_usd"] == "15.62"
     assert result["priced_token_share"] == 1.0
     assert result["unpriced_providers"] == []
 
@@ -32,7 +32,7 @@ def test_opus_tier_math_covers_all_four_rates():
 def test_reasoning_bills_at_the_output_rate():
     plain = estimate_list_price([_bucket("zai", "glm-5.3", output_tokens=1_000_000)])
     with_reasoning = estimate_list_price([_bucket("zai", "glm-5.3", reasoning_tokens=1_000_000)])
-    assert plain["estimate_usd"] == with_reasoning["estimate_usd"] == "2.20"
+    assert plain["estimate_usd"] == with_reasoning["estimate_usd"] == "4.40"
 
 
 def test_unknown_provider_is_coverage_not_a_guess():
@@ -40,14 +40,14 @@ def test_unknown_provider_is_coverage_not_a_guess():
         _bucket("anthropic", "claude-sonnet-5", input_tokens=1_000_000),
         _bucket("mystery-lab", "whoknows", input_tokens=1_000_000),
     ])
-    assert result["estimate_usd"] == "3.00"
+    assert result["estimate_usd"] == "2.00"
     assert 0.4 < result["priced_token_share"] < 0.6
     assert result["unpriced_providers"] == ["mystery-lab"]
 
 
 def test_provider_default_covers_unlisted_models():
     result = estimate_list_price([_bucket("openai-codex", "gpt-9.9-experimental", input_tokens=1_000_000)])
-    assert result["estimate_usd"] == "1.25"
+    assert result["estimate_usd"] == "5.00"
 
 
 def test_local_inference_is_zero_not_unpriced():

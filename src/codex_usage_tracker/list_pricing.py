@@ -25,42 +25,69 @@ _MTOK = Decimal(1_000_000)
 # provider -> {"models": {model: rates}, "default": rates | None}
 # rates: {"input": x, "output": y, "cache_read": z, "cache_write": w}
 LIST_PRICES: Dict[str, Dict[str, Any]] = {
+    # Looked up online 2026-08-30 (keeper-directed: "the real price tables").
+    # Anthropic: published API list prices, cache write = 5-minute tier
+    # (1-hour write is 2x base input — not modeled; our traffic is 5m).
     "anthropic": {
         "models": {
-            # Opus tier (published API list prices).
-            "claude-opus-5": {"input": "15", "output": "75", "cache_read": "1.50", "cache_write": "18.75"},
-            "claude-opus-4-8": {"input": "15", "output": "75", "cache_read": "1.50", "cache_write": "18.75"},
-            "claude-opus-4-6": {"input": "15", "output": "75", "cache_read": "1.50", "cache_write": "18.75"},
-            # ASSUMED: fable priced at the opus tier — verify.
-            "claude-fable-5": {"input": "15", "output": "75", "cache_read": "1.50", "cache_write": "18.75"},
-            "claude-sonnet-5": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.75"},
+            "claude-fable-5": {"input": "10", "output": "50", "cache_read": "1.00", "cache_write": "12.50"},
+            "claude-opus-5": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},
+            "claude-opus-4-8": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},
+            "claude-opus-4-6": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},
+            # Introductory rate through 2026-08-31; rises to 3/15/0.30/3.75
+            # on Sep 1 — flip these four numbers then.
+            "claude-sonnet-5": {"input": "2", "output": "10", "cache_read": "0.20", "cache_write": "2.50"},
+            "claude-sonnet-4-6": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.75"},
             "claude-haiku-4-5": {"input": "1", "output": "5", "cache_read": "0.10", "cache_write": "1.25"},
         },
-        # Unlisted anthropic models price at the opus tier (conservative-high).
-        "default": {"input": "15", "output": "75", "cache_read": "1.50", "cache_write": "18.75"},
+        # Unlisted anthropic models price at the fable tier (conservative-high).
+        "default": {"input": "10", "output": "50", "cache_read": "1.00", "cache_write": "12.50"},
     },
-    # ASSUMED: gpt-5 family list pricing carried to 5.5/5.6 — verify.
+    # OpenAI flagship meter: gpt-5.6-sol and gpt-5.5 share $5/$30, cached
+    # input 10% of standard. (A separate long-context meter exists at
+    # $10/$45 — not modeled.) terra/luna priced individually.
     "openai": {
-        "models": {},
-        "default": {"input": "1.25", "output": "10", "cache_read": "0.125", "cache_write": "0"},
+        "models": {
+            "gpt-5.6-sol": {"input": "5", "output": "30", "cache_read": "0.50", "cache_write": "0"},
+            "gpt-5.5": {"input": "5", "output": "30", "cache_read": "0.50", "cache_write": "0"},
+            "gpt-5.6-terra": {"input": "2", "output": "12", "cache_read": "0.20", "cache_write": "0"},
+            "gpt-5.6-luna": {"input": "0.20", "output": "1.20", "cache_read": "0.02", "cache_write": "0"},
+        },
+        "default": {"input": "5", "output": "30", "cache_read": "0.50", "cache_write": "0"},
     },
     "openai-codex": {
-        "models": {},
-        "default": {"input": "1.25", "output": "10", "cache_read": "0.125", "cache_write": "0"},
+        "models": {
+            "gpt-5.6-sol": {"input": "5", "output": "30", "cache_read": "0.50", "cache_write": "0"},
+            "gpt-5.5": {"input": "5", "output": "30", "cache_read": "0.50", "cache_write": "0"},
+        },
+        "default": {"input": "5", "output": "30", "cache_read": "0.50", "cache_write": "0"},
     },
-    # ASSUMED: GLM-4.5-era API list carried to glm-5.x — verify.
+    # Z.ai list: GLM-5.3 $1.40/$4.40, cached input $0.26 (storage currently
+    # free). glm-5.3-flash has no published rate found — falls to the
+    # glm-5.3 default (conservative-high).
     "zai": {
-        "models": {},
-        "default": {"input": "0.60", "output": "2.20", "cache_read": "0.11", "cache_write": "0"},
+        "models": {
+            "glm-5.3": {"input": "1.40", "output": "4.40", "cache_read": "0.26", "cache_write": "0"},
+        },
+        "default": {"input": "1.40", "output": "4.40", "cache_read": "0.26", "cache_write": "0"},
     },
-    # ASSUMED: kimi k2 list carried to k3 — verify.
+    # Moonshot list: K3 $3/$15, cache-hit input $0.30.
     "kimi-coding": {
-        "models": {},
-        "default": {"input": "0.60", "output": "2.50", "cache_read": "0.15", "cache_write": "0"},
+        "models": {
+            "k3": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "0"},
+            "kimi-k3": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "0"},
+        },
+        "default": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "0"},
     },
+    # DeepSeek list: v4-pro $0.95/$4.00, v4-flash $0.14/$0.28. Cache-hit
+    # rate not found in the checked sources — ASSUMED 10% of input, the
+    # provider convention; verify.
     "deepseek": {
-        "models": {},
-        "default": {"input": "0.27", "output": "1.10", "cache_read": "0.07", "cache_write": "0"},
+        "models": {
+            "deepseek-v4-pro": {"input": "0.95", "output": "4.00", "cache_read": "0.095", "cache_write": "0"},
+            "deepseek-v4-flash": {"input": "0.14", "output": "0.28", "cache_read": "0.014", "cache_write": "0"},
+        },
+        "default": {"input": "0.95", "output": "4.00", "cache_read": "0.095", "cache_write": "0"},
     },
     # Local inference is $0 by definition, and saying so beats "unpriced".
     "custom:gemma-4-moe-it": {
