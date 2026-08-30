@@ -279,7 +279,9 @@ def test_subscription_provider_overview_and_raw_observation_details_exist(tmp_pa
     html = _dashboard_root_html(tmp_path, monkeypatch)
 
     assert 'id="subscriptionProviderGrid"' in html
-    assert 'id="subscriptionRawDetails"' in html
+    # The raw observation ledger moved from <details> to the fold system
+    # (keeper-ruled 2026-08-29: ledger tables collapsed by default).
+    assert 'data-fold="subscriptionsRaw"' in html
     assert 'id="subscriptionsBody"' in html
     assert re.search(r"<th[^>]*>Observed</th>\s*<th[^>]*>Confidence</th>", html)
     for display_name in (
@@ -295,6 +297,85 @@ def test_subscription_provider_overview_and_raw_observation_details_exist(tmp_pa
         "are separate record classes."
     ) in html
     assert "No quota estimate is a billing fact." in html
+
+
+FOLD_KEYS = (
+    "modelTokenSeries",
+    "codexClaudeSeries",
+    "harnessUsage",
+    "providerModelUsage",
+    "subscriptionWeeklySeries",
+    "subscriptionFiveHourSeries",
+    "subscriptionsRaw",
+    "billingLedger",
+    "tokenLedger",
+    "rawLedger",
+)
+
+COLUMN_TIERED_FOLDS = (
+    ("harnessUsage", "tier-harness"),
+    ("providerModelUsage", "tier-provider-model"),
+    ("subscriptionsRaw", "tier-quota"),
+    ("billingLedger", "tier-billing"),
+    ("tokenLedger", "tier-token-ledger"),
+)
+
+
+def test_every_ledger_table_ships_collapsed_behind_an_accessible_fold(tmp_path, monkeypatch):
+    """Keeper-ruled 2026-08-29: the ledger tables and columns are collapsed by
+    default. Fold is a class/attribute toggle, never a removal — the tbodies
+    ship in the DOM even while folded, so the hydrate cycle keeps writing into
+    them and nothing is lazy-rendered on expand."""
+    html = _dashboard_root_html(tmp_path, monkeypatch)
+
+    for key in FOLD_KEYS:
+        fold = re.search(
+            rf'<section class="fold" data-fold="{key}"(?P<attrs>[^>]*)>', html
+        )
+        assert fold, f"{key}: no fold wrapper"
+        assert 'data-open="false"' in fold.group("attrs"), f"{key}: not collapsed by default"
+        toggle = re.search(
+            rf'<button type="button" class="fold-toggle" id="{key}FoldToggle"[^>]*>', html
+        )
+        assert toggle, f"{key}: fold toggle is not a real button"
+        assert 'aria-expanded="false"' in toggle.group(0), f"{key}: missing collapsed aria-expanded"
+        assert f'aria-controls="{key}FoldBody"' in toggle.group(0)
+        assert (
+            f'<div class="fold-body" id="{key}FoldBody" role="region" '
+            f'aria-labelledby="{key}FoldToggle">'
+        ) in html
+
+
+def test_wide_ledger_tables_default_to_the_essential_column_tier(tmp_path, monkeypatch):
+    html = _dashboard_root_html(tmp_path, monkeypatch)
+
+    for key, tier_class in COLUMN_TIERED_FOLDS:
+        fold = re.search(rf'<section class="fold" data-fold="{key}"(?P<attrs>[^>]*)>', html)
+        assert fold, f"{key}: no fold wrapper"
+        assert 'data-cols="essential"' in fold.group("attrs"), f"{key}: wide table not tiered"
+        assert f'class="{tier_class}"' in html, f"{key}: table missing its column-tier class"
+        assert re.search(
+            rf'<button type="button" class="fold-cols" data-fold-cols aria-pressed="false"'
+            rf' aria-controls="{key}FoldBody">All columns</button>',
+            html,
+        ), f"{key}: no all-columns toggle"
+    # Column collapse is visibility, never DOM removal: the hidden columns are
+    # still declared in the shipped markup.
+    assert re.search(r"\.fold\[data-cols=.essential.\][^{]*\{\s*display: none;", html)
+
+
+def test_fold_state_is_remembered_and_lives_outside_the_rendered_tbodies(tmp_path, monkeypatch):
+    html = _dashboard_root_html(tmp_path, monkeypatch)
+
+    assert 'FOLD_OPEN_KEY = "aiUsage.fold.open"' in html
+    assert 'FOLD_COLS_KEY = "aiUsage.fold.cols"' in html
+    # Unset preference means collapsed / essential, never remembered-open.
+    assert "const isOpen = openPrefs[key] === true;" in html
+    assert "const allColumns = colPrefs[key] === true;" in html
+    # Summaries re-derive from the rows in hand whenever a renderer rewrites a
+    # tbody, so the 60s hydrate refreshes them without disturbing fold state.
+    assert "new MutationObserver" in html
+    assert "function foldSummaryText(fold)" in html
 
 
 def test_stale_notices_name_the_failing_lane(tmp_path, monkeypatch):
@@ -1770,7 +1851,9 @@ def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_ex
     assert "subscriptionProviderAccountCards" not in html
     assert ".subscription-provider-chart" not in html
     assert 'id="subscriptionProviderGrid"' in html
-    assert 'id="subscriptionRawDetails"' in html
+    # The raw observation ledger moved from <details> to the fold system
+    # (keeper-ruled 2026-08-29: ledger tables collapsed by default).
+    assert 'data-fold="subscriptionsRaw"' in html
     script = html.rsplit("<script>", 1)[1].split("</script>", 1)[0]
     assert 'prefix: "subscriptionUnifiedWeekly"' in script
     assert 'prefix: "subscriptionUnifiedFiveHour"' in script

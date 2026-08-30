@@ -483,18 +483,129 @@
         font-size: 0.86rem;
       }
 
-      .chart-data {
-        margin-top: 12px;
+      /* Ledger fold (keeper-ruled 2026-08-29: "collapse the ledger columns
+       * and tables, they should be collapsed by default"). Estate law: fold is
+       * a class/attribute toggle, never a removal — every row and cell stays in
+       * the DOM while folded, so the 60s hydrate keeps writing into the same
+       * tbody and the fold state, which lives on the wrapper the renderers
+       * never touch, survives the refresh. Collapsed is pacing; absent is
+       * elision. */
+      .fold {
+        margin: 12px 0 18px;
+        border: 1px solid var(--line-soft);
+        border-radius: var(--radius);
+        background: color-mix(in srgb, var(--bg-deep) 30%, transparent);
+        overflow: hidden;
       }
 
-      .chart-data summary {
-        padding: 8px 0;
+      .fold-head {
+        display: flex;
+        align-items: center;
+        gap: 8px 14px;
+        flex-wrap: wrap;
+        padding: 9px 12px;
+      }
+
+      .fold-heading {
+        margin: 0;
+        min-width: 0;
+        font-size: inherit;
+        font-weight: inherit;
+        letter-spacing: inherit;
+      }
+
+      .fold-toggle {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 9px;
+        flex-wrap: wrap;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--text);
+        font: inherit;
+        font-size: 0.92rem;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .fold-toggle:hover .fold-label {
+        color: var(--sky);
+      }
+
+      .fold-toggle:focus-visible,
+      .fold-cols:focus-visible {
+        outline: 2px solid var(--sky);
+        outline-offset: 3px;
+      }
+
+      .fold-caret {
+        display: inline-block;
+        color: var(--muted-2);
+        font-size: 0.7rem;
+        transition: transform 120ms ease;
+      }
+
+      .fold-toggle[aria-expanded="true"] .fold-caret {
+        transform: rotate(90deg);
+      }
+
+      .fold-summary {
         color: var(--muted);
-        font-size: 0.82rem;
+        font-size: 0.84rem;
+        font-weight: 400;
+        font-variant-numeric: tabular-nums;
       }
 
-      .chart-data table {
+      .fold-cols {
+        margin-left: auto;
+        padding: 4px 11px;
+        border: 1px solid var(--line-soft);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--panel-raised) 62%, transparent);
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+
+      .fold-cols[aria-pressed="true"] {
+        border-color: color-mix(in srgb, var(--sky) 52%, transparent);
+        background: color-mix(in srgb, var(--sky) 15%, transparent);
+        color: var(--text);
+      }
+
+      .fold[data-open="false"] .fold-body,
+      .fold[data-open="false"] .fold-cols {
+        display: none;
+      }
+
+      .fold .table-wrap {
+        margin: 0;
+      }
+
+      .fold .table-wrap table {
         min-width: 620px;
+      }
+
+      /* Column tiers — the same law one level down: hidden columns are still
+       * rendered cells, just not shown. Essential tier is the default; the
+       * "all columns" toggle lifts the tier, never re-renders the table. */
+      .fold[data-cols="essential"] .tier-harness :is(th, td):is(:nth-child(3), :nth-child(4), :nth-child(5), :nth-child(6), :nth-child(7)),
+      .fold[data-cols="essential"] .tier-provider-model :is(th, td):is(:nth-child(3), :nth-child(5), :nth-child(6), :nth-child(7), :nth-child(8), :nth-child(9)),
+      .fold[data-cols="essential"] .tier-quota :is(th, td):is(:nth-child(3), :nth-child(4), :nth-child(9), :nth-child(10), :nth-child(11), :nth-child(12), :nth-child(13)),
+      .fold[data-cols="essential"] .tier-billing :is(th, td):is(:nth-child(7), :nth-child(8), :nth-child(9)),
+      .fold[data-cols="essential"] .tier-token-ledger :is(th, td):is(:nth-child(5), :nth-child(6), :nth-child(7), :nth-child(8), :nth-child(10), :nth-child(11), :nth-child(12)) {
+        display: none;
+      }
+
+      .fold[data-cols="essential"] .table-wrap table {
+        min-width: 0;
       }
 
       .detail-grid.token-grid {
@@ -527,25 +638,6 @@
         height: 3px;
         border-radius: 999px;
         background: var(--series-color);
-      }
-
-      details.card {
-        padding: 0;
-        overflow: hidden;
-      }
-
-      summary {
-        cursor: pointer;
-        padding: 16px;
-        list-style: none;
-      }
-
-      summary::-webkit-details-marker {
-        display: none;
-      }
-
-      summary .card-header {
-        margin-bottom: 0;
       }
 
       .table-wrap {
@@ -826,21 +918,6 @@
         color: var(--warning);
       }
 
-      .subscription-raw-details {
-        margin-top: 14px;
-        border-top: 1px solid var(--line-soft);
-      }
-
-      .subscription-raw-details summary {
-        padding: 12px 0 8px;
-        color: var(--muted);
-        font-weight: 600;
-      }
-
-      .subscription-raw-details .table-wrap {
-        margin: 0 -16px -16px;
-      }
-
       .empty-state {
         color: var(--muted);
         padding: 12px 0;
@@ -1014,10 +1091,20 @@
                 </div>
                 <div id="modelTokenLabels" class="direct-labels" aria-label="Model series totals"></div>
               </div>
-              <details class="chart-data">
-                <summary>Hourly model data</summary>
-                <div class="table-wrap"><table><caption>Accounted tokens per complete UTC hour by provider and model</caption><thead><tr id="modelTokenTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="modelTokenTableBody"></tbody></table></div>
-              </details>
+              <section class="fold" data-fold="modelTokenSeries" data-open="false" data-row-noun="hour" data-col-noun="series">
+                <div class="fold-head">
+                  <h4 class="fold-heading">
+                    <button type="button" class="fold-toggle" id="modelTokenSeriesFoldToggle" aria-expanded="false" aria-controls="modelTokenSeriesFoldBody">
+                      <span class="fold-caret" aria-hidden="true">▸</span>
+                      <span class="fold-label">Hourly model data</span>
+                      <span class="fold-summary" data-fold-summary>—</span>
+                    </button>
+                  </h4>
+                </div>
+                <div class="fold-body" id="modelTokenSeriesFoldBody" role="region" aria-labelledby="modelTokenSeriesFoldToggle">
+                  <div class="table-wrap"><table><caption>Accounted tokens per complete UTC hour by provider and model</caption><thead><tr id="modelTokenTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="modelTokenTableBody"></tbody></table></div>
+                </div>
+              </section>
             </section>
             <section class="usage-chart" aria-labelledby="codexClaudeTitle">
               <h3 id="codexClaudeTitle">OpenAI Codex subscription vs Claude Code</h3>
@@ -1029,16 +1116,52 @@
                 </div>
                 <div id="codexClaudeLabels" class="direct-labels" aria-label="Codex and Claude Code totals"></div>
               </div>
-              <details class="chart-data">
-                <summary>Hourly comparison data</summary>
-                <div class="table-wrap"><table><caption>Accounted tokens per complete UTC hour for OpenAI Codex subscription and Claude Code</caption><thead><tr id="codexClaudeTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="codexClaudeTableBody"></tbody></table></div>
-              </details>
+              <section class="fold" data-fold="codexClaudeSeries" data-open="false" data-row-noun="hour" data-col-noun="series">
+                <div class="fold-head">
+                  <h4 class="fold-heading">
+                    <button type="button" class="fold-toggle" id="codexClaudeSeriesFoldToggle" aria-expanded="false" aria-controls="codexClaudeSeriesFoldBody">
+                      <span class="fold-caret" aria-hidden="true">▸</span>
+                      <span class="fold-label">Hourly comparison data</span>
+                      <span class="fold-summary" data-fold-summary>—</span>
+                    </button>
+                  </h4>
+                </div>
+                <div class="fold-body" id="codexClaudeSeriesFoldBody" role="region" aria-labelledby="codexClaudeSeriesFoldToggle">
+                  <div class="table-wrap"><table><caption>Accounted tokens per complete UTC hour for OpenAI Codex subscription and Claude Code</caption><thead><tr id="codexClaudeTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="codexClaudeTableBody"></tbody></table></div>
+                </div>
+              </section>
             </section>
           </div>
-          <h3>By harness</h3>
-          <div class="table-wrap"><table><thead><tr><th>Harness</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>Estimated USD</th><th>Actual USD</th></tr></thead><tbody id="harnessUsageBody"></tbody></table></div>
-          <h3>By provider and model</h3>
-          <div class="table-wrap"><table><thead><tr><th>Provider</th><th>Model</th><th>API</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>Estimated USD</th><th>Actual USD</th></tr></thead><tbody id="providerModelUsageBody"></tbody></table></div>
+          <section class="fold" data-fold="harnessUsage" data-open="false" data-cols="essential" data-row-noun="harness" data-row-noun-plural="harnesses" data-metrics="2:events|8:tokens">
+            <div class="fold-head">
+              <h3 class="fold-heading">
+                <button type="button" class="fold-toggle" id="harnessUsageFoldToggle" aria-expanded="false" aria-controls="harnessUsageFoldBody">
+                  <span class="fold-caret" aria-hidden="true">▸</span>
+                  <span class="fold-label">By harness</span>
+                  <span class="fold-summary" data-fold-summary>—</span>
+                </button>
+              </h3>
+              <button type="button" class="fold-cols" data-fold-cols aria-pressed="false" aria-controls="harnessUsageFoldBody">All columns</button>
+            </div>
+            <div class="fold-body" id="harnessUsageFoldBody" role="region" aria-labelledby="harnessUsageFoldToggle">
+              <div class="table-wrap"><table class="tier-harness"><thead><tr><th>Harness</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>Estimated USD</th><th>Actual USD</th></tr></thead><tbody id="harnessUsageBody"></tbody></table></div>
+            </div>
+          </section>
+          <section class="fold" data-fold="providerModelUsage" data-open="false" data-cols="essential" data-row-noun="provider/model row" data-row-noun-plural="provider/model rows" data-metrics="4:events|10:tokens">
+            <div class="fold-head">
+              <h3 class="fold-heading">
+                <button type="button" class="fold-toggle" id="providerModelUsageFoldToggle" aria-expanded="false" aria-controls="providerModelUsageFoldBody">
+                  <span class="fold-caret" aria-hidden="true">▸</span>
+                  <span class="fold-label">By provider and model</span>
+                  <span class="fold-summary" data-fold-summary>—</span>
+                </button>
+              </h3>
+              <button type="button" class="fold-cols" data-fold-cols aria-pressed="false" aria-controls="providerModelUsageFoldBody">All columns</button>
+            </div>
+            <div class="fold-body" id="providerModelUsageFoldBody" role="region" aria-labelledby="providerModelUsageFoldToggle">
+              <div class="table-wrap"><table class="tier-provider-model"><thead><tr><th>Provider</th><th>Model</th><th>API</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>Estimated USD</th><th>Actual USD</th></tr></thead><tbody id="providerModelUsageBody"></tbody></table></div>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -1064,16 +1187,26 @@
                   </div>
                   <div id="subscriptionUnifiedWeeklyLabels" class="direct-labels subscription-chart-labels" aria-label="Unified weekly subscription series and confidence statuses"></div>
                 </div>
-                <details class="chart-data">
-                  <summary>Hourly unified weekly quota data</summary>
-                  <div class="table-wrap">
-                    <table>
-                      <caption>Primary weekly-equivalent provider quota utilization per complete UTC hour</caption>
-                      <thead><tr id="subscriptionUnifiedWeeklyTableHead"><th scope="col">UTC hour</th></tr></thead>
-                      <tbody id="subscriptionUnifiedWeeklyTableBody"></tbody>
-                    </table>
+                <section class="fold" data-fold="subscriptionWeeklySeries" data-open="false" data-row-noun="hour" data-col-noun="series">
+                  <div class="fold-head">
+                    <h4 class="fold-heading">
+                      <button type="button" class="fold-toggle" id="subscriptionWeeklySeriesFoldToggle" aria-expanded="false" aria-controls="subscriptionWeeklySeriesFoldBody">
+                        <span class="fold-caret" aria-hidden="true">▸</span>
+                        <span class="fold-label">Hourly unified weekly quota data</span>
+                        <span class="fold-summary" data-fold-summary>—</span>
+                      </button>
+                    </h4>
                   </div>
-                </details>
+                  <div class="fold-body" id="subscriptionWeeklySeriesFoldBody" role="region" aria-labelledby="subscriptionWeeklySeriesFoldToggle">
+                    <div class="table-wrap">
+                      <table>
+                        <caption>Primary weekly-equivalent provider quota utilization per complete UTC hour</caption>
+                        <thead><tr id="subscriptionUnifiedWeeklyTableHead"><th scope="col">UTC hour</th></tr></thead>
+                        <tbody id="subscriptionUnifiedWeeklyTableBody"></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </section>
               </article>
               <article class="subscription-unified-history-card" aria-labelledby="subscriptionUnifiedFiveHourTitle">
                 <h3 id="subscriptionUnifiedFiveHourTitle">Unified five-hour subscription utilization</h3>
@@ -1085,24 +1218,45 @@
                   </div>
                   <div id="subscriptionUnifiedFiveHourLabels" class="direct-labels subscription-chart-labels" aria-label="Unified five-hour subscription series and confidence statuses"></div>
                 </div>
-                <details class="chart-data">
-                  <summary>Hourly unified five-hour quota data</summary>
-                  <div class="table-wrap">
-                    <table>
-                      <caption>Comparable five-hour provider quota utilization per complete UTC hour</caption>
-                      <thead><tr id="subscriptionUnifiedFiveHourTableHead"><th scope="col">UTC hour</th></tr></thead>
-                      <tbody id="subscriptionUnifiedFiveHourTableBody"></tbody>
-                    </table>
+                <section class="fold" data-fold="subscriptionFiveHourSeries" data-open="false" data-row-noun="hour" data-col-noun="series">
+                  <div class="fold-head">
+                    <h4 class="fold-heading">
+                      <button type="button" class="fold-toggle" id="subscriptionFiveHourSeriesFoldToggle" aria-expanded="false" aria-controls="subscriptionFiveHourSeriesFoldBody">
+                        <span class="fold-caret" aria-hidden="true">▸</span>
+                        <span class="fold-label">Hourly unified five-hour quota data</span>
+                        <span class="fold-summary" data-fold-summary>—</span>
+                      </button>
+                    </h4>
                   </div>
-                </details>
+                  <div class="fold-body" id="subscriptionFiveHourSeriesFoldBody" role="region" aria-labelledby="subscriptionFiveHourSeriesFoldToggle">
+                    <div class="table-wrap">
+                      <table>
+                        <caption>Comparable five-hour provider quota utilization per complete UTC hour</caption>
+                        <thead><tr id="subscriptionUnifiedFiveHourTableHead"><th scope="col">UTC hour</th></tr></thead>
+                        <tbody id="subscriptionUnifiedFiveHourTableBody"></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </section>
               </article>
             </div>
           </section>
           <div id="subscriptionProviderGrid" class="subscription-provider-grid"></div>
-          <details id="subscriptionRawDetails" class="subscription-raw-details">
-            <summary>Raw quota observation ledger</summary>
-            <div class="table-wrap"><table><caption>Latest quota observations; these are not usage events or billing facts.</caption><thead><tr><th>Provider</th><th>Observed</th><th>Confidence</th><th>Harness</th><th>Quota</th><th>Window</th><th>Used</th><th>Remaining</th><th>Limit</th><th>Unit</th><th>Starts</th><th>Ends</th><th>Resets</th></tr></thead><tbody id="subscriptionsBody"></tbody></table></div>
-          </details>
+          <section class="fold" data-fold="subscriptionsRaw" data-open="false" data-cols="essential" data-row-noun="observation">
+            <div class="fold-head">
+              <h3 class="fold-heading">
+                <button type="button" class="fold-toggle" id="subscriptionsRawFoldToggle" aria-expanded="false" aria-controls="subscriptionsRawFoldBody">
+                  <span class="fold-caret" aria-hidden="true">▸</span>
+                  <span class="fold-label">Raw quota observation ledger</span>
+                  <span class="fold-summary" data-fold-summary>—</span>
+                </button>
+              </h3>
+              <button type="button" class="fold-cols" data-fold-cols aria-pressed="false" aria-controls="subscriptionsRawFoldBody">All columns</button>
+            </div>
+            <div class="fold-body" id="subscriptionsRawFoldBody" role="region" aria-labelledby="subscriptionsRawFoldToggle">
+              <div class="table-wrap"><table class="tier-quota"><caption>Latest quota observations; these are not usage events or billing facts.</caption><thead><tr><th>Provider</th><th>Observed</th><th>Confidence</th><th>Harness</th><th>Quota</th><th>Window</th><th>Used</th><th>Remaining</th><th>Limit</th><th>Unit</th><th>Starts</th><th>Ends</th><th>Resets</th></tr></thead><tbody id="subscriptionsBody"></tbody></table></div>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -1111,7 +1265,21 @@
         <div id="billingState" class="empty-state">Loading billing facts…</div>
         <div id="billingContent" hidden>
           <div id="billingTotals" class="series-key"></div>
-          <div class="table-wrap"><table><thead><tr><th>Provider</th><th>Occurred</th><th>Kind</th><th>Status</th><th>Amount</th><th>Currency</th><th>Period start</th><th>Period end</th><th>Description</th></tr></thead><tbody id="billingBody"></tbody></table></div>
+          <section class="fold" data-fold="billingLedger" data-open="false" data-cols="essential" data-row-noun="transaction">
+            <div class="fold-head">
+              <h3 class="fold-heading">
+                <button type="button" class="fold-toggle" id="billingLedgerFoldToggle" aria-expanded="false" aria-controls="billingLedgerFoldBody">
+                  <span class="fold-caret" aria-hidden="true">▸</span>
+                  <span class="fold-label">Billing facts</span>
+                  <span class="fold-summary" data-fold-summary>—</span>
+                </button>
+              </h3>
+              <button type="button" class="fold-cols" data-fold-cols aria-pressed="false" aria-controls="billingLedgerFoldBody">All columns</button>
+            </div>
+            <div class="fold-body" id="billingLedgerFoldBody" role="region" aria-labelledby="billingLedgerFoldToggle">
+              <div class="table-wrap"><table class="tier-billing"><thead><tr><th>Provider</th><th>Occurred</th><th>Kind</th><th>Status</th><th>Amount</th><th>Currency</th><th>Period start</th><th>Period end</th><th>Description</th></tr></thead><tbody id="billingBody"></tbody></table></div>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -1298,68 +1466,91 @@
         </article>
       </section>
 
-      <details class="card" open>
-        <summary>
-          <div class="card-header">
-            <div class="card-title">
-              <h2>Token correlation ledger</h2>
-              <p class="caption">
-                Hermes token buckets joined to adjacent Codex usage snapshots. Each row maps
-                tokens sent during a sample window to the next quota percentage movement.
-              </p>
-            </div>
-            <span class="micro-label">usage × tokens</span>
+      <section class="card" aria-labelledby="tokenLedgerTitle">
+        <div class="card-header">
+          <div class="card-title">
+            <h2 id="tokenLedgerTitle">Token correlation ledger</h2>
+            <p class="caption">
+              Hermes token buckets joined to adjacent Codex usage snapshots. Each row maps
+              tokens sent during a sample window to the next quota percentage movement.
+            </p>
           </div>
-        </summary>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Window (local)</th>
-                <th>Δ Session</th>
-                <th>Δ Weekly</th>
-                <th>Calls</th>
-                <th>Input</th>
-                <th>Cache read</th>
-                <th>Output</th>
-                <th>Reasoning</th>
-                <th>Total</th>
-                <th>Cache hit</th>
-                <th>Tokens / session %</th>
-                <th>Tokens / weekly %</th>
-              </tr>
-            </thead>
-            <tbody id="tokenLedgerBody"></tbody>
-          </table>
+          <span class="micro-label">usage × tokens</span>
         </div>
-      </details>
+        <section class="fold" data-fold="tokenLedger" data-open="false" data-cols="essential" data-row-noun="window" data-metrics="4:calls|9:tokens">
+          <div class="fold-head">
+            <h3 class="fold-heading">
+              <button type="button" class="fold-toggle" id="tokenLedgerFoldToggle" aria-expanded="false" aria-controls="tokenLedgerFoldBody">
+                <span class="fold-caret" aria-hidden="true">▸</span>
+                <span class="fold-label">Correlation rows</span>
+                <span class="fold-summary" data-fold-summary>—</span>
+              </button>
+            </h3>
+            <button type="button" class="fold-cols" data-fold-cols aria-pressed="false" aria-controls="tokenLedgerFoldBody">All columns</button>
+          </div>
+          <div class="fold-body" id="tokenLedgerFoldBody" role="region" aria-labelledby="tokenLedgerFoldToggle">
+            <div class="table-wrap">
+              <table class="tier-token-ledger">
+                <thead>
+                  <tr>
+                    <th>Window (local)</th>
+                    <th>Δ Session</th>
+                    <th>Δ Weekly</th>
+                    <th>Calls</th>
+                    <th>Input</th>
+                    <th>Cache read</th>
+                    <th>Output</th>
+                    <th>Reasoning</th>
+                    <th>Total</th>
+                    <th>Cache hit</th>
+                    <th>Tokens / session %</th>
+                    <th>Tokens / weekly %</th>
+                  </tr>
+                </thead>
+                <tbody id="tokenLedgerBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
 
-      <details class="card">
-        <summary>
-          <div class="card-header">
-            <div class="card-title">
-              <h2>Ledger rows</h2>
-              <p class="caption">Latest 24 rows. Click a header to sort.</p>
-            </div>
-            <span class="micro-label">open rows</span>
+      <section class="card" aria-labelledby="rawLedgerTitle">
+        <div class="card-header">
+          <div class="card-title">
+            <h2 id="rawLedgerTitle">Ledger rows</h2>
+            <p class="caption">Latest 24 rows. Click a header to sort.</p>
           </div>
-        </summary>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th class="sortable" data-key="fetched_at" data-type="date">Fetched at</th>
-                <th class="sortable" data-key="session_used_pct" data-type="num">Session</th>
-                <th class="sortable" data-key="weekly_used_pct" data-type="num">Weekly</th>
-                <th class="sortable" data-key="spark_session_used_pct" data-type="num">Spark session</th>
-                <th class="sortable" data-key="spark_weekly_used_pct" data-type="num">Spark weekly</th>
-                <th class="sortable" data-key="rate_limit_reset_credits_available" data-type="num">Banked resets</th>
-              </tr>
-            </thead>
-            <tbody id="rawTableBody"></tbody>
-          </table>
+          <span class="micro-label">open rows</span>
         </div>
-      </details>
+        <section class="fold" data-fold="rawLedger" data-open="false" data-row-noun="sample">
+          <div class="fold-head">
+            <h3 class="fold-heading">
+              <button type="button" class="fold-toggle" id="rawLedgerFoldToggle" aria-expanded="false" aria-controls="rawLedgerFoldBody">
+                <span class="fold-caret" aria-hidden="true">▸</span>
+                <span class="fold-label">Ledger samples</span>
+                <span class="fold-summary" data-fold-summary>—</span>
+              </button>
+            </h3>
+          </div>
+          <div class="fold-body" id="rawLedgerFoldBody" role="region" aria-labelledby="rawLedgerFoldToggle">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th class="sortable" data-key="fetched_at" data-type="date">Fetched at</th>
+                    <th class="sortable" data-key="session_used_pct" data-type="num">Session</th>
+                    <th class="sortable" data-key="weekly_used_pct" data-type="num">Weekly</th>
+                    <th class="sortable" data-key="spark_session_used_pct" data-type="num">Spark session</th>
+                    <th class="sortable" data-key="spark_weekly_used_pct" data-type="num">Spark weekly</th>
+                    <th class="sortable" data-key="rate_limit_reset_credits_available" data-type="num">Banked resets</th>
+                  </tr>
+                </thead>
+                <tbody id="rawTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
     </main>
 
     <script>
@@ -3279,6 +3470,142 @@
           renderSortedTable();
         });
       });
+
+      // ---- Ledger fold controller ------------------------------------------
+      // Keeper-ruled 2026-08-29: ledger tables and their wide columns are
+      // collapsed by default. Estate law: fold is a class/attribute toggle,
+      // never a removal. Nothing here lazy-renders — every renderer keeps
+      // writing full tbodies into folded bodies, and fold state lives on the
+      // .fold wrapper (plus localStorage), which no renderer touches. That is
+      // why the 60s hydrate cannot reopen or re-collapse anything: it replaces
+      // tbody children, and the state is a level above them.
+      const FOLD_OPEN_KEY = "aiUsage.fold.open";
+      const FOLD_COLS_KEY = "aiUsage.fold.cols";
+
+      function readFoldPrefs(storeKey) {
+        try {
+          const raw = window.localStorage.getItem(storeKey);
+          const parsed = raw ? JSON.parse(raw) : null;
+          return parsed && typeof parsed === "object" ? parsed : {};
+        } catch (error) {
+          return {};
+        }
+      }
+
+      function writeFoldPref(storeKey, foldKey, value) {
+        try {
+          const prefs = readFoldPrefs(storeKey);
+          prefs[foldKey] = value;
+          window.localStorage.setItem(storeKey, JSON.stringify(prefs));
+        } catch (error) {
+          /* storage is a convenience; the fold works without it */
+        }
+      }
+
+      function foldCellTotal(body, index) {
+        let total = 0;
+        let seen = false;
+        body.querySelectorAll(`:scope > tr > :nth-child(${index})`).forEach((cell) => {
+          const cleaned = String(cell.textContent || "").replace(/[^\d.-]/g, "");
+          if (!/\d/.test(cleaned)) return;
+          const value = Number(cleaned);
+          if (Number.isFinite(value)) {
+            total += value;
+            seen = true;
+          }
+        });
+        return seen ? total : null;
+      }
+
+      // The summary is derived from the rows already in hand — no extra fetch,
+      // no server field. It re-derives on every tbody mutation, so the hydrate
+      // cycle keeps it honest while the table stays folded.
+      function foldSummaryText(fold) {
+        const body = fold.querySelector("tbody");
+        const rows = body ? body.querySelectorAll(":scope > tr").length : 0;
+        const singular = fold.dataset.rowNoun || "row";
+        const plural = fold.dataset.rowNounPlural || `${singular}s`;
+        if (!rows) return `no ${plural} yet`;
+        const parts = [`${intFormat(rows)} ${rows === 1 ? singular : plural}`];
+        if (fold.dataset.colNoun) {
+          const head = fold.querySelector("thead tr");
+          const columns = head ? Math.max(head.children.length - 1, 0) : 0;
+          if (columns) parts.push(`${intFormat(columns)} ${columns === 1 ? fold.dataset.colNoun.replace(/s$/, "") : fold.dataset.colNoun}`);
+        }
+        (fold.dataset.metrics || "").split("|").filter(Boolean).forEach((spec) => {
+          const [index, label] = spec.split(":");
+          const total = foldCellTotal(body, Number(index));
+          // Counts read exactly (25,319 events); token volumes compact (4.1B) —
+          // a nine-digit sum in a one-line summary is a wall, not a summary.
+          if (total !== null) {
+            const shown = Math.abs(total) >= 1e6 ? compactIntFormat(total) : intFormat(total);
+            parts.push(`${shown} ${label}`);
+          }
+        });
+        return parts.join(" · ");
+      }
+
+      function updateFoldSummary(fold) {
+        const target = fold.querySelector("[data-fold-summary]");
+        if (target) target.textContent = foldSummaryText(fold);
+      }
+
+      function initFolds() {
+        const openPrefs = readFoldPrefs(FOLD_OPEN_KEY);
+        const colPrefs = readFoldPrefs(FOLD_COLS_KEY);
+        document.querySelectorAll(".fold[data-fold]").forEach((fold) => {
+          const key = fold.dataset.fold;
+          const toggle = fold.querySelector(".fold-toggle");
+          const colsToggle = fold.querySelector("[data-fold-cols]");
+
+          // Default is collapsed / essential columns when the key is unset.
+          const isOpen = openPrefs[key] === true;
+          fold.dataset.open = isOpen ? "true" : "false";
+          if (toggle) {
+            toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+            toggle.addEventListener("click", () => {
+              const next = fold.dataset.open !== "true";
+              fold.dataset.open = next ? "true" : "false";
+              toggle.setAttribute("aria-expanded", next ? "true" : "false");
+              writeFoldPref(FOLD_OPEN_KEY, key, next);
+            });
+          }
+
+          if (colsToggle) {
+            const allColumns = colPrefs[key] === true;
+            fold.dataset.cols = allColumns ? "all" : "essential";
+            // Static label, aria-pressed carries the state — a toggle button,
+            // not a label that renames itself under the operator's cursor.
+            colsToggle.setAttribute("aria-pressed", allColumns ? "true" : "false");
+            colsToggle.addEventListener("click", () => {
+              const next = fold.dataset.cols !== "all";
+              fold.dataset.cols = next ? "all" : "essential";
+              colsToggle.setAttribute("aria-pressed", next ? "true" : "false");
+              writeFoldPref(FOLD_COLS_KEY, key, next);
+            });
+          }
+
+          // Renderers replace tbody (and, for series tables, thead) children on
+          // every hydrate. Watching the fold body means the summary refreshes
+          // without any renderer knowing the fold exists.
+          const foldBody = fold.querySelector(".fold-body");
+          if (foldBody) {
+            let queued = false;
+            const observer = new MutationObserver(() => {
+              if (queued) return;
+              queued = true;
+              requestAnimationFrame(() => {
+                queued = false;
+                updateFoldSummary(fold);
+              });
+            });
+            observer.observe(foldBody, { childList: true, subtree: true, characterData: true });
+          }
+          updateFoldSummary(fold);
+        });
+      }
+
+      initFolds();
 
       els.refresh.addEventListener("click", hydrate);
 
