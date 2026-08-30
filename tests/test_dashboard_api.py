@@ -396,7 +396,10 @@ def test_stale_notices_name_the_failing_lane(tmp_path, monkeypatch):
 
     assert "function staleLaneSuffix(freshness)" in html
     assert "no successful run on record" in html
-    assert html.count("staleLaneSuffix(freshness)") == 3
+    # Four callers: the definition, the two panel stale notices, and the hero
+    # ops digest's freshness mirror (polish round 2026-08-30, item 2).
+    assert html.count("staleLaneSuffix(freshness)") == 4
+    assert "renderFreshnessDigest(freshness)" in html
     for notice in (
         "Canonical usage is stale",
         "Subscription observations are stale",
@@ -1816,7 +1819,11 @@ def test_unified_subscription_provider_palette_is_stable_contrasting_and_scoped(
     assert background_match is not None
     assert background_match.group(1).strip() == "var(--gc-bg)"
 
-    assert "subscriptionQuotaDatasets(rows)" in html
+    # Datasets build from chartRows — the chart-window slice (polish round
+    # item 11: the five-hour canvas plots the trailing 48 buckets) — while the
+    # tables keep rendering from the unsliced rows.
+    assert "subscriptionQuotaDatasets(chartRows)" in html
+    assert "chartBucketLimit: 48" in html
     assert "const color = subscriptionUnifiedProviderColor(row, index);" in html
     assert "UNIFIED_RANK_COLORS[rank]" in html
     assert "subscriptionUnifiedQuotaDash(row)" in html

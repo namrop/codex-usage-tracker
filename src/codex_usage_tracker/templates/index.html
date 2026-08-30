@@ -102,11 +102,21 @@
         max-width: 100%;
       }
 
+      /* The Codex compatibility hero keeps display type modest so its status
+       * column reads as a peer, not a footnote (polish round item 2). */
       .hero {
         display: grid;
-        grid-template-columns: minmax(280px, 1fr) minmax(260px, 0.72fr);
+        grid-template-columns: minmax(280px, 1fr) minmax(300px, 1fr);
         gap: 16px;
         align-items: stretch;
+      }
+
+      .hero .title-panel {
+        padding: 18px 20px 16px;
+      }
+
+      .hero h1 {
+        font-size: clamp(1.5rem, 2.6vw, 2.4rem);
       }
 
       .title-panel,
@@ -223,6 +233,74 @@
         margin-top: 16px;
       }
 
+      /* Ops digest (keeper polish round 2026-08-30, item 2): the top hero's
+       * right half answers "does anything need me?" — ledger freshness,
+       * soonest reset, week list-price estimate, substitution watch. The
+       * values mirror the unified tile row's JS state; nothing here refetches. */
+      .ops-hero {
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.1fr);
+        gap: 22px;
+        align-items: center;
+      }
+
+      .ops-hero-intro {
+        min-width: 0;
+      }
+
+      .ops-hero h1 {
+        font-size: clamp(1.9rem, 3.2vw, 3.2rem);
+      }
+
+      .ops-digest {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        align-content: center;
+        min-width: 0;
+      }
+
+      .digest-item {
+        min-width: 0;
+        display: grid;
+        gap: 5px;
+        align-content: start;
+        padding: 11px 12px;
+        border: 1px solid var(--line-soft);
+        border-radius: 4px;
+        background: color-mix(in srgb, var(--panel-soft) 70%, transparent);
+      }
+
+      .digest-value {
+        font-size: 1.05rem;
+        letter-spacing: -0.02em;
+        overflow-wrap: anywhere;
+      }
+
+      .digest-note {
+        color: var(--muted);
+        font-size: 0.79rem;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
+
+      .digest-item.role-stability .digest-value {
+        color: var(--ok);
+      }
+
+      .digest-item.role-violation {
+        border-color: color-mix(in srgb, var(--danger) 52%, transparent);
+      }
+
+      .digest-item.role-violation .digest-value {
+        color: var(--danger);
+      }
+
+      .digest-item .reset-chip {
+        justify-self: start;
+        font-size: 0.8rem;
+      }
+
       .mini-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -262,6 +340,28 @@
 
       .metric .hint {
         margin-top: 8px;
+      }
+
+      /* Spend sparkline (polish round item 12): seven daily list-price
+       * estimates as a bare polyline in the structure role — trend only, no
+       * axes; the values live in the title. */
+      .spend-spark {
+        display: block;
+        width: 100%;
+        height: 24px;
+        margin-top: 6px;
+      }
+
+      .spend-spark polyline {
+        fill: none;
+        stroke: var(--gc-role-structure);
+        stroke-width: 1.5;
+      }
+
+      /* SVG is outside the HTML namespace, so the UA's [hidden] rule does not
+       * reach it — this rule makes the attribute mean what it says. */
+      .spend-spark[hidden] {
+        display: none;
       }
 
       .insights {
@@ -497,16 +597,34 @@
         font-size: 0.78rem;
       }
 
+      /* Noise fold (polish round item 4a): providers under 0.1% of window
+       * tokens collapse into one dim line; their hairline arcs stay on the
+       * ring. */
+      .donut-legend .legend-fold {
+        display: block;
+        color: var(--muted-2);
+        font-size: 0.8rem;
+      }
+
       /* -- reset rail: one chip per quota window that reports an exact reset,
        * soonest first, counting down in wall-clock while every bucket on this
-       * page stays UTC. -- */
+       * page stays UTC. Strict single column (polish round item 3): reading
+       * order IS reset order — a two-column snake broke the soonest-first
+       * scan. Each chip is a real anchor to its provider's subscription card
+       * (item 13). -- */
       .reset-chips {
-        display: flex;
-        flex-wrap: wrap;
+        display: grid;
+        grid-template-columns: 1fr;
+        justify-items: start;
         gap: 8px;
         margin: 12px 0 0;
         padding: 0;
         list-style: none;
+      }
+
+      .reset-chips li {
+        min-width: 0;
+        max-width: 100%;
       }
 
       .reset-chip {
@@ -519,6 +637,23 @@
         background: color-mix(in srgb, var(--chip-role) 13%, transparent);
         color: var(--text);
         font-size: 0.83rem;
+        text-decoration: none;
+        max-width: 100%;
+        flex-wrap: wrap;
+      }
+
+      .reset-chip:focus-visible {
+        outline: 2px solid var(--sky);
+        outline-offset: 3px;
+      }
+
+      /* Anchor scrolls are smooth only where the operator has not asked for
+       * stillness; the prefers-reduced-motion block at the sheet's end forces
+       * this back to auto (jump, no smooth). */
+      @media (prefers-reduced-motion: no-preference) {
+        html {
+          scroll-behavior: smooth;
+        }
       }
 
       .reset-chip.role-stability { --chip-role: var(--ok); }
@@ -620,6 +755,14 @@
 
       .status-cell.state-failing {
         background: var(--danger);
+      }
+
+      /* Noise fold (polish round item 4b): "unknown" and sub-10-event
+       * providers share one dim line instead of full cell rows. */
+      .status-row.low-traffic {
+        color: var(--muted-2);
+        font-size: 0.8rem;
+        line-height: 1.4;
       }
 
       .status-row-summary {
@@ -970,9 +1113,11 @@
         overflow: hidden;
       }
 
+      /* Legend track widened (polish round item 1): the old 160px floor
+       * forced mid-word wraps in the custom legend entries. */
       .subscription-quota-chart-layout {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(160px, 220px);
+        grid-template-columns: minmax(0, 1fr) minmax(190px, 250px);
         gap: 14px;
         align-items: stretch;
         min-width: 0;
@@ -993,14 +1138,22 @@
         min-width: 0;
       }
 
+      /* No mid-word breaks in legend entries (item 1): break-word only splits
+       * a word that alone exceeds the track; confidence drops to its own row. */
       .subscription-chart-labels .direct-label {
-        overflow-wrap: anywhere;
+        grid-template-columns: 20px minmax(0, 1fr);
+        overflow-wrap: break-word;
+      }
+
+      .subscription-chart-labels .direct-label > span:last-child {
+        grid-column: 2;
       }
 
       .subscription-provider-card {
         min-width: 0;
         max-width: 100%;
         overflow: hidden;
+        scroll-margin-top: 18px;
         display: grid;
         align-content: start;
         gap: 12px;
@@ -1176,6 +1329,7 @@
 
       @media (max-width: 1100px) {
         .hero,
+        .ops-hero,
         .detail-grid,
         .detail-grid.token-grid,
         .window-pair {
@@ -1199,7 +1353,8 @@
         }
 
         .mini-grid,
-        .insights {
+        .insights,
+        .ops-digest {
           grid-template-columns: 1fr;
         }
 
@@ -1299,6 +1454,7 @@
       }
 
       html[data-gc-shape="slanted"] .metric,
+      html[data-gc-shape="slanted"] .digest-item,
       html[data-gc-shape="slanted"] .subscription-window,
       html[data-gc-shape="slanted"] .table-wrap {
         --gc-cut: var(--gc-cut-sm);
@@ -1315,6 +1471,7 @@
           .card,
           .insight,
           .metric,
+          .digest-item,
           .subscription-quota-history,
           .window-card,
           .subscription-provider-card,
@@ -1411,11 +1568,38 @@
   </head>
   <body>
     <main class="shell">
-      <section class="title-panel" aria-labelledby="aiUsageTitle">
-        <p class="eyebrow">Private provider-neutral accounting</p>
-        <h1 id="aiUsageTitle">AI Usage</h1>
-        <p class="subtitle">Seven-day canonical usage, subscription windows, and posted billing facts across configured AI harnesses and providers.</p>
-        <div id="gcSwitcher" class="gc-switcher-mount" aria-label="Governed Cognition theme"></div>
+      <section class="title-panel ops-hero" aria-labelledby="aiUsageTitle">
+        <div class="ops-hero-intro">
+          <p class="eyebrow">Private provider-neutral accounting</p>
+          <h1 id="aiUsageTitle">AI Usage</h1>
+          <p class="subtitle">Seven-day canonical usage, subscription windows, and posted billing facts across configured AI harnesses and providers.</p>
+          <div id="gcSwitcher" class="gc-switcher-mount" aria-label="Governed Cognition theme"></div>
+        </div>
+        <!-- Ops digest: mirrors of the unified tile row's JS state (freshness,
+             soonest reset, week list-price, substitution watch) — shared render
+             helpers write both surfaces; the digest never fetches. -->
+        <aside class="ops-digest" aria-label="Operational digest">
+          <div class="digest-item" id="digestFreshnessItem">
+            <div class="micro-label">Ledger freshness</div>
+            <strong class="digest-value" id="digestFreshness">—</strong>
+            <span class="digest-note" id="digestFreshnessNote">waiting for the first canonical read</span>
+          </div>
+          <div class="digest-item">
+            <div class="micro-label">Soonest reset</div>
+            <a class="reset-chip role-stability" id="digestReset" hidden></a>
+            <span class="digest-note" id="digestResetNote">waiting for subscription windows</span>
+          </div>
+          <div class="digest-item">
+            <div class="micro-label">Est. spend · week</div>
+            <strong class="digest-value" id="digestSpend">—</strong>
+            <span class="digest-note">list-price estimate</span>
+          </div>
+          <div class="digest-item" id="digestSubstitutionItem">
+            <div class="micro-label">Substitution watch</div>
+            <strong class="digest-value" id="digestSubstitutions">—</strong>
+            <span class="digest-note" id="digestSubstitutionsNote">—</span>
+          </div>
+        </aside>
       </section>
 
       <section class="card" aria-labelledby="unifiedUsageTitle">
@@ -1431,7 +1615,7 @@
           <div class="panel-grid">
             <div class="metric"><div class="label">Events</div><div class="value" id="unifiedEvents">—</div><div class="hint" id="unifiedEventsHint">—</div></div>
             <div class="metric"><div class="label">Total tokens</div><div class="value color-token" id="unifiedTotalTokens">—</div><div class="hint" id="unifiedWindow">—</div></div>
-            <div class="metric"><div class="label">Est. spend (list)</div><div class="value" id="unifiedPricedSpend">—</div><div class="hint" id="unifiedPricedSpendHint">—</div></div>
+            <div class="metric"><div class="label">Est. spend (list)</div><div class="value" id="unifiedPricedSpend">—</div><svg id="unifiedSpendSpark" class="spend-spark" viewBox="0 0 100 24" preserveAspectRatio="none" role="img" aria-label="Daily list-price estimates over the window" hidden></svg><div class="hint" id="unifiedPricedSpendHint">—</div></div>
             <div class="metric"><div class="label">Soonest reset</div><div class="value mono" id="unifiedSoonestReset">—</div><div class="hint" id="unifiedSoonestResetHint">—</div></div>
             <div class="metric" id="unifiedSubstitutionTile"><div class="label">Substitution watch</div><div class="value" id="unifiedSubstitutions">—</div><div class="hint" id="unifiedSubstitutionsHint">—</div></div>
           </div>
@@ -1581,7 +1765,7 @@
               </article>
               <article class="subscription-unified-history-card" aria-labelledby="subscriptionUnifiedFiveHourTitle">
                 <h3 id="subscriptionUnifiedFiveHourTitle">Unified five-hour subscription utilization</h3>
-                <p id="subscriptionUnifiedFiveHourDescription" class="caption">Each provider’s explicitly mapped comparable five-hour quota on a normalized 0–100% scale; this does not compare tokens or dollars. OpenAI / Codex reports no comparable five-hour quota in the canonical ledger, and weekly data is never substituted.</p>
+                <p id="subscriptionUnifiedFiveHourDescription" class="caption">Each provider’s explicitly mapped comparable five-hour quota on a normalized 0–100% scale; this does not compare tokens or dollars. OpenAI / Codex reports no comparable five-hour quota in the canonical ledger, and weekly data is never substituted. The chart plots the last 48 hours — a week of five-hour sawtooth is unreadable; the folded hourly table keeps the full window.</p>
                 <p id="subscriptionUnifiedFiveHourSummary" class="chart-summary" aria-live="polite">Loading five-hour subscription quota history…</p>
                 <div class="subscription-quota-chart-layout">
                   <div class="subscription-quota-chart-wrap">
@@ -1970,6 +2154,27 @@
         "z-ai-glm": 7,
         "kimi-k3-coding": 2,
       });
+
+      // Display-label mapping ONLY (polish round item 1): the unified
+      // utilization legends read "Claude 1", "Codex", … instead of the full
+      // series labels that wrapped mid-word. Series identity and data are
+      // untouched — the fold tables keep the full labels.
+      const SUBSCRIPTION_PROVIDER_SHORT_LABELS = Object.freeze({
+        "anthropic": "Claude",
+        "openai-codex": "Codex",
+        "opencode-go": "OpenCode Go",
+        "z-ai-glm": "Z.AI",
+        "kimi-k3-coding": "Kimi K3",
+      });
+
+      function subscriptionSeriesDisplayLabel(row) {
+        const provider = String(row && row.provider || "").trim().toLowerCase();
+        const short = SUBSCRIPTION_PROVIDER_SHORT_LABELS[provider];
+        if (!short) return String(row && row.label || "Quota");
+        return Number(row.provider_account_count) > 1
+          ? `${short} ${row.provider_account_index}`
+          : short;
+      }
       const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
       const state = {
@@ -2899,21 +3104,30 @@
         }
         const ns = "http://www.w3.org/2000/svg";
         let cursor = 0;
+        const minorRows = [];
         providers.forEach((row, index) => {
           const color = subscriptionUnifiedProviderColor({ provider: row.provider_canonical }, index);
           // One SOLID arc per provider (keeper-ruled 2026-08-30: the same-hue
           // fresh/cached pair read as a confusing two-tone). Cache share lives
           // in the legend text; the ring answers only "who ate the window."
           const span = Number(row.total_tokens) / windowTotal;
+          // Noise fold (polish round item 4a): under 0.1% of window tokens a
+          // provider keeps its arc as a hairline but folds out of the legend
+          // into one combined line below.
+          const minor = span < 0.001;
           if (span > 0) {
             const arc = document.createElementNS(ns, "path");
-            const gap = providers.length > 1 ? 0.004 : 0;
+            const gap = providers.length > 1 ? Math.min(0.004, span / 4) : 0;
             arc.setAttribute("d", donutArcPath(100, 100, 74, cursor + gap, Math.min(cursor + span - gap, 0.99999)));
             arc.setAttribute("fill", "none");
             arc.setAttribute("stroke", color);
-            arc.setAttribute("stroke-width", "30");
+            arc.setAttribute("stroke-width", minor ? "10" : "30");
             svg.appendChild(arc);
             cursor += span;
+          }
+          if (minor) {
+            minorRows.push(row);
+            return;
           }
           const item = document.createElement("li");
           const swatch = document.createElement("span");
@@ -2937,6 +3151,23 @@
           item.append(swatch, body);
           legend.appendChild(item);
         });
+        if (minorRows.length) {
+          const combined = minorRows.reduce((sum, row) => sum + Number(row.total_tokens), 0);
+          const combinedPct = ((combined / windowTotal) * 100).toFixed(2);
+          const names = minorRows
+            .map((row) => `${row.provider} ${((Number(row.total_tokens) / windowTotal) * 100).toFixed(2)}%`)
+            .join(", ");
+          const item = document.createElement("li");
+          item.className = "legend-fold";
+          item.textContent = `+${minorRows.length} more · ${combinedPct}% together`;
+          item.title = names;
+          // The fold dims visually; aria still names every folded provider.
+          item.setAttribute(
+            "aria-label",
+            `${minorRows.length} provider${minorRows.length === 1 ? "" : "s"} under 0.1% of window tokens: ${names}`,
+          );
+          legend.appendChild(item);
+        }
         const centre = document.createElementNS(ns, "text");
         centre.setAttribute("x", "100"); centre.setAttribute("y", "96");
         centre.setAttribute("text-anchor", "middle");
@@ -2970,7 +3201,66 @@
         return "role-stability";
       }
 
-      function renderResetRail(rows) {
+      // Stable per-provider card anchors (polish round item 13): the ids the
+      // rail chips and the digest chip link to. Keys are the canonical
+      // provider group keys the subscription cards render under.
+      function providerCardDomId(key) {
+        return `subscription-card-${String(key || "unknown").toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}`;
+      }
+
+      // Shared chip filler: the rail chips and the hero digest's soonest-reset
+      // chip render through the same helper, so role class, ticking dataset,
+      // and the card anchor stay in one place.
+      function fillResetChip(node, chip, now, labelText) {
+        node.textContent = "";
+        node.classList.remove("role-stability", "role-threshold", "role-violation");
+        node.classList.add(chipRole(chip.usedPct, chip.resetAt - now));
+        node.dataset.resetAt = String(chip.resetAt);
+        node.dataset.weekly = chip.weekly ? "1" : "";
+        if (node.tagName === "A") node.setAttribute("href", `#${providerCardDomId(chip.cardKey)}`);
+        const label = document.createElement("strong");
+        label.textContent = labelText;
+        const windowSpan = document.createElement("span");
+        windowSpan.className = "chip-window";
+        windowSpan.textContent = ` ${chip.windowName} · ${chip.usedPct.toFixed(0)}% used · `;
+        const countdown = document.createElement("span");
+        countdown.className = "chip-countdown";
+        countdown.textContent = formatCountdown(chip.resetAt - now, chip.weekly);
+        node.append(label, windowSpan, countdown);
+      }
+
+      // Ops-digest mirror (polish round item 2): the digest's soonest-reset
+      // chip and the tile-row "Soonest reset" tile are both written here —
+      // one computation, two surfaces, zero extra fetches.
+      function renderSoonestResetDisplays(soonest, now) {
+        const tile = document.getElementById("unifiedSoonestReset");
+        const hint = document.getElementById("unifiedSoonestResetHint");
+        const digestChip = document.getElementById("digestReset");
+        const digestNote = document.getElementById("digestResetNote");
+        if (tile && hint) {
+          if (soonest) {
+            tile.dataset.resetAt = String(soonest.resetAt);
+            tile.dataset.weekly = soonest.weekly ? "1" : "";
+            tile.textContent = formatCountdown(soonest.resetAt - now, soonest.weekly);
+            hint.textContent = `${soonest.provider} ${soonest.windowName} · ${soonest.usedPct.toFixed(0)}% used`;
+          } else {
+            tile.textContent = "—";
+            hint.textContent = "no exact resets reported";
+          }
+        }
+        if (digestChip && digestNote) {
+          if (soonest) {
+            fillResetChip(digestChip, soonest, now, soonest.label);
+            digestChip.hidden = false;
+            digestNote.textContent = "soonest quota window · links to its card";
+          } else {
+            digestChip.hidden = true;
+            digestNote.textContent = "no exact resets reported";
+          }
+        }
+      }
+
+      function renderResetRail(rows, canonicalKey = (value) => value) {
         const rail = document.getElementById("resetRailChips");
         const summary = document.getElementById("resetRailSummary");
         if (!rail) return;
@@ -2980,6 +3270,7 @@
             && row.used_value != null && row.limit_value != null)
           .map((row) => ({
             provider: String(row.provider || "unknown"),
+            cardKey: canonicalKey(String(row.provider || "unknown")),
             windowName: String(row.quota_name || ""),
             usedPct: (Number(row.used_value) / Number(row.limit_value)) * 100,
             resetAt: Date.parse(row.resets_at),
@@ -2993,40 +3284,23 @@
           const dupKey = `${chip.provider}:${chip.windowName}`;
           const ordinal = (seen.get(dupKey) || 0) + 1;
           seen.set(dupKey, ordinal);
-          const item = document.createElement("li");
-          item.className = `reset-chip ${chipRole(chip.usedPct, chip.resetAt - now)}`;
-          item.dataset.resetAt = String(chip.resetAt);
-          item.dataset.weekly = chip.weekly ? "1" : "";
-          const label = document.createElement("strong");
           // Same provider+window twice = a second account (account identifiers
           // never cross the private API by design) — number by order.
-          label.textContent = ordinal > 1 ? `${chip.provider} (${ordinal})` : chip.provider;
-          const windowSpan = document.createElement("span");
-          windowSpan.className = "chip-window";
-          windowSpan.textContent = ` ${chip.windowName} · ${chip.usedPct.toFixed(0)}% used · `;
-          const countdown = document.createElement("span");
-          countdown.className = "chip-countdown";
-          countdown.textContent = formatCountdown(chip.resetAt - now, chip.weekly);
-          item.append(label, windowSpan, countdown);
+          chip.label = ordinal > 1 ? `${chip.provider} (${ordinal})` : chip.provider;
+          const item = document.createElement("li");
+          // A real anchor (item 13): keyboard reachable, targets the
+          // provider's subscription card; scroll behavior is the CSS layer's
+          // reduced-motion-aware call.
+          const link = document.createElement("a");
+          link.className = "reset-chip";
+          fillResetChip(link, chip, now, chip.label);
+          item.appendChild(link);
           rail.appendChild(item);
         });
         summary.textContent = chips.length
           ? `${chips.length} windows reporting exact resets; soonest first.`
           : "No quota windows report an exact reset time.";
-        const soonest = chips[0];
-        const tile = document.getElementById("unifiedSoonestReset");
-        const hint = document.getElementById("unifiedSoonestResetHint");
-        if (tile) {
-          if (soonest) {
-            tile.dataset.resetAt = String(soonest.resetAt);
-            tile.dataset.weekly = soonest.weekly ? "1" : "";
-            tile.textContent = formatCountdown(soonest.resetAt - now, soonest.weekly);
-            hint.textContent = `${soonest.provider} ${soonest.windowName} · ${soonest.usedPct.toFixed(0)}% used`;
-          } else {
-            tile.textContent = "—";
-            hint.textContent = "no exact resets reported";
-          }
-        }
+        renderSoonestResetDisplays(chips[0], now);
       }
 
       // One shared ticker; wall-clock displays, quiet when the tab is hidden.
@@ -3078,11 +3352,22 @@
         const buckets = Array.isArray(timeSeries.bucket_starts) ? timeSeries.bucket_starts : [];
         const CELLS = 48;
         const offset = Math.max(0, buckets.length - CELLS);
-        const series = [...timeSeries.provider_status_series]
+        const ranked = [...timeSeries.provider_status_series]
           .filter((row) => Number(row.total_events) > 0)
-          .sort((a, b) => Number(b.total_events) - Number(a.total_events));
+          .sort((a, b) => Number(b.total_events) - Number(a.total_events))
+          .map((row) => ({
+            row,
+            windowEvents: row.events.slice(offset).reduce((sum, n) => sum + n, 0),
+            windowErrors: row.errors.slice(offset).reduce((sum, n) => sum + n, 0),
+          }));
+        // Noise fold (polish round item 4b): providers named "unknown" and
+        // providers with under 10 events in the shown window collapse into
+        // one dim line; aria still names each of them with its call count.
+        const shown = ranked.filter((entry) => entry.row.provider !== "unknown" && entry.windowEvents >= 10);
+        const folded = ranked.filter((entry) => entry.row.provider === "unknown" || entry.windowEvents < 10);
         host.textContent = "";
-        series.forEach((row, index) => {
+        shown.forEach((entry, index) => {
+          const row = entry.row;
           const rowNode = document.createElement("div");
           rowNode.className = "status-row";
           const head = document.createElement("div");
@@ -3095,8 +3380,8 @@
           head.append(dot, name, providerStatusBadge(feeds[row.provider]));
           const cells = document.createElement("div");
           cells.className = "status-cells";
-          const windowErrors = row.errors.slice(offset).reduce((sum, n) => sum + n, 0);
-          const windowEvents = row.events.slice(offset).reduce((sum, n) => sum + n, 0);
+          const windowErrors = entry.windowErrors;
+          const windowEvents = entry.windowEvents;
           cells.setAttribute("role", "img");
           cells.setAttribute("aria-label",
             `${row.provider}: ${intFormat(windowEvents)} calls, ${intFormat(windowErrors)} errors over the last ${CELLS} complete UTC hours` +
@@ -3119,9 +3404,21 @@
           rowNode.append(head, cells);
           host.appendChild(rowNode);
         });
-        const totalErrors = series.reduce((sum, row) => sum + Number(row.total_errors), 0);
-        summary.textContent = series.length
-          ? `${series.length} providers · ${intFormat(totalErrors)} errored calls in the seven-day window.`
+        if (folded.length) {
+          const foldNode = document.createElement("div");
+          foldNode.className = "status-row low-traffic";
+          foldNode.setAttribute("role", "note");
+          const names = folded
+            .map((entry) => `${entry.row.provider} (${intFormat(entry.windowEvents)} calls, ${intFormat(entry.windowErrors)} errors)`)
+            .join(", ");
+          foldNode.textContent = `+${folded.length} low-traffic provider${folded.length === 1 ? "" : "s"}`;
+          foldNode.title = names;
+          foldNode.setAttribute("aria-label", `Low-traffic providers folded from the strip: ${names}`);
+          host.appendChild(foldNode);
+        }
+        const totalErrors = ranked.reduce((sum, entry) => sum + Number(entry.row.total_errors), 0);
+        summary.textContent = ranked.length
+          ? `${ranked.length} providers · ${intFormat(totalErrors)} errored calls in the seven-day window.`
           : "No provider traffic in the window.";
       }
 
@@ -3142,6 +3439,105 @@
         hint.textContent = parts.join(" · ");
       }
 
+      // ── Ops-digest mirrors (polish round item 2). Each helper writes both
+      // the unified tile row and the hero digest from the SAME state the
+      // panel loader just computed — mirror, never refetch. ──
+
+      function renderSpendDisplays() {
+        const week = state.listPriceWeek || {};
+        const text = `$${week.estimate_usd || "0"} wk`;
+        const tile = document.getElementById("unifiedPricedSpend");
+        const digest = document.getElementById("digestSpend");
+        if (tile) tile.textContent = text;
+        if (digest) digest.textContent = text;
+      }
+
+      function renderSubstitutionDisplays(substituted) {
+        const hintText = substituted
+          ? "served model differed from requested"
+          : "no substitutions observed · 7 days";
+        const tile = document.getElementById("unifiedSubstitutionTile");
+        document.getElementById("unifiedSubstitutions").textContent = intFormat(substituted);
+        document.getElementById("unifiedSubstitutionsHint").textContent = hintText;
+        tile.classList.toggle("role-violation", substituted > 0);
+        const digestItem = document.getElementById("digestSubstitutionItem");
+        const digestValue = document.getElementById("digestSubstitutions");
+        const digestNote = document.getElementById("digestSubstitutionsNote");
+        if (digestItem && digestValue && digestNote) {
+          digestValue.textContent = intFormat(substituted);
+          digestNote.textContent = hintText;
+          digestItem.classList.toggle("role-violation", substituted > 0);
+          digestItem.classList.toggle("role-stability", !substituted);
+        }
+      }
+
+      function renderFreshnessDigest(freshness) {
+        const value = document.getElementById("digestFreshness");
+        const note = document.getElementById("digestFreshnessNote");
+        const item = document.getElementById("digestFreshnessItem");
+        if (!value || !note || !item) return;
+        const status = String(freshness.status || "unknown");
+        const lanes = Array.isArray(freshness.lanes) ? freshness.lanes : [];
+        const ceded = lanes
+          .filter((lane) => lane && lane.ceded === true)
+          .map((lane) => String(lane.lane));
+        value.textContent = status;
+        item.classList.toggle("role-stability", status === "fresh" && !ceded.length);
+        // Stale-beyond-grace and ceded lanes wear the violation role (ruled
+        // mapping in the adapter header).
+        item.classList.toggle(
+          "role-violation",
+          status === "stale" || status === "empty" || ceded.length > 0,
+        );
+        const parts = [];
+        if (freshness.latest_at) parts.push(`last write ${formatTimestamp(freshness.latest_at)}`);
+        const staleSuffix = staleLaneSuffix(freshness).trim();
+        if (staleSuffix) parts.push(staleSuffix);
+        if (ceded.length) parts.push(`Ceded lane${ceded.length > 1 ? "s" : ""}: ${ceded.join(", ")}.`);
+        note.textContent = parts.join(" ") || "usage ledger heartbeat";
+      }
+
+      // Spend sparkline (polish round item 12): the server's seven day-bucket
+      // list-price estimates as a bare structure-role polyline — trend only;
+      // the exact values ride the title.
+      function renderSpendSparkline() {
+        const svg = document.getElementById("unifiedSpendSpark");
+        if (!svg) return;
+        const days = Array.isArray(state.listPriceDaily) ? state.listPriceDaily : [];
+        const values = days.map((day) => Number(day && day.estimate_usd));
+        // SVGElement has no .hidden property — toggle the attribute itself
+        // (the style layer gives it effect in the SVG namespace).
+        if (days.length < 2 || !values.every((value) => Number.isFinite(value))) {
+          svg.setAttribute("hidden", "hidden");
+          return;
+        }
+        const width = 100;
+        const height = 24;
+        const pad = 2;
+        const max = Math.max(...values);
+        const points = values
+          .map((value, index) => {
+            const x = (index / (values.length - 1)) * width;
+            const y = max > 0 ? height - pad - (value / max) * (height - pad * 2) : height - pad;
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+          })
+          .join(" ");
+        svg.textContent = "";
+        const ns = "http://www.w3.org/2000/svg";
+        const line = document.createElementNS(ns, "polyline");
+        line.setAttribute("points", points);
+        svg.appendChild(line);
+        const described = days
+          .map((day) => `${new Date(day.day_start).toLocaleString([], { timeZone: "UTC", month: "short", day: "numeric" })} $${day.estimate_usd}`)
+          .join(" · ");
+        svg.setAttribute("title", described);
+        const titleNode = document.createElementNS(ns, "title");
+        titleNode.textContent = described;
+        svg.appendChild(titleNode);
+        svg.setAttribute("aria-label", `Daily list-price estimates (UTC day buckets): ${described}`);
+        svg.removeAttribute("hidden");
+      }
+
       async function loadUnifiedUsage() {
         try {
           const response = await fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) });
@@ -3149,6 +3545,9 @@
           const data = await response.json();
           const freshness = data.freshness || {};
           renderCededLanes(freshness);
+          // The digest mirrors freshness even when the panel below falls back
+          // to a stale/empty notice — "does anything need me?" must not blank.
+          renderFreshnessDigest(freshness);
           if (freshness.status === "stale") {
             showPanel("unifiedUsageState", "unifiedUsageContent", `Canonical usage is stale · last ledger write ${formatTimestamp(freshness.latest_at)}.${staleLaneSuffix(freshness)}`);
             return;
@@ -3176,18 +3575,14 @@
           // would this traffic cost at list." Week is the value; 24h and 5h
           // fill in as their windows arrive; coverage keeps the gaps honest.
           const listWeek = totals.list_price || {};
-          document.getElementById("unifiedPricedSpend").textContent = `$${listWeek.estimate_usd || "0"} wk`;
           state.listPriceWeek = listWeek;
+          state.listPriceDaily = data.list_price_daily;
+          renderSpendDisplays();
+          renderSpendSparkline();
           renderListPriceHint();
           // Substitution watch: NULL model_reported never counts; zero is the
           // healthy reading and any nonzero wears the violation role.
-          const substituted = Number(totals.substituted_events || 0);
-          const substitutionTile = document.getElementById("unifiedSubstitutionTile");
-          document.getElementById("unifiedSubstitutions").textContent = intFormat(substituted);
-          document.getElementById("unifiedSubstitutionsHint").textContent = substituted
-            ? "served model differed from requested"
-            : "no substitutions observed · 7 days";
-          substitutionTile.classList.toggle("role-violation", substituted > 0);
+          renderSubstitutionDisplays(Number(totals.substituted_events || 0));
           state.donutWeek = data;
           renderDonuts();
           renderProviderStatus(data.time_series);
@@ -3324,7 +3719,7 @@
           const color = subscriptionUnifiedProviderColor(row, index);
           const status = row.confidence_status;
           return {
-            label: `${row.label} — ${quotaConfidenceLabel(status)} confidence`,
+            label: `${subscriptionSeriesDisplayLabel(row)} — ${quotaConfidenceLabel(status)} confidence`,
             data: row.values,
             borderColor: color,
             backgroundColor: color,
@@ -3399,9 +3794,11 @@
             swatch.style.borderTop = `2px dashed ${color}`;
           }
           const label = document.createElement("strong");
-          label.textContent = row.label;
+          label.textContent = subscriptionSeriesDisplayLabel(row);
           const confidence = document.createElement("span");
           confidence.textContent = statusText;
+          // The aria surface keeps the FULL series label — the short form is
+          // a sighted-scan affordance, not an identity change.
           item.setAttribute("aria-label", `${row.label}: ${statusText}`);
           item.append(swatch, label, confidence);
           container.appendChild(item);
@@ -3494,7 +3891,7 @@
 
       function renderSubscriptionUnifiedHistory(
         projection,
-        { prefix, period, seriesDescription, currentChart },
+        { prefix, period, seriesDescription, currentChart, chartBucketLimit },
         bucketStarts,
         labels,
       ) {
@@ -3520,13 +3917,24 @@
           return undefined;
         }
 
+        // Chart-window cap (polish round item 11): the five-hour sawtooth is
+        // unreadable across 168 buckets, so its CANVAS plots only the trailing
+        // slice; the fold table above renders from the unsliced rows and keeps
+        // the full window.
+        const limit = Number(chartBucketLimit);
+        const bounded = Number.isFinite(limit) && limit > 0 && limit < labels.length;
+        const chartLabels = bounded ? labels.slice(-limit) : labels;
+        const chartRows = bounded
+          ? rows.map((row) => ({ ...row, values: row.values.slice(-limit) }))
+          : rows;
         const result = buildOrUpdateSubscriptionUnifiedChart(
           `${prefix}Chart`,
           currentChart,
-          labels,
-          subscriptionQuotaDatasets(rows),
+          chartLabels,
+          subscriptionQuotaDatasets(chartRows),
         );
-        summary.textContent = `${rows.length} comparable ${seriesDescription}. ${missingMessage}`.trim();
+        const windowNote = bounded ? ` Chart shows the last ${limit} hours; the table keeps the full window.` : "";
+        summary.textContent = `${rows.length} comparable ${seriesDescription}.${windowNote} ${missingMessage}`.trim();
         if (!result.rendered) {
           summary.textContent = `${summary.textContent} Chart drawing is unavailable; the accessible data table remains current.`;
         }
@@ -3565,6 +3973,7 @@
             period: "five-hour",
             seriesDescription: "five-hour provider series",
             currentChart: subscriptionUnifiedFiveHourChart,
+            chartBucketLimit: 48,
           },
           bucketStarts,
           labels,
@@ -3585,6 +3994,7 @@
         expectedProviders.forEach(([providerId, displayName]) => {
           const card = document.createElement("article");
           card.className = "subscription-provider-card";
+          card.id = providerCardDomId(providerId);
 
           const header = document.createElement("div");
           header.className = "subscription-provider-header";
@@ -3636,7 +4046,6 @@
 
           const rows = Array.isArray(data.latest) ? data.latest : [];
           state.quotaLatest = rows;
-          renderResetRail(rows);
           renderDonuts();
           if (!rows.length && !ledgerNotice) {
             ledgerNotice = "No subscription observations are currently recorded. Expected providers remain visible below.";
@@ -3681,6 +4090,9 @@
               ? providerAliases[aliasKey]
               : rawProvider;
           };
+          // The rail chips anchor to the provider cards, so they resolve the
+          // same canonical group key the cards render under (item 13).
+          renderResetRail(rows, providerKey);
           const ensureProviderGroup = (provider) => {
             const rawProvider = String(provider || "unknown").trim() || "unknown";
             const key = providerKey(rawProvider);
@@ -3790,6 +4202,7 @@
           groups.forEach((group) => {
             const card = document.createElement("article");
             card.className = "subscription-provider-card";
+            card.id = providerCardDomId(group.key);
             const header = document.createElement("div");
             header.className = "subscription-provider-header";
             const titleBlock = document.createElement("div");
