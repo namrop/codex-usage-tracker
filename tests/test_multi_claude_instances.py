@@ -422,6 +422,13 @@ def test_collect_all_uses_independent_claude_quota_configs_probes_and_namespaces
         "capture_claude_code_usage_screen",
         lambda **kwargs: captures.append(kwargs) or _claude_usage_screen(),
     )
+    api_attempts = []
+
+    def expired_api(namespace, *, credentials_path, account_ref=None, **kwargs):
+        api_attempts.append((namespace, Path(credentials_path), account_ref))
+        raise quota_module.ClaudeTokenExpired("expired")
+
+    monkeypatch.setattr(collector_module, "collect_claude_code_quota_api", expired_api)
     primary = tmp_path / "primary"
     secondary = tmp_path / "secondary"
     probe = tmp_path / "claude-probe"
@@ -441,6 +448,16 @@ def test_collect_all_uses_independent_claude_quota_configs_probes_and_namespaces
 
     assert result["sources"]["claude_code_quota"] == {"discovered": 3}
     assert result["sources"]["claude_code_secondary_quota"] == {"discovered": 3}
+    # The OAuth usage API is tried first per instance with per-account
+    # credentials; expiry cedes to the tmux probe so the CLI can refresh.
+    assert api_attempts == [
+        ("sol:claude-code-quota", Path("~/.claude/.credentials.json").expanduser(), None),
+        (
+            "sol:claude-code-secondary-quota",
+            secondary / ".credentials.json",
+            "claude-code-secondary",
+        ),
+    ]
     assert [(call["claude_config_dir"], Path(call["probe_dir"]), call["account_ref"]) for call in captures] == [
         (None, probe, None),
         (secondary, tmp_path / "claude-probe-secondary", "claude-code-secondary"),
@@ -463,6 +480,7 @@ def test_multi_claude_quota_dry_run_never_probes_or_creates_probe_dirs(tmp_path,
         raise AssertionError("Claude quota probe must not run during dry-run")
 
     monkeypatch.setattr(collector_module, "collect_claude_code_quota", forbidden_probe)
+    monkeypatch.setattr(collector_module, "collect_claude_code_quota_api", forbidden_probe)
     probe = tmp_path / "claude-probe"
     result = collect_all(
         claude_instances=[
