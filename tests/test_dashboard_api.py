@@ -239,9 +239,21 @@ def test_subscription_api_projects_only_safe_normalized_extension_presentations(
         "measurement_confidence",
         "provider_state",
         "coverage_status",
+        # Reset-rail additions: the canonical provider key the donut legend
+        # joins on, and an account ORDINAL. account_ref itself stays private —
+        # the serialized-payload scan at the end of this test is the gate.
+        "provider_canonical",
+        "provider_account_index",
+        "provider_account_count",
     }
     assert all(set(row) == expected_fields for row in payload["latest"])
     assert all(set(row) == expected_fields for row in payload["observations"])
+    assert all(
+        row["provider_canonical"] == "openai-codex"
+        and row["provider_account_index"] == 1
+        and row["provider_account_count"] == 1
+        for row in payload["latest"]
+    )
 
     latest_by_quota = {row["quota_name"]: row for row in payload["latest"]}
     assert latest_by_quota["week"]["provider_state"] == "inactive_or_not_reported"
@@ -301,7 +313,6 @@ def test_subscription_provider_overview_and_raw_observation_details_exist(tmp_pa
 
 FOLD_KEYS = (
     "modelTokenSeries",
-    "codexClaudeSeries",
     "harnessUsage",
     "providerModelUsage",
     "subscriptionWeeklySeries",

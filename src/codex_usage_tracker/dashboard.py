@@ -81,6 +81,9 @@ _LEDGER_CACHE_MAX_ENTRIES = 8
 _LEDGER_CACHE_LOCK = threading.Lock()
 _LEDGER_CACHE: Dict[str, tuple[tuple[int, int], List[Dict[str, Any]]]] = {}
 _UNIFIED_MODEL_SERIES_LIMIT = 5
+# The status strip is one row per provider; provider cardinality is small and
+# bounded by the ledger, but the payload stays bounded on principle.
+_UNIFIED_STATUS_PROVIDER_LIMIT = 12
 _SUBSCRIPTION_CHART_PROVIDER_LIMIT = 32
 _SUBSCRIPTION_CHART_SERIES_PER_PROVIDER_LIMIT = 16
 _PRIVATE_LEDGER_MAX_AGE_SECONDS = 3 * 60 * 60
@@ -516,6 +519,89 @@ def _accounted_tokens(row: dict[str, Any]) -> int:
     return sum(int(row.get(field) or 0) for field in _ADDITIVE_TOKEN_FIELDS)
 
 
+def _is_substituted_event(row: dict[str, Any]) -> bool:
+    """Served-model substitution: the provider named a model, and it is not the
+    one the caller asked for.
+
+    NULL ``model_reported`` is the source declining to claim a served model, not
+    a claim that the served model matched — so a NULL never counts as a
+    substitution and never counts as a non-substitution either. It is simply not
+    evidence. (Reported-model capture went live 2026-08-29; every older row is
+    NULL forever by decision, so this count is only meaningful forward.)
+    """
+    reported = row.get("model_reported")
+    if reported is None:
+        return False
+    return reported != row.get("model_requested")
+
+
+def _build_provider_status_series(
+    rows: list[dict[str, Any]],
+    *,
+    window_start: datetime,
+    bucket_count: int,
+) -> list[dict[str, Any]]:
+    """Per provider per complete UTC hour: traffic, failures, dominant class.
+
+    ``request_status`` and ``error_class`` ride every canonical usage event, so
+    an uptime read needs no new collection — only this projection. Only the
+    explicit ``error`` status counts as a failure: ``unknown`` is a source that
+    does not report status, and ``cancelled`` is the operator stopping a call,
+    neither of which is the provider failing.
+    """
+    events: dict[str, list[int]] = {}
+    errors: dict[str, list[int]] = {}
+    classes: dict[str, list[dict[str, int]]] = {}
+
+    for row in rows:
+        occurred_at = _fact_datetime(row.get("occurred_at"))
+        bucket_index = int((occurred_at - window_start).total_seconds() // 3600)
+        if bucket_index < 0 or bucket_index >= bucket_count:
+            continue
+        provider = str(row.get("provider") or "unknown")
+        if provider not in events:
+            events[provider] = [0] * bucket_count
+            errors[provider] = [0] * bucket_count
+            classes[provider] = [{} for _index in range(bucket_count)]
+        events[provider][bucket_index] += 1
+        if row.get("request_status") != "error":
+            continue
+        errors[provider][bucket_index] += 1
+        error_class = row.get("error_class")
+        if error_class is None:
+            continue
+        counts = classes[provider][bucket_index]
+        name = str(error_class)
+        counts[name] = counts.get(name, 0) + 1
+
+    def dominant(counts: dict[str, int]) -> str | None:
+        if not counts:
+            return None
+        # Deterministic ties: highest count, then lexicographic name.
+        return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+
+    series = []
+    for provider in events:
+        window_classes: dict[str, int] = {}
+        for counts in classes[provider]:
+            for name, total in counts.items():
+                window_classes[name] = window_classes.get(name, 0) + total
+        series.append(
+            {
+                "provider": provider,
+                "provider_canonical": _canonical_quota_provider(provider),
+                "events": events[provider],
+                "errors": errors[provider],
+                "top_error_classes": [dominant(counts) for counts in classes[provider]],
+                "total_events": sum(events[provider]),
+                "total_errors": sum(errors[provider]),
+                "dominant_error_class": dominant(window_classes),
+            }
+        )
+    series.sort(key=lambda item: (-item["total_events"], item["provider"]))
+    return series[:_UNIFIED_STATUS_PROVIDER_LIMIT]
+
+
 def _build_unified_time_series(
     rows: list[dict[str, Any]],
     *,
@@ -526,11 +612,6 @@ def _build_unified_time_series(
     bucket_count = int((window_end - window_start).total_seconds() // 3600)
     bucket_starts = [window_start + timedelta(hours=index) for index in range(bucket_count)]
     model_buckets: dict[tuple[str, str], list[int]] = {}
-    comparison = {
-        "codex": [0] * bucket_count,
-        "claude_code": [0] * bucket_count,
-    }
-    excluded_tokens = 0
 
     for row in rows:
         occurred_at = _fact_datetime(row.get("occurred_at"))
@@ -542,15 +623,6 @@ def _build_unified_time_series(
         model = str(row.get("model_reported") or row.get("model_requested") or "unknown")
         values = model_buckets.setdefault((provider, model), [0] * bucket_count)
         values[bucket_index] += total
-
-        is_codex = provider == "openai-codex"
-        is_claude_code = row.get("harness") == "claude_code"
-        if is_codex:
-            comparison["codex"][bucket_index] += total
-        if is_claude_code:
-            comparison["claude_code"][bucket_index] += total
-        if not is_codex and not is_claude_code:
-            excluded_tokens += total
 
     ranked_models = sorted(
         model_buckets.items(),
@@ -581,24 +653,6 @@ def _build_unified_time_series(
             "values": other_values,
         }
 
-    comparison_series = [
-        {
-            "key": "codex",
-            "label": "OpenAI Codex subscription",
-            "harness": None,
-            "provider": "openai-codex",
-            "total_tokens": sum(comparison["codex"]),
-            "values": comparison["codex"],
-        },
-        {
-            "key": "claude_code",
-            "label": "Claude Code",
-            "harness": "claude_code",
-            "provider": None,
-            "total_tokens": sum(comparison["claude_code"]),
-            "values": comparison["claude_code"],
-        },
-    ]
     return {
         "generated_at": _iso_z(generated_at),
         "bucket_minutes": 60,
@@ -608,8 +662,12 @@ def _build_unified_time_series(
         "bucket_starts": [_iso_z(value) for value in bucket_starts],
         "model_series": model_series,
         "other_model_series": other_model_series,
-        "comparison_series": comparison_series,
-        "comparison_excluded_tokens": excluded_tokens,
+        # The Codex-vs-Claude two-series comparison was retired with its card
+        # (keeper ruling, 2026-08-30): the provider donuts carry share now, and
+        # this projection existed only to feed that one chart.
+        "provider_status_series": _build_provider_status_series(
+            rows, window_start=window_start, bucket_count=bucket_count
+        ),
     }
 
 
@@ -1364,8 +1422,12 @@ def create_app(
         )
         totals["priced_events"] = priced_events
         totals["unpriced_events"] = len(rows) - priced_events
+        # Served-model substitution watch: a NULL model_reported is not a claim
+        # that the served model matched, so it never counts here.
+        totals["substituted_events"] = sum(1 for row in rows if _is_substituted_event(row))
         grouped: Dict[tuple[str, str], Dict[str, Any]] = {}
         by_harness: Dict[str, Dict[str, Any]] = {}
+        by_provider: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             key = (
                 str(row.get("provider") or "unknown"),
@@ -1410,6 +1472,32 @@ def create_app(
                     harness_bucket[field] = str(
                         Decimal(harness_bucket[field]) + Decimal(str(row[field]))
                     )
+            # Provider-level throughput for the window donuts. The canonical key
+            # is resolved here rather than in the browser so the donut legend
+            # can join to a quota row without a second copy of the alias table.
+            provider_bucket = by_provider.setdefault(
+                key[0],
+                {
+                    "provider": key[0],
+                    "provider_canonical": _canonical_quota_provider(key[0]),
+                    "events": 0,
+                    "substituted_events": 0,
+                    **{field: 0 for field in token_fields},
+                },
+            )
+            provider_bucket["events"] += 1
+            if _is_substituted_event(row):
+                provider_bucket["substituted_events"] += 1
+            for field in token_fields:
+                provider_bucket[field] += int(row.get(field) or 0)
+        for bucket in by_provider.values():
+            bucket["total_tokens"] = sum(
+                bucket[field] for field in token_fields if field != "reasoning_tokens"
+            )
+            # Cached vs fresh throughput is the distinction the donut draws: a
+            # cache read is billed and served differently from fresh input.
+            bucket["cached_tokens"] = bucket["cache_read_tokens"]
+            bucket["fresh_tokens"] = bucket["total_tokens"] - bucket["cache_read_tokens"]
         for bucket in grouped.values():
             bucket["total_tokens"] = sum(bucket[field] for field in token_fields if field != "reasoning_tokens")
         for bucket in by_harness.values():
@@ -1439,6 +1527,10 @@ def create_app(
             "coverage": coverage,
             "window": window_payload,
             "by_harness": sorted(by_harness.values(), key=lambda item: item["harness"]),
+            "by_provider": sorted(
+                by_provider.values(),
+                key=lambda item: (-item["total_tokens"], item["provider"]),
+            ),
             "by_provider_model": sorted(grouped.values(), key=lambda item: (item["provider"], item["model"])),
         }
         if series_start is not None and series_end is not None:
@@ -1532,8 +1624,35 @@ def create_app(
             seen.add(identity)
             latest.append(row)
 
+        # Account ordinals for the reset rail. account_ref itself stays private
+        # (it is deliberately absent from QUOTA_RESPONSE_FIELDS), but two
+        # Anthropic subscriptions have to read as two chips, not one merged
+        # number. `latest` holds exactly one row per series identity and that
+        # identity contains the account, so the account set here is identical to
+        # the one the quota charts index, and the shared sort key makes the
+        # ordinals identical too.
+        latest_account_indexes: dict[str, dict[_QuotaAccountIdentity, int]] = {}
+        for row in latest:
+            provider = _canonical_quota_provider(row.get("provider"))
+            latest_account_indexes.setdefault(provider, {})[
+                _quota_account_identity(row)
+            ] = 0
+        for provider, accounts in latest_account_indexes.items():
+            for index, account in enumerate(
+                sorted(accounts, key=_quota_account_sort_key), start=1
+            ):
+                accounts[account] = index
+
         def project(row: dict[str, Any]) -> dict[str, Any]:
             projected = {field: row.get(field) for field in QUOTA_RESPONSE_FIELDS}
+            canonical = _canonical_quota_provider(row.get("provider"))
+            projected["provider_canonical"] = canonical
+            accounts = latest_account_indexes.get(canonical)
+            account_index = (
+                accounts.get(_quota_account_identity(row)) if accounts else None
+            )
+            projected["provider_account_index"] = account_index
+            projected["provider_account_count"] = len(accounts) if accounts else 0
             provider_state = row.get("x_provider_state")
             projected["provider_state"] = (
                 provider_state

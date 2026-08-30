@@ -1252,9 +1252,14 @@ def _chart_fact(source_id, occurred_at, *, harness, provider, model_requested, m
     return row
 
 
-def test_unified_usage_hourly_charts_compare_codex_and_claude_without_double_counting_reasoning(
+def test_unified_usage_hourly_charts_split_providers_without_double_counting_reasoning(
     tmp_path, monkeypatch
 ):
+    """The Codex-vs-Claude two-series comparison was retired with its card
+    (keeper ruling 2026-08-30); the provider donuts read share from
+    ``by_provider`` instead. Same fixture, same window semantics, now pinning
+    the projection that replaced it — plus the substitution watch, whose
+    NULL-means-no-claim rule these rows exercise directly."""
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -1312,14 +1317,169 @@ def test_unified_usage_hourly_charts_compare_codex_and_claude_without_double_cou
     aggregate_models = {(row["provider"], row["model"]): row for row in data["by_provider_model"]}
     assert aggregate_models[("openai-codex", "reported-codex")]["total_tokens"] == 20
     assert ("openai-codex", "requested-codex") not in aggregate_models
-    comparison = {row["key"]: row for row in series["comparison_series"]}
-    assert comparison["codex"]["label"] == "OpenAI Codex subscription"
-    assert comparison["codex"]["harness"] is None
-    assert comparison["codex"]["values"] == [20, 0, 5]
-    assert comparison["claude_code"]["label"] == "Claude Code"
-    assert comparison["claude_code"]["values"] == [0, 11, 5]
-    assert series["comparison_excluded_tokens"] == 3
+    # The retired two-series comparison is gone from the payload, not merely
+    # unrendered — it existed only to feed the deleted card.
+    assert "comparison_series" not in series
+    assert "comparison_excluded_tokens" not in series
+
+    # by_provider replaces it: provider share with the cached/fresh split the
+    # donut draws, ordered by throughput so the arcs are deterministic.
+    by_provider = {row["provider"]: row for row in data["by_provider"]}
+    assert [row["provider"] for row in data["by_provider"]] == ["openai-codex", "anthropic"]
+    assert by_provider["openai-codex"]["events"] == 2
+    assert by_provider["openai-codex"]["total_tokens"] == 25
+    assert by_provider["openai-codex"]["cached_tokens"] == 5
+    assert by_provider["openai-codex"]["fresh_tokens"] == 20
+    # Reasoning is diagnostic and is not counted twice here either.
+    assert by_provider["openai-codex"]["reasoning_tokens"] == 2
+    assert by_provider["anthropic"]["total_tokens"] == 14
+    assert by_provider["anthropic"]["cached_tokens"] == 0
+    assert by_provider["anthropic"]["fresh_tokens"] == 14
+    # The canonical key the donut legend joins a quota row on.
+    assert by_provider["openai-codex"]["provider_canonical"] == "openai-codex"
+    assert by_provider["anthropic"]["provider_canonical"] == "anthropic"
+    assert (
+        sum(row["total_tokens"] for row in data["by_provider"])
+        == data["totals"]["total_tokens"]
+    )
+
+    # Substitution watch: only "codex" reports a served model that differs from
+    # the requested one. "claude" reports a matching model, and the two rows
+    # with a NULL model_reported make no claim at all and never count.
+    assert data["totals"]["substituted_events"] == 1
+    assert by_provider["openai-codex"]["substituted_events"] == 1
+    assert by_provider["anthropic"]["substituted_events"] == 0
     assert "source_namespace" not in json.dumps(series)
+
+
+def test_provider_status_series_buckets_traffic_errors_and_dominant_class(
+    tmp_path, monkeypatch
+):
+    """The status strip reads uptime off request_status/error_class, which ride
+    every canonical usage event. Only the explicit ``error`` status is a
+    failure: ``unknown`` is a source that does not report status and
+    ``cancelled`` is the operator stopping a call — neither is the provider
+    failing, and neither may dim a cell that carried traffic."""
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, 5, 0, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    rows = [
+        # 09:00 — clean hour for zai.
+        _chart_fact("z-ok-1", "2026-07-14T09:10:00Z", harness="hermes", provider="zai",
+                    model_requested="glm", input_tokens=4, request_status="ok"),
+        _chart_fact("z-ok-2", "2026-07-14T09:20:00Z", harness="hermes", provider="zai",
+                    model_requested="glm", input_tokens=4, request_status="unknown"),
+        # 10:00 — mixed hour: two failures against three events, two classes,
+        # the more frequent one dominating.
+        _chart_fact("z-err-1", "2026-07-14T10:05:00Z", harness="hermes", provider="zai",
+                    model_requested="glm", request_status="error",
+                    error_class="APITimeoutError"),
+        _chart_fact("z-err-2", "2026-07-14T10:06:00Z", harness="hermes", provider="zai",
+                    model_requested="glm", request_status="error",
+                    error_class="APITimeoutError"),
+        _chart_fact("z-err-3", "2026-07-14T10:07:00Z", harness="hermes", provider="zai",
+                    model_requested="glm", request_status="error",
+                    error_class="RateLimitError"),
+        _chart_fact("z-ok-3", "2026-07-14T10:40:00Z", harness="hermes", provider="zai",
+                    model_requested="glm", input_tokens=1, request_status="ok"),
+        # 11:00 — a cancel and a classless error: cancelled is not a failure,
+        # and an error with no class still counts as a failure.
+        _chart_fact("z-cancel", "2026-07-14T11:01:00Z", harness="hermes", provider="zai",
+                    model_requested="glm", request_status="cancelled"),
+        _chart_fact("z-err-4", "2026-07-14T11:02:00Z", harness="hermes", provider="zai",
+                    model_requested="glm", request_status="error", error_class=None),
+        # A second, quieter provider — one row per hour, always clean.
+        _chart_fact("a-ok", "2026-07-14T11:30:00Z", harness="claude_code",
+                    provider="anthropic", model_requested="claude", input_tokens=2,
+                    request_status="ok"),
+        # Outside the three complete hours in both directions.
+        _chart_fact("too-old", "2026-07-14T08:59:59Z", harness="hermes", provider="zai",
+                    model_requested="glm", request_status="error",
+                    error_class="ShouldNotAppear"),
+        _chart_fact("partial-hour", "2026-07-14T12:00:00Z", harness="hermes",
+                    provider="zai", model_requested="glm", request_status="error",
+                    error_class="ShouldNotAppear"),
+    ]
+    ledger = tmp_path / "usage.jsonl"
+    ledger.write_text("\n".join(canonical_json(row) for row in rows) + "\n", encoding="utf-8")
+    client = create_app(unified_usage_ledger=str(ledger)).test_client()
+
+    response = client.get("/api/unified-usage?hours=3")
+    assert response.status_code == 200
+    series = response.get_json()["time_series"]
+    status = {row["provider"]: row for row in series["provider_status_series"]}
+
+    # Busiest provider first, so the strip's row order is deterministic.
+    assert [row["provider"] for row in series["provider_status_series"]] == ["zai", "anthropic"]
+
+    zai = status["zai"]
+    assert zai["events"] == [2, 4, 2]
+    assert zai["errors"] == [0, 3, 1]
+    assert zai["top_error_classes"] == [None, "APITimeoutError", None]
+    assert zai["total_events"] == 8 and zai["total_errors"] == 4
+    assert zai["dominant_error_class"] == "APITimeoutError"
+    assert zai["provider_canonical"] == "z-ai-glm"
+
+    anthropic = status["anthropic"]
+    assert anthropic["events"] == [0, 0, 1]
+    assert anthropic["errors"] == [0, 0, 0]
+    assert anthropic["top_error_classes"] == [None, None, None]
+    assert anthropic["dominant_error_class"] is None
+
+    # The out-of-window rows never reach the strip.
+    assert "ShouldNotAppear" not in json.dumps(series)
+    # Buckets align with the model series the strip sits beside.
+    assert all(
+        len(row["events"]) == series["bucket_count"]
+        and len(row["errors"]) == series["bucket_count"]
+        and len(row["top_error_classes"]) == series["bucket_count"]
+        for row in series["provider_status_series"]
+    )
+
+
+def test_substituted_events_never_counts_a_null_reported_model(tmp_path, monkeypatch):
+    """NULL model_reported is the source declining to name a served model. It is
+    not a claim that the served model matched, and it is not a substitution —
+    it is simply not evidence, so it may never move this count in either
+    direction. (Every pre-2026-08-29 row is NULL forever by decision.)"""
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, 5, 0, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    rows = [
+        # Served != requested: the one true substitution.
+        _chart_fact("served-other", "2026-07-14T11:00:00Z", harness="hermes",
+                    provider="zai", model_requested="glm-5.3",
+                    model_reported="glm-5.3-flash", input_tokens=1),
+        # Served == requested: a positive claim of no substitution.
+        _chart_fact("served-same", "2026-07-14T11:01:00Z", harness="hermes",
+                    provider="zai", model_requested="glm-5.3",
+                    model_reported="glm-5.3", input_tokens=1),
+        # No claim at all — must not count, even though the requested model is
+        # the same one that was substituted away from above.
+        _chart_fact("no-claim", "2026-07-14T11:02:00Z", harness="hermes",
+                    provider="zai", model_requested="glm-5.3", input_tokens=1),
+        # No claim and no requested model either: still not a substitution.
+        _chart_fact("no-claim-either-side", "2026-07-14T11:03:00Z", harness="hermes",
+                    provider="zai", model_requested=None, input_tokens=1),
+    ]
+    ledger = tmp_path / "usage.jsonl"
+    ledger.write_text("\n".join(canonical_json(row) for row in rows) + "\n", encoding="utf-8")
+    client = create_app(unified_usage_ledger=str(ledger)).test_client()
+
+    data = client.get("/api/unified-usage?hours=3").get_json()
+    assert data["window"]["event_count"] == 4
+    assert data["totals"]["substituted_events"] == 1
+    assert {row["provider"]: row["substituted_events"] for row in data["by_provider"]} == {
+        "zai": 1
+    }
 
 
 def test_unified_usage_hourly_chart_collapses_models_deterministically(tmp_path, monkeypatch):
@@ -1986,19 +2146,20 @@ def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independent
     assert "Codex detail" in page
     assert 'fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) })' in page
     assert 'id="modelTokenChart"' in page
-    assert 'id="codexClaudeChart"' in page
-    assert 'id="providerComparisonBars"' in page
-    assert 'id="modelComparisonBars"' in page
-    assert "Provider comparison" in page
-    assert "Model comparison" in page
-    assert "renderAggregateComparisons(data)" in page
+    # Retired surfaces (keeper-ratified flow rework, akasan 2026-08-30): the
+    # rank-bar comparison cards and the two-party Codex-vs-Claude chart are
+    # replaced by the quota donuts, status strip, and reset rail.
+    assert "codexClaude" not in page
+    assert "ComparisonBars" not in page
+    assert "renderAggregateComparisons" not in page
+    assert 'id="fiveHourDonut"' in page
+    assert 'id="weeklyDonut"' in page
+    assert 'id="resetRailChips"' in page
+    assert 'id="providerStatusRows"' in page
     assert 'typeof Chart !== "undefined"' in page
     assert 'id="modelTokenLabels"' in page
-    assert 'id="codexClaudeLabels"' in page
     assert "Tokens across provider models" in page
-    assert "OpenAI Codex subscription vs Claude Code" in page
     assert "stacked: true" in page
-    assert "borderDash: index === 1 ? [7, 5] : []" in page
     assert "legend: { display: false" in page
     assert "prefers-reduced-motion" in page
     assert 'timeZone: "UTC"' in page
@@ -2020,7 +2181,7 @@ def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independent
     assert "No subscription observations" in page
     assert "Billing data unavailable" in page
     assert "No billing transactions" in page
-    assert "Request estimates" in page
+    assert "Priced spend" in page
     assert "Billing ledger" in page
     assert "textContent" in page
     assert "if (hydrateInFlight) return" in page

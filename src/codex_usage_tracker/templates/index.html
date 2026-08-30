@@ -370,71 +370,288 @@
         min-height: 390px;
       }
 
-      .aggregate-comparison-grid {
+      /* ------------------------------------------------------------------
+       * Window pairs (keeper-ruled 2026-08-30). Each row is a throughput
+       * donut beside the surface that says what that window is asking of the
+       * operator: reset countdowns beside the five-hour donut ("what needs me
+       * in the next hours"), provider status beside the weekly one (week
+       * posture). The donut carries SHARE; per-provider quota caps live in
+       * the legend, never as slices — they are separate ceilings, not parts
+       * of one pool, and drawing them as pie would be a category error.
+       * ------------------------------------------------------------------ */
+      .window-pair {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 28px;
-        margin: 30px 0 12px;
+        gap: 18px;
+        margin: 22px 0 12px;
       }
 
-      .rank-chart {
+      .window-card {
         min-width: 0;
-        padding-top: 18px;
-        border-top: 1px solid var(--line-soft);
+        max-width: 100%;
+        overflow: hidden;
+        padding: 14px;
+        border: 1px solid var(--line-soft);
+        border-radius: var(--radius);
+        background: color-mix(in srgb, var(--bg-deep) 38%, transparent);
       }
 
-      .rank-chart h3 {
+      .window-card h3 {
         margin-top: 0;
       }
 
-      .rank-bars {
+      .donut-layout {
         display: grid;
-        gap: 11px;
-        margin-top: 15px;
+        grid-template-columns: minmax(0, 190px) minmax(0, 1fr);
+        gap: 18px;
+        align-items: center;
+        margin-top: 6px;
       }
 
-      .rank-row {
+      .donut {
+        width: 100%;
+        max-width: 190px;
+        height: auto;
+      }
+
+      .donut-track {
+        fill: none;
+        stroke: color-mix(in srgb, var(--line) 24%, transparent);
+        stroke-width: 17;
+      }
+
+      /* Each provider owns one contiguous span of the ring, split into a
+       * fresh arc and a dimmed cached arc. stroke-opacity is a number, not a
+       * color: the cached tail is the SAME provider color, so the eye reads
+       * one provider, two kinds of throughput. */
+      .donut-arc {
+        fill: none;
+        stroke-width: 17;
+      }
+
+      .donut-arc.cached {
+        stroke-opacity: 0.38;
+      }
+
+      /* SVG text sizes are viewBox user units (the viewBox is 200x200), so
+       * these scale with the ring rather than with the page. */
+      .donut-center-value {
+        fill: var(--text);
+        font-size: 23px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }
+
+      .donut-center-caption {
+        fill: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+
+      .donut-legend {
         display: grid;
-        gap: 5px;
+        gap: 9px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
         min-width: 0;
       }
 
-      .rank-label-line {
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-        color: var(--muted);
-        font-size: 0.86rem;
+      .donut-legend li {
+        display: grid;
+        grid-template-columns: 12px minmax(0, 1fr);
+        gap: 9px;
+        align-items: start;
+        min-width: 0;
       }
 
-      .rank-label-line strong {
-        color: var(--text);
+      .donut-legend strong {
+        display: block;
         font-weight: 600;
         overflow-wrap: anywhere;
       }
 
-      .rank-track {
-        height: 8px;
-        border-radius: 999px;
-        background: color-mix(in srgb, var(--line) 10%, transparent);
-        overflow: hidden;
-      }
-
-      .rank-fill {
-        height: 100%;
-        border-radius: inherit;
+      .swatch-dot {
+        margin-top: 4px;
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
         background: var(--series-color, var(--token));
       }
 
-      .unified-chart-grid {
+      .legend-quota,
+      .legend-detail {
+        display: block;
+        overflow-wrap: anywhere;
+        line-height: 1.4;
+      }
+
+      .legend-quota {
+        color: var(--muted);
+        font-size: 0.83rem;
+      }
+
+      .legend-detail {
+        color: var(--muted-2);
+        font-size: 0.78rem;
+      }
+
+      /* -- reset rail: one chip per quota window that reports an exact reset,
+       * soonest first, counting down in wall-clock while every bucket on this
+       * page stays UTC. -- */
+      .reset-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 12px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .reset-chip {
+        display: flex;
+        align-items: baseline;
+        gap: 7px;
+        padding: 6px 12px;
+        border: 1px solid var(--chip-role);
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--chip-role) 13%, transparent);
+        color: var(--text);
+        font-size: 0.83rem;
+      }
+
+      .reset-chip.role-stability { --chip-role: var(--ok); }
+      .reset-chip.role-threshold { --chip-role: var(--warning); }
+      .reset-chip.role-violation { --chip-role: var(--danger); }
+
+      .reset-chip .chip-window {
+        color: var(--muted);
+      }
+
+      .reset-chip .chip-countdown {
+        color: var(--chip-role);
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+      }
+
+      /* Motion is opt-in, never opt-out: only a quota past 90% pulses, and
+       * only where the operator has not asked for stillness. The countdown
+       * text keeps ticking either way — the tick is information, the pulse is
+       * emphasis. */
+      @media (prefers-reduced-motion: no-preference) {
+        .reset-chip.role-violation {
+          animation: chip-urgency 2.6s ease-in-out infinite;
+        }
+      }
+
+      @keyframes chip-urgency {
+        50% { background: color-mix(in srgb, var(--danger) 26%, transparent); }
+      }
+
+      /* -- provider status strip: one row per provider, one cell per complete
+       * UTC hour, read off request_status/error_class as the ledger recorded
+       * them. A dim cell is no traffic, not good news. -- */
+      .status-rows {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 28px;
-        margin: 30px 0 26px;
+        gap: 9px;
+        margin-top: 12px;
+      }
+
+      .status-row {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      .status-row-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+
+      .status-row-head .swatch-dot {
+        margin-top: 0;
+        flex: 0 0 auto;
+      }
+
+      .status-cells {
+        display: flex;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .status-cell {
+        flex: 1 1 0;
+        min-width: 2px;
+        height: 17px;
+        border-radius: 2px;
+      }
+
+      .status-cell.state-idle {
+        background: color-mix(in srgb, var(--line) 18%, transparent);
+      }
+
+      .status-cell.state-ok {
+        background: color-mix(in srgb, var(--ok) 60%, transparent);
+      }
+
+      .status-cell.state-degraded {
+        background: color-mix(in srgb, var(--warning) 80%, transparent);
+      }
+
+      .status-cell.state-failing {
+        background: var(--danger);
+      }
+
+      .status-row-summary {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.79rem;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+      }
+
+      .status-key {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 13px;
+        margin: 12px 0 0;
+        padding: 0;
+        list-style: none;
+        color: var(--muted);
+        font-size: 0.79rem;
+      }
+
+      .status-key li {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .status-key .status-cell {
+        flex: 0 0 auto;
+        width: 14px;
+        height: 11px;
+      }
+
+      /* The substitution watch reads zero almost always; when it does not, a
+       * served model differed from the requested one and that is a violation
+       * of what the caller asked for, not a threshold being approached. */
+      .metric.role-violation {
+        border-color: color-mix(in srgb, var(--danger) 52%, transparent);
+      }
+
+      .metric.role-violation .value {
+        color: var(--danger);
       }
 
       .usage-chart {
         min-width: 0;
+        margin-top: 30px;
         padding-top: 18px;
         border-top: 1px solid var(--line-soft);
       }
@@ -693,9 +910,13 @@
         white-space: nowrap;
       }
 
+      /* Five tiles now (events, tokens, priced spend, soonest reset,
+       * substitution watch). auto-fit reflows them at every width, so this
+       * grid no longer needs the 1100px single-column override that three
+       * fixed columns did. */
       .panel-grid {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 195px), 1fr));
         gap: 12px;
       }
 
@@ -942,9 +1163,7 @@
         .hero,
         .detail-grid,
         .detail-grid.token-grid,
-        .panel-grid,
-        .aggregate-comparison-grid,
-        .unified-chart-grid {
+        .window-pair {
           grid-template-columns: 1fr;
         }
 
@@ -993,8 +1212,13 @@
           justify-content: flex-start;
         }
 
-        .usage-chart-layout {
+        .usage-chart-layout,
+        .donut-layout {
           grid-template-columns: 1fr;
+        }
+
+        .donut {
+          justify-self: center;
         }
 
         .chart-wrap.unified {
@@ -1054,6 +1278,7 @@
 
       html[data-gc-shape="slanted"] .insight,
       html[data-gc-shape="slanted"] .subscription-quota-history,
+      html[data-gc-shape="slanted"] .window-card,
       html[data-gc-shape="slanted"] .subscription-provider-card {
         --gc-cut: var(--gc-cut-md);
       }
@@ -1076,6 +1301,7 @@
           .insight,
           .metric,
           .subscription-quota-history,
+          .window-card,
           .subscription-provider-card,
           .subscription-window
         ) {
@@ -1098,6 +1324,7 @@
       html[data-gc-shape="slanted"] :is(
           .status-pill,
           .lane-notice,
+          .reset-chip,
           .subscription-badge,
           .toggle,
           .refresh-btn,
@@ -1115,6 +1342,7 @@
       html[data-gc-shape="slanted"] :is(
           .chart-wrap,
           .subscription-quota-chart-wrap,
+          .donut,
           canvas
         ) {
         clip-path: none;
@@ -1185,74 +1413,80 @@
         <p id="unifiedCededNotice" class="lane-notice" hidden aria-live="polite"></p>
         <div id="unifiedUsageContent" hidden>
           <div class="panel-grid">
+            <div class="metric"><div class="label">Events</div><div class="value" id="unifiedEvents">—</div><div class="hint" id="unifiedEventsHint">—</div></div>
             <div class="metric"><div class="label">Total tokens</div><div class="value color-token" id="unifiedTotalTokens">—</div><div class="hint" id="unifiedWindow">—</div></div>
-            <div class="metric"><div class="label">Events</div><div class="value" id="unifiedEvents">—</div><div class="hint" id="unifiedCoverage">—</div></div>
-            <div class="metric"><div class="label">Request estimates</div><div class="value" id="unifiedEstimatedCost">—</div><div class="hint" id="unifiedActualCost">Actual request cost: —</div></div>
+            <div class="metric"><div class="label">Priced spend</div><div class="value" id="unifiedPricedSpend">—</div><div class="hint" id="unifiedPricedSpendHint">—</div></div>
+            <div class="metric"><div class="label">Soonest reset</div><div class="value mono" id="unifiedSoonestReset">—</div><div class="hint" id="unifiedSoonestResetHint">—</div></div>
+            <div class="metric" id="unifiedSubstitutionTile"><div class="label">Substitution watch</div><div class="value" id="unifiedSubstitutions">—</div><div class="hint" id="unifiedSubstitutionsHint">—</div></div>
           </div>
-          <div class="aggregate-comparison-grid" aria-label="Provider and model token comparisons">
-            <section class="rank-chart" aria-labelledby="providerComparisonTitle">
-              <h3 id="providerComparisonTitle">Provider comparison</h3>
-              <p class="caption">Accounted token volume by contractual provider over the same complete-hour window.</p>
-              <div id="providerComparisonBars" class="rank-bars" aria-live="polite"></div>
-            </section>
-            <section class="rank-chart" aria-labelledby="modelComparisonTitle">
-              <h3 id="modelComparisonTitle">Model comparison</h3>
-              <p class="caption">Largest reported-or-requested provider/model pairs, ranked by accounted token volume.</p>
-              <div id="modelComparisonBars" class="rank-bars" aria-live="polite"></div>
-            </section>
-          </div>
-          <div class="unified-chart-grid">
-            <section class="usage-chart" aria-labelledby="modelTokenTitle">
-              <h3 id="modelTokenTitle">Tokens across provider models</h3>
-              <p class="caption">Hourly accounted tokens by reported model when available, otherwise requested model. The five largest series remain visible; the rest roll into Other.</p>
-              <p id="modelTokenSummary" class="chart-summary" aria-live="polite">Loading model token series…</p>
-              <div class="usage-chart-layout">
-                <div class="chart-wrap unified">
-                  <canvas id="modelTokenChart" aria-label="Stacked hourly token usage across provider and model pairs"></canvas>
-                </div>
-                <div id="modelTokenLabels" class="direct-labels" aria-label="Model series totals"></div>
+
+          <div class="window-pair">
+            <section class="window-card" aria-labelledby="fiveHourDonutTitle">
+              <h3 id="fiveHourDonutTitle">Five-hour throughput by provider</h3>
+              <p class="caption">Accounted tokens over the last five complete UTC hours, split by provider and, within each provider, by cached versus fresh. Quota percentages in the legend are that provider’s own cap — they are not shares of one pool and are never drawn as slices.</p>
+              <p id="fiveHourDonutSummary" class="chart-summary" aria-live="polite">Loading five-hour throughput…</p>
+              <div class="donut-layout">
+                <svg id="fiveHourDonut" class="donut" viewBox="0 0 200 200" role="img" aria-describedby="fiveHourDonutSummary"></svg>
+                <ol id="fiveHourDonutLegend" class="donut-legend" aria-label="Five-hour provider share and quota state"></ol>
               </div>
-              <section class="fold" data-fold="modelTokenSeries" data-open="false" data-row-noun="hour" data-col-noun="series">
-                <div class="fold-head">
-                  <h4 class="fold-heading">
-                    <button type="button" class="fold-toggle" id="modelTokenSeriesFoldToggle" aria-expanded="false" aria-controls="modelTokenSeriesFoldBody">
-                      <span class="fold-caret" aria-hidden="true">▸</span>
-                      <span class="fold-label">Hourly model data</span>
-                      <span class="fold-summary" data-fold-summary>—</span>
-                    </button>
-                  </h4>
-                </div>
-                <div class="fold-body" id="modelTokenSeriesFoldBody" role="region" aria-labelledby="modelTokenSeriesFoldToggle">
-                  <div class="table-wrap"><table><caption>Accounted tokens per complete UTC hour by provider and model</caption><thead><tr id="modelTokenTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="modelTokenTableBody"></tbody></table></div>
-                </div>
-              </section>
             </section>
-            <section class="usage-chart" aria-labelledby="codexClaudeTitle">
-              <h3 id="codexClaudeTitle">OpenAI Codex subscription vs Claude Code</h3>
-              <p class="caption">Codex is canonical traffic billed through <span class="mono">openai-codex</span>. Claude Code is canonical <span class="mono">claude_code</span> harness traffic.</p>
-              <p id="codexClaudeSummary" class="chart-summary" aria-live="polite">Loading harness comparison…</p>
-              <div class="usage-chart-layout">
-                <div class="chart-wrap unified">
-                  <canvas id="codexClaudeChart" aria-label="Hourly accounted token comparison for OpenAI Codex subscription and Claude Code"></canvas>
-                </div>
-                <div id="codexClaudeLabels" class="direct-labels" aria-label="Codex and Claude Code totals"></div>
-              </div>
-              <section class="fold" data-fold="codexClaudeSeries" data-open="false" data-row-noun="hour" data-col-noun="series">
-                <div class="fold-head">
-                  <h4 class="fold-heading">
-                    <button type="button" class="fold-toggle" id="codexClaudeSeriesFoldToggle" aria-expanded="false" aria-controls="codexClaudeSeriesFoldBody">
-                      <span class="fold-caret" aria-hidden="true">▸</span>
-                      <span class="fold-label">Hourly comparison data</span>
-                      <span class="fold-summary" data-fold-summary>—</span>
-                    </button>
-                  </h4>
-                </div>
-                <div class="fold-body" id="codexClaudeSeriesFoldBody" role="region" aria-labelledby="codexClaudeSeriesFoldToggle">
-                  <div class="table-wrap"><table><caption>Accounted tokens per complete UTC hour for OpenAI Codex subscription and Claude Code</caption><thead><tr id="codexClaudeTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="codexClaudeTableBody"></tbody></table></div>
-                </div>
-              </section>
+            <section class="window-card" aria-labelledby="resetRailTitle">
+              <h3 id="resetRailTitle">Reset countdowns</h3>
+              <p class="caption">Every provider quota window that reports an exact reset time, soonest first. Countdowns run in wall-clock time; every bucketed surface on this page stays UTC.</p>
+              <p id="resetRailSummary" class="chart-summary" aria-live="polite">Loading subscription windows…</p>
+              <ul id="resetRailChips" class="reset-chips" aria-label="Quota reset countdowns"></ul>
             </section>
           </div>
+
+          <div class="window-pair">
+            <section class="window-card" aria-labelledby="weeklyDonutTitle">
+              <h3 id="weeklyDonutTitle">Seven-day throughput by provider</h3>
+              <p class="caption">The same split across the seven-day window. A provider with throughput but no reported quota row shows its share alone.</p>
+              <p id="weeklyDonutSummary" class="chart-summary" aria-live="polite">Loading seven-day throughput…</p>
+              <div class="donut-layout">
+                <svg id="weeklyDonut" class="donut" viewBox="0 0 200 200" role="img" aria-describedby="weeklyDonutSummary"></svg>
+                <ol id="weeklyDonutLegend" class="donut-legend" aria-label="Seven-day provider share and quota state"></ol>
+              </div>
+            </section>
+            <section class="window-card" aria-labelledby="providerStatusTitle">
+              <h3 id="providerStatusTitle">Provider API status · 48 hours</h3>
+              <p class="caption">One cell per complete UTC hour per provider, read off the request outcome recorded on every usage event. A dim cell carried no traffic — that is an absence of evidence, not a clean hour.</p>
+              <p id="providerStatusSummary" class="chart-summary" aria-live="polite">Loading provider status…</p>
+              <div id="providerStatusRows" class="status-rows"></div>
+              <ul class="status-key" aria-hidden="true">
+                <li><span class="status-cell state-ok"></span>all ok</li>
+                <li><span class="status-cell state-degraded"></span>some errors</li>
+                <li><span class="status-cell state-failing"></span>mostly errors</li>
+                <li><span class="status-cell state-idle"></span>no traffic</li>
+              </ul>
+            </section>
+          </div>
+
+          <section class="usage-chart" aria-labelledby="modelTokenTitle">
+            <h3 id="modelTokenTitle">Tokens across provider models</h3>
+            <p class="caption">Hourly accounted tokens by reported model when available, otherwise requested model. The five largest series remain visible; the rest roll into Other.</p>
+            <p id="modelTokenSummary" class="chart-summary" aria-live="polite">Loading model token series…</p>
+            <div class="usage-chart-layout">
+              <div class="chart-wrap unified">
+                <canvas id="modelTokenChart" aria-label="Stacked hourly token usage across provider and model pairs"></canvas>
+              </div>
+              <div id="modelTokenLabels" class="direct-labels" aria-label="Model series totals"></div>
+            </div>
+            <section class="fold" data-fold="modelTokenSeries" data-open="false" data-row-noun="hour" data-col-noun="series">
+              <div class="fold-head">
+                <h4 class="fold-heading">
+                  <button type="button" class="fold-toggle" id="modelTokenSeriesFoldToggle" aria-expanded="false" aria-controls="modelTokenSeriesFoldBody">
+                    <span class="fold-caret" aria-hidden="true">▸</span>
+                    <span class="fold-label">Hourly model data</span>
+                    <span class="fold-summary" data-fold-summary>—</span>
+                  </button>
+                </h4>
+              </div>
+              <div class="fold-body" id="modelTokenSeriesFoldBody" role="region" aria-labelledby="modelTokenSeriesFoldToggle">
+                <div class="table-wrap"><table><caption>Accounted tokens per complete UTC hour by provider and model</caption><thead><tr id="modelTokenTableHead"><th scope="col">UTC hour</th></tr></thead><tbody id="modelTokenTableBody"></tbody></table></div>
+              </div>
+            </section>
+          </section>
           <section class="fold" data-fold="harnessUsage" data-open="false" data-cols="essential" data-row-noun="harness" data-row-noun-plural="harnesses" data-metrics="2:events|8:tokens">
             <div class="fold-head">
               <h3 class="fold-heading">
@@ -1791,7 +2025,6 @@
 
       const canvases = {
         modelToken: document.getElementById("modelTokenChart"),
-        codexClaude: document.getElementById("codexClaudeChart"),
         week: document.getElementById("weekChart"),
         weekly: document.getElementById("weeklyChart"),
         spark: document.getElementById("sparkChart"),
@@ -1802,7 +2035,6 @@
       };
 
       let modelTokenChart;
-      let codexClaudeChart;
       let weekChart;
       let weeklyChart;
       let sparkChart;
@@ -2304,43 +2536,6 @@
         });
       }
 
-      function renderRankBars(containerId, rows) {
-        const container = document.getElementById(containerId);
-        container.textContent = "";
-        const ranked = [...rows]
-          .filter((row) => Number.isFinite(Number(row.total_tokens)))
-          .sort((a, b) => Number(b.total_tokens) - Number(a.total_tokens) || String(a.label).localeCompare(String(b.label)))
-          .slice(0, 10);
-        if (!ranked.length) {
-          container.textContent = "No accounted token data in this window.";
-          return;
-        }
-        const maximum = Math.max(...ranked.map((row) => Math.max(0, Number(row.total_tokens))), 1);
-        ranked.forEach((row, index) => {
-          const total = Number(row.total_tokens);
-          const item = document.createElement("div");
-          item.className = "rank-row";
-          const labelLine = document.createElement("div");
-          labelLine.className = "rank-label-line";
-          const label = document.createElement("strong");
-          label.textContent = row.label;
-          const value = document.createElement("span");
-          value.textContent = intFormat(total);
-          labelLine.append(label, value);
-          const track = document.createElement("div");
-          track.className = "rank-track";
-          track.setAttribute("role", "img");
-          track.setAttribute("aria-label", `${row.label}: ${intFormat(total)} accounted tokens`);
-          const fill = document.createElement("div");
-          fill.className = "rank-fill";
-          fill.style.width = `${Math.max(0, total) / maximum * 100}%`;
-          fill.style.setProperty("--series-color", UNIFIED_RANK_COLORS[index % UNIFIED_RANK_COLORS.length]);
-          track.appendChild(fill);
-          item.append(labelLine, track);
-          container.appendChild(item);
-        });
-      }
-
       function formatApiModes(apiModes) {
         // Dominant transport per (provider, model); "unknown" stays visible
         // rather than blank — a NULL here is a fact about the source, and
@@ -2352,26 +2547,6 @@
         if (entries.length === 1) return top;
         const share = count / entries.reduce((sum, [, n]) => sum + n, 0);
         return `${top} ${Math.round(share * 100)}% +${entries.length - 1}`;
-      }
-
-      function renderAggregateComparisons(data) {
-        const modelRows = Array.isArray(data.by_provider_model) ? data.by_provider_model : [];
-        const providerTotals = new Map();
-        modelRows.forEach((row) => {
-          const provider = String(row.provider || "unknown");
-          providerTotals.set(provider, (providerTotals.get(provider) || 0) + Number(row.total_tokens || 0));
-        });
-        renderRankBars(
-          "providerComparisonBars",
-          [...providerTotals].map(([label, total_tokens]) => ({ label, total_tokens })),
-        );
-        renderRankBars(
-          "modelComparisonBars",
-          modelRows.map((row) => ({
-            label: `${row.model || "unknown"} · ${row.provider || "unknown"}`,
-            total_tokens: Number(row.total_tokens || 0),
-          })),
-        );
       }
 
       function renderUnifiedCharts(timeSeries) {
@@ -2401,33 +2576,6 @@
         const modelTotal = models.reduce((sum, row) => sum + Number(row.total_tokens || 0), 0);
         document.getElementById("modelTokenSummary").textContent = `${compactIntFormat(modelTotal)} accounted tokens across ${models.length} displayed series in complete UTC hours.`;
 
-        const comparisons = Array.isArray(timeSeries.comparison_series) ? timeSeries.comparison_series : [];
-        const comparisonColors = [SERIES.token, HARNESS_COLORS.claude_code || SERIES.sparkSession];
-        const comparisonDatasets = comparisons.map((row, index) => lineDataset(
-          row.label,
-          row.values,
-          comparisonColors[index],
-          {
-            tension: 0,
-            spanGaps: false,
-            borderDash: index === 1 ? [7, 5] : [],
-          },
-        ));
-        const comparisonOptions = unifiedTokenChartOptions();
-        if (!codexClaudeChart) {
-          codexClaudeChart = new Chart(canvases.codexClaude, {
-            type: "line",
-            data: { labels, datasets: comparisonDatasets },
-            options: comparisonOptions,
-          });
-        } else {
-          replaceChartData(codexClaudeChart, labels, comparisonDatasets, comparisonOptions);
-        }
-        renderDirectLabels("codexClaudeLabels", comparisons, comparisonColors, ["solid", "dashed"]);
-        renderSeriesTable("codexClaudeTableHead", "codexClaudeTableBody", timeSeries.bucket_starts, comparisons);
-        const comparedTotal = comparisons.reduce((sum, row) => sum + Number(row.total_tokens || 0), 0);
-        const excluded = Number(timeSeries.comparison_excluded_tokens || 0);
-        document.getElementById("codexClaudeSummary").textContent = `${compactIntFormat(comparedTotal)} compared tokens; ${compactIntFormat(excluded)} tokens from other harnesses and providers remain outside this two-series view.`;
       }
 
       function renderHeader(summary) {
@@ -2759,6 +2907,248 @@
         notice.hidden = false;
       }
 
+      // ── Window donuts, reset rail, provider status (keeper-ratified flow
+      // rework, akasan 2026-08-30). Data stashes let whichever loader finishes
+      // last re-render with complete joins: donut legends want quota rows from
+      // the subscriptions loader; the rail is quota-only. ──
+
+      const QUOTA_WEEKLY_NAMES = new Set(["week", "seven_day", "spark_week"]);
+      const QUOTA_FIVE_HOUR_NAMES = new Set(["five_hour", "spark_five_hour"]);
+
+      function quotaPercentFor(canonicalProvider, windowNames) {
+        const rows = (state.quotaLatest || []).filter((row) =>
+          String(row.provider || "") === canonicalProvider
+          && windowNames.has(String(row.quota_name || ""))
+          && String(row.unit || "") === "percent"
+          && row.used_value != null && row.limit_value != null);
+        if (!rows.length) return null;
+        let worst = null;
+        rows.forEach((row) => {
+          const pct = (Number(row.used_value) / Number(row.limit_value)) * 100;
+          if (Number.isFinite(pct) && (worst === null || pct > worst)) worst = pct;
+        });
+        return worst === null ? null : { pct: worst, accounts: rows.length };
+      }
+
+      function donutArcPath(cx, cy, r, startFrac, endFrac) {
+        const tau = Math.PI * 2;
+        const a0 = startFrac * tau - Math.PI / 2;
+        const a1 = endFrac * tau - Math.PI / 2;
+        const large = (endFrac - startFrac) > 0.5 ? 1 : 0;
+        return `M ${cx + r * Math.cos(a0)} ${cy + r * Math.sin(a0)} A ${r} ${r} 0 ${large} 1 ${cx + r * Math.cos(a1)} ${cy + r * Math.sin(a1)}`;
+      }
+
+      function renderDonut(svgId, legendId, summaryId, payload, windowNames, windowNoun) {
+        const svg = document.getElementById(svgId);
+        const legend = document.getElementById(legendId);
+        const summary = document.getElementById(summaryId);
+        if (!svg || !payload) return;
+        const providers = (payload.by_provider || []).filter((row) => Number(row.total_tokens) > 0);
+        providers.sort((a, b) => Number(b.total_tokens) - Number(a.total_tokens));
+        const windowTotal = providers.reduce((sum, row) => sum + Number(row.total_tokens), 0);
+        svg.textContent = "";
+        legend.textContent = "";
+        if (!windowTotal) {
+          summary.textContent = `No accounted tokens in the ${windowNoun} window.`;
+          return;
+        }
+        const ns = "http://www.w3.org/2000/svg";
+        let cursor = 0;
+        providers.forEach((row, index) => {
+          const color = subscriptionUnifiedProviderColor({ provider: row.provider_canonical }, index);
+          // Two arcs per provider: fresh at full strength, cached lighter —
+          // same hue so the pair reads as one provider (the namrop anatomy).
+          [["fresh_tokens", 1], ["cached_tokens", 0.45]].forEach(([field, opacity]) => {
+            const span = Number(row[field] || 0) / windowTotal;
+            if (span <= 0) return;
+            const arc = document.createElementNS(ns, "path");
+            arc.setAttribute("d", donutArcPath(100, 100, 74, cursor, Math.min(cursor + span, 0.99999)));
+            arc.setAttribute("fill", "none");
+            arc.setAttribute("stroke", color);
+            arc.setAttribute("stroke-opacity", String(opacity));
+            arc.setAttribute("stroke-width", "30");
+            svg.appendChild(arc);
+            cursor += span;
+          });
+          const item = document.createElement("li");
+          const swatch = document.createElement("span");
+          swatch.className = "swatch-dot";
+          swatch.style.background = color;
+          const label = document.createElement("strong");
+          label.textContent = row.provider;
+          const share = ((Number(row.total_tokens) / windowTotal) * 100).toFixed(1);
+          const cachedShare = row.total_tokens
+            ? ((Number(row.cached_tokens || 0) / Number(row.total_tokens)) * 100).toFixed(0)
+            : "0";
+          const detail = document.createElement("span");
+          const quota = quotaPercentFor(row.provider_canonical, windowNames);
+          // Quota lives in the LEGEND, never as a slice: per-provider caps are
+          // not shares of one pool (ruled interpretation, akasan 2026-08-30).
+          detail.textContent = quota
+            ? ` ${share}% of window tokens · ${cachedShare}% cached · ${quota.pct.toFixed(0)}% of ${windowNoun} used${quota.accounts > 1 ? " (worst account)" : ""}`
+            : ` ${share}% of window tokens · ${cachedShare}% cached`;
+          const body = document.createElement("div");
+          body.append(label, detail);
+          item.append(swatch, body);
+          legend.appendChild(item);
+        });
+        const centre = document.createElementNS(ns, "text");
+        centre.setAttribute("x", "100"); centre.setAttribute("y", "96");
+        centre.setAttribute("text-anchor", "middle");
+        centre.setAttribute("class", "donut-centre");
+        centre.textContent = compactIntFormat(windowTotal);
+        const centreCaption = document.createElementNS(ns, "text");
+        centreCaption.setAttribute("x", "100"); centreCaption.setAttribute("y", "114");
+        centreCaption.setAttribute("text-anchor", "middle");
+        centreCaption.setAttribute("class", "donut-centre-caption");
+        centreCaption.textContent = "tokens";
+        svg.append(centre, centreCaption);
+        summary.textContent = `${compactIntFormat(windowTotal)} accounted tokens across ${providers.length} provider${providers.length === 1 ? "" : "s"}; lighter arc segments are cache reads.`;
+      }
+
+      function renderDonuts() {
+        if (state.donutFive) renderDonut("fiveHourDonut", "fiveHourDonutLegend", "fiveHourDonutSummary", state.donutFive, QUOTA_FIVE_HOUR_NAMES, "five-hour");
+        if (state.donutWeek) renderDonut("weeklyDonut", "weeklyDonutLegend", "weeklyDonutSummary", state.donutWeek, QUOTA_WEEKLY_NAMES, "week");
+      }
+
+      function formatCountdown(ms, weekly) {
+        if (ms <= 0) return "resetting…";
+        const s = Math.floor(ms / 1000);
+        if (weekly || s >= 86400) return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
+        if (s >= 3600) return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`;
+        return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+      }
+
+      function chipRole(usedPct, msLeft) {
+        if (usedPct >= 90) return "role-violation";
+        if (usedPct >= 70 && msLeft > 3600000) return "role-threshold";
+        return "role-stability";
+      }
+
+      function renderResetRail(rows) {
+        const rail = document.getElementById("resetRailChips");
+        const summary = document.getElementById("resetRailSummary");
+        if (!rail) return;
+        const now = Date.now();
+        const chips = rows
+          .filter((row) => row.resets_at && String(row.unit || "") === "percent"
+            && row.used_value != null && row.limit_value != null)
+          .map((row) => ({
+            provider: String(row.provider || "unknown"),
+            windowName: String(row.quota_name || ""),
+            usedPct: (Number(row.used_value) / Number(row.limit_value)) * 100,
+            resetAt: Date.parse(row.resets_at),
+            weekly: QUOTA_WEEKLY_NAMES.has(String(row.quota_name || "")),
+          }))
+          .filter((chip) => Number.isFinite(chip.resetAt) && Number.isFinite(chip.usedPct))
+          .sort((a, b) => a.resetAt - b.resetAt);
+        rail.textContent = "";
+        const seen = new Map();
+        chips.forEach((chip) => {
+          const dupKey = `${chip.provider}:${chip.windowName}`;
+          const ordinal = (seen.get(dupKey) || 0) + 1;
+          seen.set(dupKey, ordinal);
+          const item = document.createElement("li");
+          item.className = `reset-chip ${chipRole(chip.usedPct, chip.resetAt - now)}`;
+          item.dataset.resetAt = String(chip.resetAt);
+          item.dataset.weekly = chip.weekly ? "1" : "";
+          const label = document.createElement("strong");
+          // Same provider+window twice = a second account (account identifiers
+          // never cross the private API by design) — number by order.
+          label.textContent = ordinal > 1 ? `${chip.provider} (${ordinal})` : chip.provider;
+          const windowSpan = document.createElement("span");
+          windowSpan.className = "chip-window";
+          windowSpan.textContent = ` ${chip.windowName} · ${chip.usedPct.toFixed(0)}% used · `;
+          const countdown = document.createElement("span");
+          countdown.className = "chip-countdown";
+          countdown.textContent = formatCountdown(chip.resetAt - now, chip.weekly);
+          item.append(label, windowSpan, countdown);
+          rail.appendChild(item);
+        });
+        summary.textContent = chips.length
+          ? `${chips.length} windows reporting exact resets; soonest first.`
+          : "No quota windows report an exact reset time.";
+        const soonest = chips[0];
+        const tile = document.getElementById("unifiedSoonestReset");
+        const hint = document.getElementById("unifiedSoonestResetHint");
+        if (tile) {
+          if (soonest) {
+            tile.dataset.resetAt = String(soonest.resetAt);
+            tile.dataset.weekly = soonest.weekly ? "1" : "";
+            tile.textContent = formatCountdown(soonest.resetAt - now, soonest.weekly);
+            hint.textContent = `${soonest.provider} ${soonest.windowName} · ${soonest.usedPct.toFixed(0)}% used`;
+          } else {
+            tile.textContent = "—";
+            hint.textContent = "no exact resets reported";
+          }
+        }
+      }
+
+      // One shared ticker; wall-clock displays, quiet when the tab is hidden.
+      // Reduced-motion still gets text updates — a countdown IS the content.
+      setInterval(() => {
+        if (document.hidden) return;
+        const now = Date.now();
+        document.querySelectorAll("[data-reset-at]").forEach((node) => {
+          const target = node.querySelector(".chip-countdown") || node;
+          target.textContent = formatCountdown(Number(node.dataset.resetAt) - now, Boolean(node.dataset.weekly));
+        });
+      }, 1000);
+
+      function renderProviderStatus(timeSeries) {
+        const host = document.getElementById("providerStatusRows");
+        const summary = document.getElementById("providerStatusSummary");
+        if (!host || !timeSeries || !Array.isArray(timeSeries.provider_status_series)) return;
+        const buckets = Array.isArray(timeSeries.bucket_starts) ? timeSeries.bucket_starts : [];
+        const CELLS = 48;
+        const offset = Math.max(0, buckets.length - CELLS);
+        const series = [...timeSeries.provider_status_series]
+          .filter((row) => Number(row.total_events) > 0)
+          .sort((a, b) => Number(b.total_events) - Number(a.total_events));
+        host.textContent = "";
+        series.forEach((row, index) => {
+          const rowNode = document.createElement("div");
+          rowNode.className = "status-row";
+          const head = document.createElement("div");
+          head.className = "status-row-head";
+          const dot = document.createElement("span");
+          dot.className = "swatch-dot";
+          dot.style.background = subscriptionUnifiedProviderColor({ provider: row.provider_canonical }, index);
+          const name = document.createElement("span");
+          name.textContent = row.provider;
+          head.append(dot, name);
+          const cells = document.createElement("div");
+          cells.className = "status-cells";
+          const windowErrors = row.errors.slice(offset).reduce((sum, n) => sum + n, 0);
+          const windowEvents = row.events.slice(offset).reduce((sum, n) => sum + n, 0);
+          cells.setAttribute("role", "img");
+          cells.setAttribute("aria-label",
+            `${row.provider}: ${intFormat(windowEvents)} calls, ${intFormat(windowErrors)} errors over the last ${CELLS} complete UTC hours` +
+            (windowErrors && row.dominant_error_class ? `; dominant error ${row.dominant_error_class}` : ""));
+          for (let i = offset; i < buckets.length; i += 1) {
+            const cell = document.createElement("span");
+            const total = row.events[i] || 0;
+            const bad = row.errors[i] || 0;
+            let stateClass = "state-idle";
+            if (total > 0) {
+              stateClass = bad === 0 ? "state-ok" : (bad / total >= 0.5 ? "state-failing" : "state-degraded");
+            }
+            cell.className = `status-cell ${stateClass}`;
+            const hourLabel = formatUtcHour ? formatUtcHour(buckets[i], false) : buckets[i];
+            cell.title = total
+              ? `${hourLabel} — ${intFormat(total)} calls, ${intFormat(bad)} errors${bad && row.top_error_classes[i] ? ` (${row.top_error_classes[i]})` : ""}`
+              : `${hourLabel} — no traffic`;
+            cells.appendChild(cell);
+          }
+          rowNode.append(head, cells);
+          host.appendChild(rowNode);
+        });
+        const totalErrors = series.reduce((sum, row) => sum + Number(row.total_errors), 0);
+        summary.textContent = series.length
+          ? `${series.length} providers · ${intFormat(totalErrors)} errored calls in the seven-day window.`
+          : "No provider traffic in the window.";
+      }
+
       async function loadUnifiedUsage() {
         try {
           const response = await fetch("/api/unified-usage?hours=168", { signal: AbortSignal.timeout(30000) });
@@ -2783,14 +3173,28 @@
           document.getElementById("unifiedEvents").textContent = intFormat(events);
           document.getElementById("unifiedWindow").textContent = `${formatTimestamp(data.window.first_occurred_at)} → ${formatTimestamp(data.window.last_occurred_at)}`;
           const coverage = data.coverage || {};
-          document.getElementById("unifiedCoverage").textContent = `${intFormat(coverage.exact_events)} exact · ${intFormat(coverage.reconstructed_events)} reconstructed · ${intFormat(coverage.reconstructed_calls)} reconstructed calls`;
+          // Coverage demoted to caption text (keeper-ratified retirement #4).
+          document.getElementById("unifiedEventsHint").textContent = `${intFormat(coverage.exact_events)} exact · ${intFormat(coverage.reconstructed_events)} reconstructed`;
           const totals = data.totals || {};
           const pricedEvents = Number(totals.priced_events || 0);
           const unpricedEvents = Number(totals.unpriced_events || 0);
-          document.getElementById("unifiedEstimatedCost").textContent =
-            `$${totals.estimated_cost_usd || "0"} across ${intFormat(pricedEvents)} priced event${pricedEvents === 1 ? "" : "s"}`;
-          document.getElementById("unifiedActualCost").textContent =
-            `Actual request cost: $${totals.actual_cost_usd || "0"} · ${intFormat(unpricedEvents)} unpriced (subscription-included)`;
+          // One priced-spend tile (retirement #3): estimated is the value,
+          // actual + the unpriced mass live in the caption.
+          document.getElementById("unifiedPricedSpend").textContent = `$${totals.estimated_cost_usd || "0"}`;
+          document.getElementById("unifiedPricedSpendHint").textContent =
+            `${intFormat(pricedEvents)} priced · ${intFormat(unpricedEvents)} unpriced (subscription-included) · actual $${totals.actual_cost_usd || "0"}`;
+          // Substitution watch: NULL model_reported never counts; zero is the
+          // healthy reading and any nonzero wears the violation role.
+          const substituted = Number(totals.substituted_events || 0);
+          const substitutionTile = document.getElementById("unifiedSubstitutionTile");
+          document.getElementById("unifiedSubstitutions").textContent = intFormat(substituted);
+          document.getElementById("unifiedSubstitutionsHint").textContent = substituted
+            ? "served model differed from requested"
+            : "no substitutions observed · 7 days";
+          substitutionTile.classList.toggle("role-violation", substituted > 0);
+          state.donutWeek = data;
+          renderDonuts();
+          renderProviderStatus(data.time_series);
           const harnessBody = document.getElementById("harnessUsageBody");
           harnessBody.textContent = "";
           (data.by_harness || []).forEach((row) => appendTextRow(harnessBody, [
@@ -2805,12 +3209,19 @@
             row.total_tokens, row.estimated_cost_usd, row.actual_cost_usd,
           ]));
           showPanel("unifiedUsageState", "unifiedUsageContent", "");
-          renderAggregateComparisons(data);
           try {
             renderUnifiedCharts(data.time_series);
           } catch (chartError) {
             document.getElementById("modelTokenSummary").textContent = "Model chart unavailable; aggregate tables remain current.";
-            document.getElementById("codexClaudeSummary").textContent = "Harness comparison unavailable; aggregate tables remain current.";
+          }
+          try {
+            const fiveResponse = await fetch("/api/unified-usage?hours=5", { signal: AbortSignal.timeout(30000) });
+            if (fiveResponse.ok) {
+              state.donutFive = await fiveResponse.json();
+              renderDonuts();
+            }
+          } catch (fiveError) {
+            // last-good law: an earlier five-hour donut stays on a failed refresh.
           }
         } catch (error) {
           const content = document.getElementById("unifiedUsageContent");
@@ -3218,6 +3629,9 @@
           }
 
           const rows = Array.isArray(data.latest) ? data.latest : [];
+          state.quotaLatest = rows;
+          renderResetRail(rows);
+          renderDonuts();
           if (!rows.length && !ledgerNotice) {
             ledgerNotice = "No subscription observations are currently recorded. Expected providers remain visible below.";
           }
