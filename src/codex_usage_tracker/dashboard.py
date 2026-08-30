@@ -672,6 +672,69 @@ def _build_unified_time_series(
     }
 
 
+_LIST_PRICE_TOKEN_FIELDS = (
+    "input_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "output_tokens",
+    "reasoning_tokens",
+)
+
+
+def _build_list_price_daily(
+    rows: list[dict[str, Any]],
+    *,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[dict[str, Any]]:
+    """Per-day list-price estimates over the bounded hour window.
+
+    Buckets are 24-hour slices anchored at ``window_start`` (a top-of-UTC-hour
+    boundary), so the hours=168 dashboard query yields seven of them. Each day
+    reuses :func:`estimate_list_price` over that day's (provider, model) token
+    aggregates; a day with no traffic prices honestly at $0.00 with full
+    coverage rather than being dropped, so the sparkline keeps calendar shape.
+    """
+    window_seconds = (window_end - window_start).total_seconds()
+    day_count = int(window_seconds // 86400) + (1 if window_seconds % 86400 else 0)
+    daily_grouped: list[dict[tuple[str, str], dict[str, Any]]] = [
+        {} for _ in range(day_count)
+    ]
+    for row in rows:
+        occurred_at = _fact_datetime(row.get("occurred_at"))
+        day_index = int((occurred_at - window_start).total_seconds() // 86400)
+        if day_index < 0 or day_index >= day_count:
+            continue
+        key = (
+            str(row.get("provider") or "unknown"),
+            str(row.get("model_reported") or row.get("model_requested") or "unknown"),
+        )
+        bucket = daily_grouped[day_index].setdefault(
+            key,
+            {
+                "provider": key[0],
+                "model": key[1],
+                **{field: 0 for field in _LIST_PRICE_TOKEN_FIELDS},
+            },
+        )
+        for field in _LIST_PRICE_TOKEN_FIELDS:
+            bucket[field] += int(row.get(field) or 0)
+    for day in daily_grouped:
+        for bucket in day.values():
+            bucket["total_tokens"] = sum(
+                bucket[field]
+                for field in _LIST_PRICE_TOKEN_FIELDS
+                if field != "reasoning_tokens"
+            )
+    return [
+        {
+            "day_start": _iso_z(window_start + timedelta(days=index)),
+            **estimate_list_price(daily_grouped[index].values()),
+        }
+        for index in range(day_count)
+    ]
+
+
 # ── Provider status feeds (keeper-ruled 2026-08-30: API liveness comes from
 # the provider's own status API, not inferred from the ledger; the observed
 # cells remain as a secondary "what our calls saw" line). Statuspage v2
@@ -1614,6 +1677,15 @@ def create_app(
                 window_start=series_start,
                 window_end=series_end,
                 generated_at=generated_at,
+            )
+            # Daily list-price estimates for the spend sparkline (keeper polish
+            # round 2026-08-30). Day buckets are 24-hour slices of the queried
+            # hour window (UTC policy: series_end is a top-of-UTC-hour), so an
+            # hours=168 query yields exactly 7 buckets. Each bucket reuses
+            # estimate_list_price over its own (provider, model) aggregates —
+            # unpriced tokens stay coverage per day, never a guess.
+            payload["list_price_daily"] = _build_list_price_daily(
+                rows, window_start=series_start, window_end=series_end
             )
         return jsonify(payload)
 

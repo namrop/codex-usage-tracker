@@ -1352,6 +1352,66 @@ def test_unified_usage_hourly_charts_split_providers_without_double_counting_rea
     assert "source_namespace" not in json.dumps(series)
 
 
+def test_unified_usage_hour_windows_carry_daily_list_price_estimates(tmp_path, monkeypatch):
+    """Polish round 2026-08-30 (item 12): hour-window queries carry a
+    ``list_price_daily`` array — 24-hour slices of the queried UTC hour
+    window, each priced with estimate_list_price over that day's
+    (provider, model) aggregates. Empty days price honestly at $0.00 with
+    full coverage so the spend sparkline keeps calendar shape; unpriced
+    tokens stay per-day coverage, never a guess."""
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, 34, 56, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    rows = [
+        # First day bucket of the 168h window ([07-07T12:00, 07-08T12:00)).
+        _chart_fact(
+            "sonnet-day0", "2026-07-07T13:00:00Z", harness="claude_code",
+            provider="anthropic", model_requested="claude-sonnet-5",
+            model_reported="claude-sonnet-5", input_tokens=1_000_000,
+        ),
+        # Final day bucket: one priced and one unpriced provider.
+        _chart_fact(
+            "glm-day6", "2026-07-13T13:00:00Z", harness="opencode",
+            provider="zai", model_requested="glm-5.3", model_reported="glm-5.3",
+            output_tokens=1_000_000,
+        ),
+        _chart_fact(
+            "mystery-day6", "2026-07-13T14:00:00Z", harness="opencode",
+            provider="mystery-lab", model_requested="whoknows",
+            input_tokens=1_000_000,
+        ),
+    ]
+    ledger = tmp_path / "usage.jsonl"
+    ledger.write_text("\n".join(canonical_json(row) for row in rows) + "\n", encoding="utf-8")
+    client = create_app(unified_usage_ledger=str(ledger)).test_client()
+
+    payload = client.get("/api/unified-usage?hours=168").get_json()
+    daily = payload["list_price_daily"]
+    assert [entry["day_start"] for entry in daily] == [
+        "2026-07-07T12:00:00Z", "2026-07-08T12:00:00Z", "2026-07-09T12:00:00Z",
+        "2026-07-10T12:00:00Z", "2026-07-11T12:00:00Z", "2026-07-12T12:00:00Z",
+        "2026-07-13T12:00:00Z",
+    ]
+    # claude-sonnet-5 input lists at $2/MTok; glm-5.3 output at $4.40/MTok.
+    assert daily[0]["estimate_usd"] == "2.00"
+    assert daily[0]["priced_token_share"] == 1.0
+    assert daily[0]["unpriced_providers"] == []
+    assert [entry["estimate_usd"] for entry in daily[1:6]] == ["0.00"] * 5
+    assert daily[6]["estimate_usd"] == "4.40"
+    # The unpriced provider is that day's coverage and never leaks into
+    # another day's share.
+    assert daily[6]["unpriced_providers"] == ["mystery-lab"]
+    assert 0.4 < daily[6]["priced_token_share"] < 0.6
+    # The weekly total the tile shows still rides totals.list_price.
+    assert payload["totals"]["list_price"]["estimate_usd"] == "6.40"
+    # Day-window queries have no hour-anchored series and carry no array.
+    assert "list_price_daily" not in client.get("/api/unified-usage?days=30").get_json()
+
+
 def test_provider_status_series_buckets_traffic_errors_and_dominant_class(
     tmp_path, monkeypatch
 ):
