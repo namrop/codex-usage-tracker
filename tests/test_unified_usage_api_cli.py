@@ -1783,9 +1783,10 @@ def test_collect_all_falls_back_to_estimated_opencode_go_after_exact_failure(
     assert auth_cookie not in json.dumps({"result": result, "facts": rows})
 
 
-def test_collect_all_strict_sources_still_raises_after_opencode_exact_fallback(
+def test_collect_all_strict_sources_cedes_the_exact_opencode_lane_after_fallback(
     tmp_path, monkeypatch
 ):
+    """Keeper-ruled 2026-08-29: a failing lane cedes; strict runs still complete."""
     local_fact = dict(
         _usage_fact("opencode-go-strict-fallback"),
         provider="opencode-go",
@@ -1801,26 +1802,27 @@ def test_collect_all_strict_sources_still_raises_after_opencode_exact_fallback(
         raising=False,
     )
 
-    with pytest.raises(
-        RuntimeError, match="collection incomplete under strict source policy"
-    ):
-        _collect_quota_only(
-            tmp_path,
-            environment={
-                "OPENCODE_GO_WORKSPACE_ID": "private-opencode-workspace",
-                "OPENCODE_GO_AUTH_COOKIE": "private-opencode-cookie",
-            },
-            strict_sources=True,
-        )
+    result, quota = _collect_quota_only(
+        tmp_path,
+        environment={
+            "OPENCODE_GO_WORKSPACE_ID": "private-opencode-workspace",
+            "OPENCODE_GO_AUTH_COOKIE": "private-opencode-cookie",
+        },
+        strict_sources=True,
+    )
 
+    assert result["ceded"] == ["opencode_go_quota"]
+    assert result["warnings"] == [
+        {"source": "opencode_go_quota", "error": "RuntimeError"}
+    ]
+    assert result["lanes"]["opencode_go_quota"]["ceded"] is True
     rows = [
-        row for row in read_sqlite_facts(
-            tmp_path / "quota.sqlite3", fact_type="quota_observation_v1"
-        )
+        row for row in read_sqlite_facts(quota, fact_type="quota_observation_v1")
         if row["provider"] == "opencode-go"
     ]
     assert len(rows) == 3
     assert all(row["measurement_confidence"] == "estimated" for row in rows)
+    assert "private exact failure" not in json.dumps(result)
 
 
 @pytest.mark.parametrize("key_name", ["Z_AI_API_KEY", "ZAI_API_KEY"])
@@ -2037,6 +2039,49 @@ def test_collect_all_cli_names_failing_lanes_on_strict_failure(monkeypatch, caps
     lines = captured.err.strip().splitlines()
     assert lines[0] == "collect-all failed: StrictSourcesError"
     assert json.loads(lines[1]) == [{"source": "hermes", "error": "OperationalError"}]
+
+
+def test_collect_all_cli_exits_zero_and_names_a_ceded_lane(tmp_path, monkeypatch, capsys):
+    """Keeper-ruled 2026-08-29: a ceded lane degrades the summary, not the exit."""
+
+    def broken(*args, **kwargs):
+        raise OSError("private source path")
+
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", broken)
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", lambda *args: [])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "tracker",
+            "collect-all",
+            "--scope",
+            "usage",
+            "--strict-sources",
+            "--no-live-quota",
+            "--state-db",
+            str(tmp_path / "state.db"),
+            "--claude-root",
+            str(tmp_path / "claude"),
+            "--codex-ledger",
+            str(tmp_path / "codex.jsonl"),
+            "--usage-ledger",
+            str(tmp_path / "usage.sqlite3"),
+            "--quota-ledger",
+            str(tmp_path / "quota.sqlite3"),
+        ],
+    )
+
+    assert main() == 0
+    captured = capsys.readouterr()
+    summary = captured.err.strip().splitlines()[0]
+    assert summary.startswith("collect-all: scope=usage")
+    assert "lanes=2/3" in summary
+    assert "degraded=hermes" in summary
+    assert "ceded=hermes" in summary
+    payload = json.loads(captured.out)
+    assert payload["ceded"] == ["hermes"]
+    assert "private source path" not in captured.out + captured.err
 
 
 def _stub_collectors(monkeypatch, usage_rows):
@@ -2467,26 +2512,35 @@ def test_concurrent_claude_finalizations_cannot_double_count(tmp_path, monkeypat
     assert all(row["corrects_source_event_id"] == "private-source-id" for row in corrections)
 
 
-def test_collect_all_strict_sources_refuses_partial_success(tmp_path, monkeypatch):
+def test_collect_all_strict_sources_retries_then_cedes_a_partial_failure(tmp_path, monkeypatch):
+    """Keeper-ruled 2026-08-29: three attempts, then cede — the run completes."""
+    calls: list[int] = []
+
     def broken(*args, **kwargs):
+        calls.append(1)
         raise OSError("private source path")
 
     monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", broken)
     monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", lambda *args: [])
     monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
 
-    with pytest.raises(RuntimeError, match="strict source policy"):
-        collect_all(
-            state_db=tmp_path / "state.db",
-            claude_root=tmp_path / "claude",
-            opencode_dbs=[],
-            codex_ledger=tmp_path / "codex.jsonl",
-            usage_ledger=tmp_path / "usage.sqlite3",
-            quota_ledger=tmp_path / "quota.sqlite3",
-            live_quota=False,
-            scope="usage",
-            strict_sources=True,
-        )
+    result = collect_all(
+        state_db=tmp_path / "state.db",
+        claude_root=tmp_path / "claude",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "codex.jsonl",
+        usage_ledger=tmp_path / "usage.sqlite3",
+        quota_ledger=tmp_path / "quota.sqlite3",
+        live_quota=False,
+        scope="usage",
+        strict_sources=True,
+    )
+
+    assert len(calls) == collector_module.LANE_ATTEMPTS
+    assert result["ceded"] == ["hermes"]
+    assert result["counts"]["ceded"] == 1
+    assert result["warnings"] == [{"source": "hermes", "error": "OSError"}]
+    assert "private source path" not in json.dumps(result)
 
 
 def test_codex_quota_history_is_source_isolated_and_idempotent(tmp_path, monkeypatch):

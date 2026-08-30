@@ -190,7 +190,7 @@ def test_two_claude_usage_roots_keep_namespaces_and_pool_public_aggregates(tmp_p
     assert "account_ref" not in serialized
 
 
-def test_secondary_claude_failure_is_isolated_warned_and_strict_policy_is_truthful(
+def test_secondary_claude_failure_is_isolated_warned_and_ceded_under_strict(
     tmp_path, monkeypatch
 ):
     _empty_other_collectors(monkeypatch)
@@ -222,10 +222,14 @@ def test_secondary_claude_failure_is_isolated_warned_and_strict_policy_is_truthf
     ]
     assert len(read_sqlite_facts(kwargs["usage_ledger"], fact_type="usage_event_v1")) == 1
 
+    # Keeper-ruled 2026-08-29: even under strict sources, the failing lane is
+    # retried and then ceded; the run completes and the primary rows land.
     kwargs["usage_ledger"] = tmp_path / "usage-strict.sqlite3"
     kwargs["strict_sources"] = True
-    with pytest.raises(RuntimeError, match="strict source policy"):
-        collect_all(**kwargs)
+    strict_result = collect_all(**kwargs)
+    assert strict_result["ceded"] == ["claude_code_secondary"]
+    assert strict_result["lanes"]["claude_code_secondary"]["ceded"] is True
+    assert strict_result["lanes"]["claude_code"]["succeeded"] is True
     assert len(read_sqlite_facts(kwargs["usage_ledger"], fact_type="usage_event_v1")) == 1
 
 

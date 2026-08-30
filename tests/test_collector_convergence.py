@@ -367,7 +367,7 @@ def test_lane_health_keeps_the_last_success_of_a_lane_that_later_fails(tmp_path,
     assert lane["last_error_class"] == "IdentityConflictError"
 
 
-def test_lane_health_records_a_source_read_failure(tmp_path, monkeypatch):
+def test_lane_health_records_a_source_read_failure_as_a_cede(tmp_path, monkeypatch):
     usage = tmp_path / "usage.sqlite3"
 
     def broken(*args, **kwargs):
@@ -377,15 +377,21 @@ def test_lane_health_records_a_source_read_failure(tmp_path, monkeypatch):
     monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", lambda *args: [])
     monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
 
-    with pytest.raises(StrictSourcesError):
-        collect_all(**_kwargs(tmp_path, usage))
+    # Keeper-ruled 2026-08-29: a failing lane cedes after its retries and the
+    # run completes even under strict sources.
+    result = collect_all(**_kwargs(tmp_path, usage))
 
+    assert result["ceded"] == ["hermes"]
+    assert result["warnings"] == [{"source": "hermes", "error": "OSError"}]
     lanes = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
     assert lanes["lanes"]["hermes"]["last_error_class"] == "OSError"
     assert lanes["lanes"]["hermes"]["last_success_at"] is None
+    assert lanes["lanes"]["hermes"]["ceded"] is True
     assert lanes["lanes"]["opencode"]["last_success_at"] == lanes["updated_at"]
+    assert lanes["lanes"]["opencode"]["ceded"] is False
     # The scope's canonical append still committed, so the heartbeat is honest.
     assert (tmp_path / "health" / "usage-collect.ok").exists()
+    assert "private source path" not in json.dumps(result)
 
 
 def test_a_read_only_feeder_lane_counts_as_healthy(tmp_path, monkeypatch):
@@ -458,6 +464,195 @@ def test_summary_line_names_the_degraded_lane():
         }
     )
     assert "lanes=2/3" in line and "degraded=claude_code" in line
+
+
+# --- 2b: lane retry and graceful cede (keeper-ruled 2026-08-29) -------------
+
+
+def _stub_usage_collectors(monkeypatch, *, hermes, claude, opencode):
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", hermes)
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_claude_usage", claude)
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", opencode)
+
+
+def test_lane_read_failure_retries_with_backoff_and_recovers_without_cede(
+    tmp_path, monkeypatch
+):
+    usage = tmp_path / "usage.sqlite3"
+    settled = _claude_fact(request_status="ok", output_tokens=7)
+    attempts: list[int] = []
+    slept: list[float] = []
+
+    def flaky(*args):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise OSError("private transient failure")
+        return [settled]
+
+    _stub_usage_collectors(
+        monkeypatch, hermes=lambda *args: [], claude=flaky, opencode=lambda *args: []
+    )
+
+    result = collect_all(**_kwargs(tmp_path, usage), lane_sleep=slept.append)
+
+    assert len(attempts) == 3
+    assert slept == [2.0, 4.0]
+    assert result["warnings"] == [] and result["ceded"] == []
+    assert result["usage"] == {"appended": 1, "discovered": 1, "replayed": 0}
+    lanes = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
+    lane = lanes["lanes"]["claude_code"]
+    assert lane["last_success_at"] == lanes["updated_at"]
+    assert lane["last_error_class"] is None
+    assert lane["ceded"] is False
+    assert lane["rows_written"] == 1
+
+
+def test_lane_cede_leaves_other_lanes_landing_and_names_itself(tmp_path, monkeypatch):
+    from codex_usage_tracker.cli import _collect_summary_line
+
+    usage = tmp_path / "usage.sqlite3"
+    settled = _claude_fact(request_status="ok", output_tokens=3)
+    attempts: list[int] = []
+    slept: list[float] = []
+
+    def broken(*args):
+        attempts.append(1)
+        raise sqlite3.OperationalError("database is locked")
+
+    _stub_usage_collectors(
+        monkeypatch,
+        hermes=broken,
+        claude=lambda *args: [settled],
+        opencode=lambda *args: [],
+    )
+
+    result = collect_all(**_kwargs(tmp_path, usage), lane_sleep=slept.append)
+
+    assert len(attempts) == 3
+    assert slept == [2.0, 4.0]
+    # The healthy lanes' canonical appends still landed.
+    rows = read_sqlite_facts(usage, fact_type="usage_event_v1")
+    assert len(rows) == 1 and rows[0]["output_tokens"] == 3
+    assert result["ceded"] == ["hermes"]
+    assert result["counts"]["ceded"] == 1
+    assert result["warnings"] == [{"source": "hermes", "error": "OperationalError"}]
+    lanes = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
+    assert lanes["lanes"]["hermes"]["ceded"] is True
+    assert lanes["lanes"]["hermes"]["last_error_class"] == "OperationalError"
+    assert lanes["lanes"]["hermes"]["last_success_at"] is None
+    assert lanes["lanes"]["claude_code"]["last_success_at"] == lanes["updated_at"]
+    assert (tmp_path / "health" / "usage-collect.ok").exists()
+    line = _collect_summary_line(result)
+    assert "lanes=2/3" in line and "degraded=hermes" in line and "ceded=hermes" in line
+    assert "database is locked" not in json.dumps(result)
+
+
+def test_every_lane_ceding_still_completes_with_zero_healthy(tmp_path, monkeypatch):
+    from codex_usage_tracker.cli import _collect_summary_line
+
+    usage = tmp_path / "usage.sqlite3"
+
+    def broken(*args):
+        raise OSError("private source path")
+
+    _stub_usage_collectors(monkeypatch, hermes=broken, claude=broken, opencode=broken)
+
+    result = collect_all(**_kwargs(tmp_path, usage))
+
+    assert result["ceded"] == ["claude_code", "hermes", "opencode"]
+    assert result["usage"] == {"appended": 0, "discovered": 0, "replayed": 0}
+    lanes = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
+    assert all(lane["ceded"] for lane in lanes["lanes"].values())
+    assert all(lane["last_success_at"] is None for lane in lanes["lanes"].values())
+    # Health and heartbeat still land; the watchdog owns the alerting from here.
+    assert (tmp_path / "health" / "usage-collect.ok").exists()
+    assert (tmp_path / "health" / "collect-usage-last.json").exists()
+    assert "lanes=0/3" in _collect_summary_line(result)
+
+
+def test_persist_failure_retries_then_cedes_only_that_lane(tmp_path, monkeypatch):
+    usage = tmp_path / "usage.sqlite3"
+    settled = _claude_fact(request_status="ok", output_tokens=9)
+    opencode_fact = _claude_fact(
+        "opencode-evt",
+        harness="opencode",
+        source_namespace="test:opencode",
+        request_status="ok",
+        output_tokens=2,
+    )
+    calls: list[int] = []
+
+    def broken_append(*args, **kwargs):
+        calls.append(1)
+        raise sqlite3.OperationalError("database is locked")
+
+    # hermes/opencode persist through the plain quarantined writer; the Claude
+    # lane persists through the reconciled writer and stays healthy.
+    monkeypatch.setattr(
+        "codex_usage_tracker.collector.append_sqlite_facts_quarantined", broken_append
+    )
+    _stub_usage_collectors(
+        monkeypatch,
+        hermes=lambda *args: [],
+        claude=lambda *args: [settled],
+        opencode=lambda *args: [opencode_fact],
+    )
+
+    result = collect_all(**_kwargs(tmp_path, usage))
+
+    # Both plain-writer lanes exhausted three attempts each at the persist step.
+    assert len(calls) == 6
+    assert result["ceded"] == ["hermes", "opencode"]
+    assert result["lanes"]["opencode"]["last_error_class"] == "OperationalError"
+    assert result["lanes"]["opencode"]["rows_written"] == 0
+    assert result["lanes"]["claude_code"]["succeeded"] is True
+    rows = read_sqlite_facts(usage, fact_type="usage_event_v1")
+    assert [row["source_namespace"] for row in rows] == ["test:claude"]
+    lanes = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
+    assert lanes["lanes"]["opencode"]["ceded"] is True
+    assert lanes["lanes"]["opencode"]["last_success_at"] is None
+    assert lanes["lanes"]["claude_code"]["last_success_at"] == lanes["updated_at"]
+
+
+def test_persist_failure_recovers_on_retry_and_records_success(tmp_path, monkeypatch):
+    from codex_usage_tracker import canonical_ledger
+
+    usage = tmp_path / "usage.sqlite3"
+    hermes_fact = _claude_fact(
+        "hermes-evt",
+        harness="hermes",
+        source_namespace="test:hermes",
+        request_status="ok",
+        output_tokens=4,
+    )
+    calls: list[int] = []
+    real_append = canonical_ledger.append_sqlite_facts_quarantined
+
+    def flaky_append(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return real_append(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "codex_usage_tracker.collector.append_sqlite_facts_quarantined", flaky_append
+    )
+    _stub_usage_collectors(
+        monkeypatch,
+        hermes=lambda *args: [hermes_fact],
+        claude=lambda *args: [],
+        opencode=lambda *args: [],
+    )
+
+    result = collect_all(**_kwargs(tmp_path, usage))
+
+    assert result["warnings"] == [] and result["ceded"] == []
+    assert result["lanes"]["hermes"]["succeeded"] is True
+    assert result["lanes"]["hermes"]["rows_written"] == 1
+    rows = read_sqlite_facts(usage, fact_type="usage_event_v1")
+    assert [row["source_namespace"] for row in rows] == ["test:hermes"]
+    lanes = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
+    assert lanes["lanes"]["hermes"]["last_success_at"] == lanes["updated_at"]
 
 
 # --- 1d: bounded /usage probe retry ---------------------------------------
