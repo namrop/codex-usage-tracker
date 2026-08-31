@@ -40,6 +40,12 @@ export interface GovernedCognitionSurface {
      * the reduced-motion clamp in every theme file. Apps mount glass off THIS. */
     glassEffective(): boolean;
     setGlass(on: boolean): boolean;
+    /** glass opacity 0..1 — the backing wash behind a glass panel. 0 is pure
+     * refraction, 1 is an opaque panel. This is the fine-grained transparency
+     * control the on/off toggle only approximates, and it is what makes glass
+     * viable on CONTENT panels: turn it up until the text underneath reads. */
+    glassOpacity(): number;
+    setGlassOpacity(value: number): number;
     config: GCConfig;
     rosterEvent: string;
     applyEvent: string;

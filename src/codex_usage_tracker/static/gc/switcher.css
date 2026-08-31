@@ -144,3 +144,29 @@
 .gc-switcher-option input:checked + span {
   color: var(--gc-role-structure);
 }
+
+/* The glass group's opacity slider. The range input is the one control here
+ * that is not a radio/checkbox, so it gets the accent treatment explicitly
+ * and a readout wide enough not to reflow as the number changes. */
+.gc-switcher-slider {
+  gap: calc(var(--gc-fs-xs) / 2);
+}
+
+.gc-switcher-slider input[type='range'] {
+  width: calc(var(--gc-fs-base) * 4);
+  accent-color: var(--gc-role-structure);
+  cursor: pointer;
+}
+
+.gc-switcher-slider input[type='range']:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.gc-switcher-readout {
+  min-width: calc(var(--gc-fs-base) * 1.7);
+  color: var(--gc-muted);
+  font-size: var(--gc-fs-xs);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

@@ -24,7 +24,15 @@
   --gc-glass-saturate: 140;
   --gc-glass-displace: 48;
   --gc-glass-aberration: 2;
-  --gc-glass-tint: color-mix(in srgb, var(--gc-panel) 35%, transparent);
+  /* The slider's value, published by loader.js onto <html> as an inline
+   * custom property; this is the fallback for a page the loader has not
+   * reached yet. The tint DERIVES from it, so one control moves the wash. */
+  --gc-glass-opacity: 0.35;
+  --gc-glass-tint: color-mix(
+    in srgb,
+    var(--gc-panel) calc(var(--gc-glass-opacity) * 100%),
+    transparent
+  );
 }
 
 /* The reader's directive outranks the toggle — same rank order as the

@@ -111,12 +111,38 @@
 			input.checked = GC.glass();
 			input.addEventListener("change", () => {
 				GC.setGlass(input.checked);
+				renderGlassOption();
 			});
 			const span = document.createElement("span");
 			span.textContent = "glass";
 			wrap.appendChild(input);
 			wrap.appendChild(span);
 			glassGroup.appendChild(wrap);
+			if (typeof GC.setGlassOpacity !== "function" || typeof GC.glassOpacity !== "function") return;
+			const slide = document.createElement("label");
+			slide.className = "gc-switcher-option gc-switcher-slider";
+			slide.title = "glass opacity — 0 is pure refraction, 1 is an opaque panel. Raise it until text over the glass reads comfortably.";
+			const range = document.createElement("input");
+			range.type = "range";
+			range.min = "0";
+			range.max = "1";
+			range.step = "0.05";
+			range.name = id + "-glass-opacity";
+			range.value = String(GC.glassOpacity());
+			range.disabled = !GC.glass();
+			range.setAttribute("aria-label", "glass opacity");
+			const readout = document.createElement("span");
+			readout.className = "gc-switcher-readout";
+			const show = (v) => {
+				readout.textContent = Math.round(v * 100) + "%";
+			};
+			show(GC.glassOpacity());
+			range.addEventListener("input", () => {
+				show(GC.setGlassOpacity(parseFloat(range.value)));
+			});
+			slide.appendChild(range);
+			slide.appendChild(readout);
+			glassGroup.appendChild(slide);
 		}
 		function renderOptions() {
 			state = GC.current();

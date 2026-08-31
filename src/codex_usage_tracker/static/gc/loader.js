@@ -23,6 +23,8 @@
 	var LS_THEME = "gc.theme";
 	var LS_SHAPE = "gc.shape";
 	var LS_GLASS = "gc.glass";
+	var LS_GLASS_OPACITY = "gc.glassOpacity";
+	var GLASS_OPACITY_DEFAULT = .35;
 	var ROSTER_EVENT = "gc:roster";
 	var APPLY_EVENT = "gc:apply";
 	var SOURCE_EVENT = "gc:source";
@@ -51,8 +53,14 @@
 	var desired = {
 		theme: cfg.defaultTheme,
 		shape: null,
-		glass: false
+		glass: false,
+		glassOpacity: GLASS_OPACITY_DEFAULT
 	};
+	function clampOpacity(value) {
+		const n = typeof value === "number" ? value : parseFloat(String(value));
+		if (!isFinite(n)) return GLASS_OPACITY_DEFAULT;
+		return Math.max(0, Math.min(1, n));
+	}
 	function joinUrl(base, file) {
 		return base.replace(/\/+$/, "") + "/" + file;
 	}
@@ -211,14 +219,18 @@
 	var glassAnnounced = null;
 	function renderGlass() {
 		const effective = desired.glass && !reducedTransparency();
-		if (document.documentElement) document.documentElement.setAttribute("data-gc-glass", effective ? "on" : "off");
+		if (document.documentElement) {
+			document.documentElement.setAttribute("data-gc-glass", effective ? "on" : "off");
+			document.documentElement.style.setProperty("--gc-glass-opacity", String(desired.glassOpacity));
+		}
 		setLink("gc-glass-css", desired.glass ? "glass.css" : null, "gc-shape");
-		const announce = (desired.glass ? "on" : "off") + "/" + (effective ? "on" : "off");
+		const announce = (desired.glass ? "on" : "off") + "/" + (effective ? "on" : "off") + "/" + desired.glassOpacity;
 		if (announce === glassAnnounced) return;
 		glassAnnounced = announce;
 		document.dispatchEvent(new CustomEvent(GLASS_EVENT, { detail: {
 			glass: desired.glass,
-			effective
+			effective,
+			opacity: desired.glassOpacity
 		} }));
 	}
 	function setGlass(on) {
@@ -227,6 +239,13 @@
 		publishSettings();
 		renderGlass();
 		return desired.glass;
+	}
+	function setGlassOpacity(value) {
+		desired.glassOpacity = clampOpacity(value);
+		store(LS_GLASS_OPACITY, String(desired.glassOpacity));
+		publishSettings();
+		renderGlass();
+		return desired.glassOpacity;
 	}
 	function publishSettings() {
 		if (!cfg.settings || typeof fetch !== "function") return;
@@ -237,7 +256,8 @@
 				body: JSON.stringify({
 					theme: desired.theme,
 					shape: desired.shape,
-					glass: desired.glass
+					glass: desired.glass,
+					glassOpacity: desired.glassOpacity
 				})
 			}).catch(() => {});
 		} catch {}
@@ -249,9 +269,12 @@
 			const theme = typeof data.theme === "string" ? data.theme : desired.theme;
 			const shape = data.shape === null || typeof data.shape === "string" ? data.shape : desired.shape;
 			const glass = typeof data.glass === "boolean" ? data.glass : desired.glass;
-			if (glass !== desired.glass) {
+			const opacity = data.glassOpacity === void 0 ? desired.glassOpacity : clampOpacity(data.glassOpacity);
+			if (glass !== desired.glass || opacity !== desired.glassOpacity) {
 				desired.glass = glass;
+				desired.glassOpacity = opacity;
 				store(LS_GLASS, glass ? "on" : "off");
+				store(LS_GLASS_OPACITY, String(opacity));
 				renderGlass();
 			}
 			if (theme === desired.theme && shape === desired.shape) return data;
@@ -393,6 +416,8 @@
 		glass: () => desired.glass,
 		glassEffective: () => desired.glass && !reducedTransparency(),
 		setGlass,
+		glassOpacity: () => desired.glassOpacity,
+		setGlassOpacity,
 		ready: null
 	};
 	globalThis.GovernedCognition = GC;
@@ -400,6 +425,8 @@
 		desired.theme = read(LS_THEME) || cfg.defaultTheme;
 		desired.shape = read(LS_SHAPE) || null;
 		desired.glass = read(LS_GLASS) === "on";
+		const storedOpacity = read(LS_GLASS_OPACITY);
+		if (storedOpacity !== null) desired.glassOpacity = clampOpacity(storedOpacity);
 		render();
 		renderGlass();
 		try {
