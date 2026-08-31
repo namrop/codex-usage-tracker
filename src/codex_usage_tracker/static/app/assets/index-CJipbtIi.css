@@ -29,6 +29,24 @@
   --copper: var(--gc-cat-ai-usage-series-rank-rank-6);
   --token: var(--gc-cat-ai-usage-series-rank-rank-1);
   --radius: var(--gc-radius-md);
+
+  /* -- the page veil (SURFACES.md, "Veil it if it competes"): a flat
+   * low-alpha wash of the theme's OWN surface color, composited above
+   * --gc-bg-image so the texture is knocked back before anything sits
+   * near it. Token-derived, never a literal — the jlmu.love cream wash
+   * expressed as color-mix over the live theme's --bg. The strength is
+   * the one per-theme knob the doctrine asks for (the choice is
+   * per-theme, not per-app). -- */
+  --page-veil-strength: 30%;
+  --page-veil: color-mix(in srgb, var(--bg) var(--page-veil-strength), transparent);
+}
+
+/* johannah IS the jlmu.love toile — a busy mid-contrast paper pattern,
+ * not a dim scene. It needs the reference's heavier knock-back; the dark
+ * themes are already near-black and a heavier veil would leave the glass
+ * nothing to refract (SURFACES.md §B). */
+html[data-gc-theme="johannah"] {
+  --page-veil-strength: 62%;
 }
 
 * {
@@ -43,14 +61,36 @@ body {
   overflow-x: hidden;
 }
 
+/* The page field (SURFACES.md, "Wiring the background"). Layer order is
+ * top-to-bottom in CSS, so this reads: the structure grid, then the veil,
+ * then the theme's background image, over --bg as the color that ALWAYS
+ * renders. A theme with no image emits the literal `none` and a 404 falls
+ * through to the color, so this line is safe on every theme forever.
+ *
+ * The grid is structure (ruled role mapping) — both axes draw from the
+ * structural family; the old gold axis was threshold-colored, and
+ * threshold is never routine.
+ *
+ * Per-theme hints ride their own tokens: --gc-bg-size / --gc-bg-repeat
+ * (johannah tiles at 650px; the dark themes are single `cover` scenes).
+ * The image itself arrives as --page-bg-image, which is --gc-bg-image made
+ * absolute against the theme sheet that declared it: a relative url carried
+ * in a custom property resolves against the sheet where the var() is USED,
+ * so consuming --gc-bg-image straight from this bundle 404s. lib/background.ts
+ * carries the whole finding.
+ * The image and its veil are `fixed` so a long scroll moves the panels
+ * across a still field instead of dragging a tile with them. */
 body {
-  /* The grid is structure (ruled role mapping) — both axes draw from the
-   * structural family; the old gold axis was threshold-colored, and
-   * threshold is never routine. */
-  background:
+  background-color: var(--bg);
+  background-image:
     linear-gradient(90deg, color-mix(in srgb, var(--gc-role-structure) 8%, transparent) 0 1px, transparent 1px 80px),
     linear-gradient(180deg, color-mix(in srgb, var(--line) 6%, transparent) 0 1px, transparent 1px 80px),
-    var(--bg);
+    linear-gradient(var(--page-veil), var(--page-veil)),
+    var(--page-bg-image, none);
+  background-size: auto, auto, auto, var(--gc-bg-size, cover);
+  background-repeat: repeat, repeat, no-repeat, var(--gc-bg-repeat, no-repeat);
+  background-position: 0 0, 0 0, 0 0, center center;
+  background-attachment: scroll, scroll, fixed, fixed;
   color: var(--text);
   padding: 22px;
 }
@@ -77,9 +117,16 @@ canvas {
   max-width: 100%;
 }
 
+/* OPAQUE PLANES — the chart-legibility law (SURFACES.md §A: "without
+ * placing texture behind the text"). These panels carry Chart.js canvases,
+ * stat tiles, donuts, meters and tables; a textured field showing through
+ * them is exactly the texture-behind-the-thing-being-parsed the doctrine
+ * forbids. Before the background landed these were 92% panel over a flat
+ * color, which cost nothing; over an image it would cost the reading. The
+ * field lives BEHIND the page, in the gutters — never under a number. */
 .title-panel,
 .card {
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  background: var(--panel);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
   box-shadow: 0 18px 48px color-mix(in srgb, var(--bg-deep) 42%, transparent);
@@ -1228,6 +1275,97 @@ tbody tr:hover {
     display: grid;
     grid-template-columns: 1fr;
   }
+}
+
+/* ============================================================
+ * GLASS — the main-panel class (SURFACES.md, "Wiring glass" and
+ * "Choosing surfaces — keeper-ruled 2026-08-30, revised").
+ *
+ * The doctrine's first pass said glass was chrome only; the keeper
+ * overruled it as too narrow. For this app the named target is THE MAIN
+ * PANELS — the shell's own top-level panels as a class (the masthead and
+ * the three content cards), not one showpiece.
+ *
+ * What makes glass-over-content safe is the opacity slider: the panel's
+ * fill is --gc-glass-tint, which derives from --gc-glass-opacity, which
+ * the loader publishes onto <html> from the picker. At 0 the panel is
+ * pure refraction; at 1 it is effectively the opaque panel it was before.
+ * The app does not pick a number — it wires the token and the reader
+ * tunes it.
+ *
+ * TWO LIMITS STILL HOLD, and the second block below is where they live:
+ * chart surfaces and the folded numeric tables stay OPAQUE planes inside
+ * the glass panel (a canvas carries no text a wash can rescue, and
+ * refraction across gridlines reads as damage); and johannah gets no
+ * panel glass at all, because its reading planes are opaque paper —
+ * that is what the source site authored. The johannah gate is a
+ * --gc-scheme read in GlassPanels.tsx, not a theme name.
+ *
+ * Every rule here is gated on data-glass="on", which <GlassPanels> writes
+ * only after checking GovernedCognition.glassEffective() (the toggle AND
+ * NOT prefers-reduced-transparency). Glass off, GC absent, or a reader
+ * who asked for reduced transparency: nothing below matches and the page
+ * is byte-for-byte the plain panels.
+ * ============================================================ */
+
+/* the backdrop the <GlassLayer> component renders into — behind
+ * everything its host paints, never taking a pointer. No overflow clip
+ * here: a square clip would cut the lens's own rounded corners off. */
+.glass-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* The frost plane. It carries the backdrop-filter the LIBRARY cannot: its
+ * own frost sits on the same element as its SVG `filter`, which makes that
+ * element a backdrop root and empties its backdrop (lib/glass.ts records
+ * the finding and the verification). This element has no filter, so its
+ * blur lands; the lens draws over it. */
+.glass-frost {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* THE CLASS. The panel's flat fill becomes the slider-driven wash, its
+ * hairline and drop shadow step aside (the lens draws both), and it
+ * becomes the lens's containing block. */
+:is(.title-panel, .card)[data-glass="on"] {
+  position: relative;
+  background: var(--gc-glass-tint);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* the panel's real content rides above the lens */
+:is(.title-panel, .card)[data-glass="on"] > :not(.glass-layer) {
+  position: relative;
+  z-index: 1;
+}
+
+/* THE EXCLUSIONS — the two surfaces that stay opaque planes inside a
+ * glass panel, ruled and unchanged by the slider:
+ *
+ *   .chart-wrap / .subscription-quota-chart-wrap  the Chart.js canvases
+ *   .window-card / .subscription-quota-history    the donut, heat-strip
+ *                                                 and history plates
+ *   .fold                                         the folded numeric
+ *                                                 tables
+ *
+ * A canvas draws on transparent pixels, so without this the gridlines,
+ * bars and axis ticks would sit directly on refraction. The panel around
+ * them is glass; the reading surface inside them is not. */
+:is(.title-panel, .card)[data-glass="on"] :is(
+    .chart-wrap,
+    .subscription-quota-chart-wrap,
+    .window-card,
+    .subscription-quota-history,
+    .fold
+  ) {
+  background: var(--panel);
+  border-radius: var(--radius);
 }
 
 /* ============================================================

@@ -1,7 +1,10 @@
 import { useEffect, useMemo } from "react";
 import { useDashboardData } from "./hooks/useDashboardData";
+import { useGlass } from "./hooks/useGlass";
+import { usePageBackground } from "./hooks/usePageBackground";
 import { usePalette } from "./hooks/usePalette";
 import { BillingCard } from "./components/BillingCard";
+import { GlassPanels } from "./components/GlassPanels";
 import { OpsHero } from "./components/OpsHero";
 import { deriveResetChips } from "./components/ResetRail";
 import { SubscriptionsCard } from "./components/SubscriptionsCard";
@@ -22,6 +25,14 @@ function mountSwitcher(): void {
 
 export default function App() {
   const palette = usePalette();
+  // GC owns the glass preference; <GlassPanels> draws it on the shell's
+  // main-panel class (keeper-ruled: a class, not one showpiece surface).
+  // Nothing here reads .glass() — glassEffective() is the mount gate, so a
+  // reader asking for reduced transparency outranks the toggle.
+  const glass = useGlass();
+  // Republishes the theme's background asset as an absolute url — see
+  // lib/background.ts for why the CSS token cannot be consumed directly.
+  usePageBackground();
   const { state, refresh } = useDashboardData();
 
   useEffect(() => {
@@ -63,6 +74,7 @@ export default function App() {
       />
       <SubscriptionsCard palette={palette} subs={state.subs} />
       <BillingCard billing={state.billing} />
+      <GlassPanels glass={glass} />
     </main>
   );
 }

@@ -36,12 +36,15 @@ import re
 
 from frontend_surfaces import (
     GC_SNAPSHOT,
+    REPO_ROOT,
     app_css,
     bridge_css,
     built_app_js,
     built_css,
     built_html,
+    built_vendor_js,
     entry_html,
+    source,
     source_files,
 )
 from pathlib import Path
@@ -340,3 +343,195 @@ def test_vendored_overlay_publishes_the_full_grammar_surface() -> None:
         "--gc-cut at the root value and per-element tiers can never resolve"
     )
     assert "polygon(" in templates
+
+
+# ---------------------------------------------------------------------------
+# Atmosphere axis: the theme background and the liquid-glass surface.
+#
+# governed-cognition/SURFACES.md (2026-08-30) is the estate doctrine these
+# pin. Two laws matter more than the rest and both are about READING:
+#
+#   1. the field lives BEHIND the page — every plane that carries a chart, a
+#      stat tile, a donut or a table stays opaque (SURFACES.md §A, "without
+#      placing texture behind the text");
+#   2. glass is chrome, gated on GovernedCognition.glassEffective(), and an
+#      exact visual no-op when off or when GC never arrives.
+#
+# The wiring is token-only like everything else in the sheet: the purity scan
+# above already forbids color literals, and these forbid the two atmosphere
+# literals it cannot see — a hard-coded asset url and a hard-coded blur.
+# ---------------------------------------------------------------------------
+
+GLASS_MARKER = "GLASS — the main-panel class"
+GLASS_GATE = '[data-glass="on"]'
+
+
+def _body_rule() -> str:
+    """The body's PAINT rule — the sheet also opens with a shared
+    `html, body` box-model reset that carries no background."""
+    css = app_css()
+    for match in re.finditer(r"\nbody \{([^}]*)\}", css):
+        if "background" in match.group(1):
+            return match.group(1)
+    raise AssertionError("no body rule paints the page field")
+
+
+def test_background_is_wired_over_the_color_and_honours_theme_hints() -> None:
+    """SURFACES.md, "Wiring the background": the image layers OVER a
+    background-color that always renders, and the per-theme size/repeat
+    hints ride their own tokens rather than the app's guesses."""
+    body = _body_rule()
+    assert "background-color: var(--bg)" in body, (
+        "the color must always render — a 404 on the image cannot cost the page"
+    )
+    assert "var(--page-bg-image, none)" in body, "background image layer missing"
+    assert "var(--gc-bg-size, cover)" in body and "var(--gc-bg-repeat, no-repeat)" in body, (
+        "per-theme background hints are published tokens, not app guesses"
+    )
+    # The veil is the doctrine's answer to a texture that competes, and it is
+    # the theme's OWN surface color — never a literal wash.
+    assert "--page-veil: color-mix(in srgb, var(--bg)" in app_css()
+    # No asset url may be spelled out in the app layer: the theme owns which
+    # file it ships, and the hash changes when the asset does.
+    assert "url(" not in COMMENT_RE.sub("", app_css()), (
+        "asset urls belong to the theme layer; the app resolves --gc-bg-image"
+    )
+
+
+def test_chart_bearing_planes_stay_opaque() -> None:
+    """The chart-legibility law. .title-panel/.card are the planes every
+    canvas, tile, donut and table sits on; over a textured field a
+    translucent plane is texture behind the thing being parsed."""
+    css = COMMENT_RE.sub("", app_css())
+    rule = re.search(r"\n\.title-panel,\n\.card \{([^}]*)\}", css)
+    assert rule, "the shared panel rule moved — re-pin this law"
+    background = re.search(r"background:\s*([^;]+);", rule.group(1))
+    assert background and background.group(1).strip() == "var(--panel)", (
+        "chart/table planes must be a flat opaque token, got: "
+        f"{background.group(1).strip() if background else None!r}"
+    )
+
+
+def _glass_section() -> str:
+    body = app_css()
+    marker = body.index(GLASS_MARKER)
+    start = body.rfind("/*", 0, marker)
+    return COMMENT_RE.sub("", body[start : body.index(SLANT_MARKER)])
+
+
+def test_glass_targets_the_panel_class_and_stays_fully_gated() -> None:
+    """Keeper-ruled 2026-08-30 (revised doctrine): glass targets a CLASS of
+    panels, not one showpiece — here the shell's own top-level panels. And
+    every rule in the section either carries the mount gate or styles an
+    app-owned .glass-* element that exists only while the lens is mounted,
+    so glass off is byte-identical to no glass at all."""
+    section = _glass_section()
+    assert ':is(.title-panel, .card)[data-glass="on"]' in section, (
+        "glass must target the main-panel class, not a single surface"
+    )
+    # Split on rule boundaries rather than lines: the exclusion rule's
+    # selector spans several lines and a line scan would skip it entirely.
+    for chunk in section.split("}"):
+        if "{" not in chunk:
+            continue
+        selector = " ".join(chunk.split("{")[0].split()).strip()
+        if not selector or selector.startswith("@"):
+            continue
+        assert GLASS_GATE in selector or selector.startswith(".glass-"), (
+            f"ungated glass selector (would paint with glass off): {selector!r}"
+        )
+    # The gate is the app's own mounted-flag. The estate attribute does not
+    # know about reduced transparency, so the sheet may never key off it.
+    assert 'data-gc-glass="on"' not in COMMENT_RE.sub("", app_css()), (
+        "gate on the app's mounted-flag, not the raw estate toggle"
+    )
+
+
+def test_glass_panel_fill_rides_the_opacity_slider() -> None:
+    """--gc-glass-opacity is what makes glass-over-content safe: the panel's
+    wash is --gc-glass-tint, which derives from it, so the reader tunes
+    legibility. The app may not substitute a hand-picked alpha of its own —
+    that would freeze the slider out of the surface it governs."""
+    section = _glass_section()
+    fill = re.search(
+        r':is\(\.title-panel, \.card\)\[data-glass="on"\] \{([^}]*)\}', section
+    )
+    assert fill, "the panel-class rule moved — re-pin this law"
+    background = re.search(r"background:\s*([^;]+);", fill.group(1))
+    assert background and background.group(1).strip() == "var(--gc-glass-tint)", (
+        "the glass panel's fill is the slider-derived tint, got: "
+        f"{background.group(1).strip() if background else None!r}"
+    )
+    assert "color-mix" not in fill.group(1), (
+        "no app-side alpha on a glass panel — the slider owns that number"
+    )
+
+
+def test_chart_surfaces_stay_opaque_inside_a_glass_panel() -> None:
+    """The limit the revised doctrine kept: 'Charts and dense numeric tables
+    stay opaque planes: a canvas has no text the wash can rescue, and
+    refraction across gridlines reads as damage.' The panel around them is
+    glass; the reading surface inside them is not."""
+    section = _glass_section()
+    rule = re.search(
+        r':is\(\.title-panel, \.card\)\[data-glass="on"\] :is\(([^)]*)\)\s*\{([^}]*)\}',
+        section,
+        re.S,
+    )
+    assert rule, "no explicit chart/table exemption inside the glass section"
+    families = rule.group(1)
+    for family in (".chart-wrap", ".subscription-quota-chart-wrap", ".window-card",
+                   ".subscription-quota-history", ".fold"):
+        assert family in families, f"{family} is a chart/table plane; exempt it"
+    background = re.search(r"background:\s*([^;]+);", rule.group(2))
+    assert background and background.group(1).strip() == "var(--panel)", (
+        "an exempt plane must be flat and opaque, got: "
+        f"{background.group(1).strip() if background else None!r}"
+    )
+
+
+def test_glass_mounts_off_glass_effective_and_never_the_raw_toggle() -> None:
+    """SURFACES.md: 'Mount off glassEffective(), never glass().' The
+    reader's reduced-transparency setting outranks the preference."""
+    joined = "\n".join(source_files().values())
+    assert "glassEffective()" in joined
+    assert not re.search(r"\bgc\.glass\(\)", joined), (
+        "reading the raw toggle would render glass for a reader who asked "
+        "for reduced transparency"
+    )
+    # The lens is fed from the published knobs, read as numbers.
+    for token in ("--gc-glass-blur", "--gc-glass-saturate", "--gc-glass-displace",
+                  "--gc-glass-aberration"):
+        assert token in joined, f"{token} is a published prop feed; feed it"
+    assert "parseFloat" in joined or "Number.parseFloat" in joined
+    # And the palette re-resolves on the glass event like it does on a theme
+    # swap, so the charts never read stale tokens.
+    assert "glassEvent" in source("hooks/usePalette.ts")
+
+
+def test_the_app_never_restyles_the_estate_pickers_own_nodes() -> None:
+    """Earned 2026-08-30: an app rule named .gc-switcher-glass landed on
+    switcher.js's OWN glass-toggle fieldset and broke the picker's layout in
+    both glass states. The app owns .gc-switcher-mount (its hole in the
+    page) and nothing else under the gc-switcher- prefix."""
+    css = COMMENT_RE.sub("", app_css())
+    for selector in re.findall(r"\.gc-switcher[a-z-]*", css):
+        assert selector == ".gc-switcher-mount", (
+            f"{selector} belongs to GC's switcher.css, not this app"
+        )
+
+
+def test_liquid_glass_renderer_is_exact_pinned_and_stays_third_party() -> None:
+    """SURFACES.md names the renderer and says exact-pin it. It is
+    third-party, so it rides the vendor chunk — the app chunk stays under
+    the zero-literal law it could never satisfy."""
+    import json
+
+    manifest = json.loads((REPO_ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
+    pinned = manifest["dependencies"]["liquid-glass-react"]
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pinned), (
+        f"exact-pin the renderer, got range {pinned!r}"
+    )
+    assert "liquid-glass-react" in "\n".join(source_files().values())
+    assert "glass__warp" in built_vendor_js(), "renderer missing from the vendor chunk"
+    assert "glass__warp" not in built_app_js(), "renderer leaked into the app chunk"
