@@ -33,10 +33,18 @@ export interface GovernedCognitionSurface {
     mountSwitcher(target: string | Element, opts?: SwitcherMountOptions): Promise<Element>;
     settingsSource(): 'local' | 'origin';
     themeSource(): SourceName | null;
+    /** the liquid-glass PREFERENCE (the toggle). Default off. */
+    glass(): boolean;
+    /** the preference AND NOT prefers-reduced-transparency — what actually
+     * renders. The reader's directive outranks the toggle, same rank order as
+     * the reduced-motion clamp in every theme file. Apps mount glass off THIS. */
+    glassEffective(): boolean;
+    setGlass(on: boolean): boolean;
     config: GCConfig;
     rosterEvent: string;
     applyEvent: string;
     sourceEvent: string;
+    glassEvent: string;
     ready: Promise<unknown> | null;
 }
 /** what switcher.js registers; the loader delivers and then calls it */

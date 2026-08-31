@@ -1,0 +1,43 @@
+/* Governed Cognition — liquid glass tunables. Hand-written, delivered like
+ * switcher.css (RUNTIME_SOURCES -> dist/glass.css), attached by loader.js
+ * only while the glass toggle is ON.
+ *
+ * GC does not draw the effect. The apps do, with liquid-glass-react on their
+ * premier surfaces; these tokens are the estate's one set of knobs for it.
+ * The first four are UNITLESS prop feeds (read app-side via getComputedStyle
+ * + parseFloat), matching the library's own prop scales:
+ *
+ *   --gc-glass-blur       -> blurAmount        (library scale: backdrop blur
+ *                            = (4 + blur * 32)px, so 0.08 is ~6.5px)
+ *   --gc-glass-saturate   -> saturation        (percent, as a number)
+ *   --gc-glass-displace   -> displacementScale (refraction intensity;
+ *                            renders on Chromium only — Safari/Firefox
+ *                            ignore the displacement and show plain frost)
+ *   --gc-glass-aberration -> aberrationIntensity (edge chromatic fringe)
+ *
+ * --gc-glass-tint is CSS: a wash apps may paint under/over glass content so
+ * text stays readable on busy backdrops. Derived from the live theme's
+ * panel color, so it follows every theme without per-theme entries. */
+
+:root {
+  --gc-glass-blur: 0.08;
+  --gc-glass-saturate: 140;
+  --gc-glass-displace: 48;
+  --gc-glass-aberration: 2;
+  --gc-glass-tint: color-mix(in srgb, var(--gc-panel) 35%, transparent);
+}
+
+/* The reader's directive outranks the toggle — same rank order as the
+ * reduced-motion clamp baked into every generated theme file. loader.js
+ * already refuses to publish data-gc-glass="on" under this media query;
+ * this block is the second lock: even a consumer that reads only the
+ * tokens gets zeroed knobs and an opaque tint. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --gc-glass-blur: 0;
+    --gc-glass-saturate: 100;
+    --gc-glass-displace: 0;
+    --gc-glass-aberration: 0;
+    --gc-glass-tint: var(--gc-panel);
+  }
+}

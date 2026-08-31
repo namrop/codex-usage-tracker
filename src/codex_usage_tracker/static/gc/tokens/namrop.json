@@ -1,0 +1,138 @@
+{
+  "name": "namrop",
+  "title": "Namrop",
+  "description": "The namrop.com register: abyssal violet-black inks, ivory text, gold frames, ghost cyan, electric violet. Restrained mythic — the lighthouse-and-question-star site whose slant grammar GC already carries (namrop is the SLANT donor, so this theme is natively slanted). Donor of record: namrop-site app/globals.css, read-only.",
+  "color": {
+    "roles": {
+      "structure": "#e0ba68",
+      "info": "#5fc3d1",
+      "stability": "#b7e4a8",
+      "threshold": "#b98742",
+      "violation": "#be2d4b",
+      "intent": "#c283e4"
+    },
+    "surface": {
+      "bg": "#05010a",
+      "fg": "#f2e7d5",
+      "panel": "#180c20",
+      "line": "rgba(216, 174, 96, 0.26)",
+      "muted": "#cfbea6",
+      "muted-alt": "#8f5aa0",
+      "shade": "rgba(5, 1, 9, 0.56)",
+      "terminal": "#0c0610",
+      "raw": "#120719",
+      "scrollbar-thumb": "#5b381f",
+      "scrollbar-thumb-hover": "#b98742",
+      "scrollbar-track": "#120719",
+      "bg-deep": "#030107",
+      "panel-raised": "#1f0f29"
+    },
+    "syntax": {
+      "bg": "#0c0610",
+      "fg": "#f2e7d5",
+      "key": "#5fc3d1",
+      "string": "#e0ba68",
+      "number": "#cfbea6",
+      "bool": "#c283e4",
+      "null": "#8f5aa0"
+    },
+    "extra": {
+      "ink": "#120719",
+      "ink-warm": "#1b0b25",
+      "wine": "#3f1434",
+      "plum": "#6f417f",
+      "plum-bright": "#a86eb5",
+      "star-gold": "#f4d486",
+      "keeper-cream": "#fff0b8",
+      "beam-cyan": "#23d7ff",
+      "orchid-pale": "#d9a8e6"
+    },
+    "scheme": "dark"
+  },
+  "sets": {
+    "ai-usage.harness": {
+      "claude_code": "#5fc3d1",
+      "claude_code_secondary": "#a86eb5",
+      "hermes": "#e0ba68",
+      "opencode": "#c283e4"
+    },
+    "ai-usage.series-rank": {
+      "rank-1": "#5fc3d1",
+      "rank-2": "#23d7ff",
+      "rank-3": "#c283e4",
+      "rank-4": "#a86eb5",
+      "rank-5": "#d9a8e6",
+      "rank-6": "#e0ba68",
+      "rank-7": "#b98742",
+      "rank-8": "#f4d486",
+      "rank-9": "#b7e4a8",
+      "rank-10": "#8f5aa0"
+    },
+    "diadem.session-type": {
+      "main": "#b7e4a8",
+      "cron": "#e0ba68",
+      "delegated": "#a86eb5"
+    }
+  },
+  "modifiers": {
+    "hi": {
+      "lightness": 0.14
+    }
+  },
+  "shape": {
+    "native": "slanted",
+    "radius": {
+      "xs": "0px",
+      "sm": "0px",
+      "md": "0px",
+      "lg": "0px",
+      "xl": "0px",
+      "pill": "0px"
+    },
+    "lift": "rgba(224, 186, 104, 0.08)"
+  },
+  "motion": {
+    "timings": {
+      "fast": "0.12s",
+      "med": "0.18s",
+      "slide": "0.22s",
+      "pulse": "2.4s",
+      "pulse-fast": "1s",
+      "blink": "1.8s",
+      "flash": "1.8s",
+      "breathe": "3.4s"
+    },
+    "amplitudes": {
+      "pulse": 0.55
+    }
+  },
+  "type": {
+    "family": {
+      "body": "'Avenir Next', 'Segoe UI', system-ui, sans-serif",
+      "display": "Georgia, 'Times New Roman', serif",
+      "mono": "'SFMono-Regular', 'Cascadia Code', 'Fira Code', Consolas, 'Liberation Mono', monospace"
+    },
+    "scale": {
+      "xs": "11px",
+      "sm": "13px",
+      "base": "15px",
+      "lg": "17px",
+      "xl": "22px"
+    },
+    "leading": {
+      "code": 1.5,
+      "base": 1.6,
+      "prose": 1.7
+    }
+  },
+  "notes": {
+    "roles": "Mapped from the donor's own lens grammar (app/globals.css), not by decoration: structure = gold-bright #e0ba68 — the default --lens-accent and the hue of every hairline/frame (--line is rgba(216,174,96,.26)); the bordered cut IS namrop's structural voice. info = --cyan #5fc3d1, the technical-lens accent — the ghost cyan that carries quiet data. stability = #b7e4a8, the plainspoken-lens green — the site's single green, the calm at-rest register. threshold = --gold #b98742, the deep ceremonial gold kept apart from the bright structural gold (the same gold/gold-deep split johannah uses) so gates read as weightier, rarer gold. intent = --violet-electric #c283e4, the mythic-lens accent — the electric violet/fuchsia that marks the mythic, human hand.",
+    "violation": "DRAFTED, keeper-tunable: the donor site has no alarm channel and no red anywhere in its palette. #be2d4b is derived from --wine #3f1434 by lifting lightness to legibility on the ink-deep base and rotating the hue (0.876 → 0.965 HLS) out of the violet quadrant — a plain lightness lift of wine lands in fuchsia territory and would read as intent's family, which violation may never do. Sacred, never decorative.",
+    "surfaces": "bg = --ink-deep #05010a, fg = --ivory #f2e7d5, panel/panel-raised are the solid equivalents of --panel rgba(24,12,32,.78) and --panel-strong rgba(31,15,41,.94); line is --line verbatim; shade is --shadow verbatim; muted = --ivory-muted; muted-alt = #8f5aa0, the attested quiet plum; bg-deep = #030107, the body gradient's darkest stop; scrollbar thumb = attested bronze #5b381f with deep-gold hover — quiet structure, never an accent (keeper-ruled 2026-08-29).",
+    "shape": "namrop IS the slant donor — its grammar (diagonal + octagon clips, cut scale, --cut-border-all) went upstream into GC's shape-slant overlay (see namrop-site design/governed-cognition-2026-08-30.md). Native shape is slanted; the radius scale is zero at every tier because the site has no round geometry (hard_edged, so the picker offers hard and slanted only — conformance's rounded/hard cross-checks pass a zero-scale slanted native as-is; no new rule was needed). The site's whole identity is bordered cuts, so consumers of this theme are the natural users of data-gc-line-treatment=\"border\"; the lift color stays a faint gold wash for the default treatment.",
+    "type": "All three families are the donor's own system stacks verbatim (body 'Avenir Next'/'Segoe UI', display Georgia serif, mono the --mono stack) — nothing to vendor, so font licensing is moot. Avenir Next is an Apple system font; non-Apple platforms fall through to Segoe UI / system-ui exactly as the site does.",
+    "motion": "Restrained mythic: slower than the cockpits, more present than johannah — pulse 2.4s at 0.55 amplitude. Channels tunable, never removable.",
+    "sets": "LANE-DRAFTED, KEEPER-TUNABLE. series-rank is a ten-ink ramp entirely from attested donor values (ghost cyan, beam cyan rgba(35,215,255) solid, violet-electric, plum-bright, pale orchid, gold-bright, gold, star-gold #f4d486, plainspoken green, quiet plum). harness: claude_code = ghost cyan, secondary = plum-bright, hermes = gold-bright, opencode = violet-electric. session-type: main = green (the at-rest lane), cron = gold, delegated = plum-bright.",
+    "background": "assets-src/namrop/background.webp is the site's real art: public/hero/namrop-question-star-cyberpunk-hero.png (the question-star lighthouse with the violet beam), dimmed 52% toward ink-deep #05010a and re-encoded webp q72 at 1536x1024 for interface-background subtlety."
+  }
+}

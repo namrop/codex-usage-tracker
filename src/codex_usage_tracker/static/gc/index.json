@@ -48,7 +48,18 @@
         "slanted"
       ],
       "css": "theme-governed-cognition.css",
-      "tokens": "tokens/governed-cognition.json"
+      "tokens": "tokens/governed-cognition.json",
+      "assets": {
+        "background": {
+          "file": "assets/governed-cognition-bg-91f7d6db05b5.webp",
+          "bytes": 5780,
+          "sha256": "91f7d6db05b518fb84f2dfd56d9a91f3150dbcbb44e77308c617710e9d95e2fc",
+          "size": "cover",
+          "repeat": "no-repeat",
+          "width": 1024,
+          "height": 1024
+        }
+      }
     },
     {
       "name": "johannah",
@@ -61,7 +72,41 @@
         "slanted"
       ],
       "css": "theme-johannah.css",
-      "tokens": "tokens/johannah.json"
+      "tokens": "tokens/johannah.json",
+      "assets": {
+        "background": {
+          "file": "assets/johannah-bg-3f9a4a0f4f3f.webp",
+          "bytes": 54502,
+          "sha256": "3f9a4a0f4f3f92891dc6c4951404edfe99a8466cb3a1dc235a3473902eaafafa",
+          "size": "650px",
+          "repeat": "repeat",
+          "width": 768,
+          "height": 768
+        }
+      }
+    },
+    {
+      "name": "namrop",
+      "title": "Namrop",
+      "native_shape": "slanted",
+      "hard_edged": true,
+      "shapes": [
+        "hard",
+        "slanted"
+      ],
+      "css": "theme-namrop.css",
+      "tokens": "tokens/namrop.json",
+      "assets": {
+        "background": {
+          "file": "assets/namrop-bg-110f0d4c768f.webp",
+          "bytes": 81890,
+          "sha256": "110f0d4c768fd6f0f683b883228f34c4f0d2395d2683cafb8c9714302a579547",
+          "size": "cover",
+          "repeat": "no-repeat",
+          "width": 1536,
+          "height": 1024
+        }
+      }
     },
     {
       "name": "neo-andean",
@@ -73,7 +118,18 @@
         "slanted"
       ],
       "css": "theme-neo-andean.css",
-      "tokens": "tokens/neo-andean.json"
+      "tokens": "tokens/neo-andean.json",
+      "assets": {
+        "background": {
+          "file": "assets/neo-andean-bg-b94a9226869b.webp",
+          "bytes": 5282,
+          "sha256": "b94a9226869b999a8231645e3656ef87c60930aae2caa350faa9062c03308fcd",
+          "size": "cover",
+          "repeat": "no-repeat",
+          "width": 1024,
+          "height": 1024
+        }
+      }
     }
   ],
   "shapes": [
@@ -96,6 +152,9 @@
     "switcher": {
       "js": "switcher.js",
       "css": "switcher.css"
+    },
+    "glass": {
+      "css": "glass.css"
     },
     "types": "loader.d.ts"
   },

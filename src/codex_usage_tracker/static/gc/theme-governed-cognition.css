@@ -70,6 +70,15 @@
   --gc-panel-raised: #202A40;
   --gc-fg-soft: #D4B87B;
 
+  /* -- background asset: consumers layer this OVER --gc-bg, so a 404
+   * (origin outage, missing vendored file) costs the image, never the
+   * page. Relative URL — resolves beside this stylesheet, origin-served
+   * or vendored, exactly like the fonts. Every theme pins all three so
+   * cascade-order theme swaps cannot leak a previous theme's image. -- */
+  --gc-bg-image: url(assets/governed-cognition-bg-91f7d6db05b5.webp);
+  --gc-bg-size: cover;
+  --gc-bg-repeat: no-repeat;
+
   /* -- scheme: the theme declares its own browser color-scheme -- */
   color-scheme: dark;
   --gc-scheme: dark;

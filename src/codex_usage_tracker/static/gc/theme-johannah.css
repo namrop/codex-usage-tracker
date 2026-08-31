@@ -70,6 +70,15 @@
   --gc-panel-raised: #fdf8ec;
   --gc-fg-soft: #5c4a55;
 
+  /* -- background asset: consumers layer this OVER --gc-bg, so a 404
+   * (origin outage, missing vendored file) costs the image, never the
+   * page. Relative URL — resolves beside this stylesheet, origin-served
+   * or vendored, exactly like the fonts. Every theme pins all three so
+   * cascade-order theme swaps cannot leak a previous theme's image. -- */
+  --gc-bg-image: url(assets/johannah-bg-3f9a4a0f4f3f.webp);
+  --gc-bg-size: 650px;
+  --gc-bg-repeat: repeat;
+
   /* -- scheme: the theme declares its own browser color-scheme -- */
   color-scheme: light;
   --gc-scheme: light;
@@ -84,6 +93,8 @@
   --gc-syntax-null: #5c4a55;
 
   /* -- theme-private extras (never rely on these across themes) -- */
+  --gc-extra-accent-purple: #432660;
+  --gc-extra-accent-red: #8b2942;
   --gc-extra-atlas-gold: #d7af77;
   --gc-extra-atlas-wine: #823236;
   --gc-extra-gold-soft: #dcc38a;

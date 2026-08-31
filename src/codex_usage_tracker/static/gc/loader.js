@@ -22,9 +22,11 @@
 	};
 	var LS_THEME = "gc.theme";
 	var LS_SHAPE = "gc.shape";
+	var LS_GLASS = "gc.glass";
 	var ROSTER_EVENT = "gc:roster";
 	var APPLY_EVENT = "gc:apply";
 	var SOURCE_EVENT = "gc:source";
+	var GLASS_EVENT = "gc:glass";
 	function defaultOrigin() {
 		return "http://" + (typeof location !== "undefined" && location.hostname || "127.0.0.1") + ":7312";
 	}
@@ -48,7 +50,8 @@
 	};
 	var desired = {
 		theme: cfg.defaultTheme,
-		shape: null
+		shape: null,
+		glass: false
 	};
 	function joinUrl(base, file) {
 		return base.replace(/\/+$/, "") + "/" + file;
@@ -198,6 +201,33 @@
 		publishSettings();
 		return render();
 	}
+	function reducedTransparency() {
+		try {
+			return typeof matchMedia === "function" && matchMedia("(prefers-reduced-transparency: reduce)").matches;
+		} catch {
+			return false;
+		}
+	}
+	var glassAnnounced = null;
+	function renderGlass() {
+		const effective = desired.glass && !reducedTransparency();
+		if (document.documentElement) document.documentElement.setAttribute("data-gc-glass", effective ? "on" : "off");
+		setLink("gc-glass-css", desired.glass ? "glass.css" : null, "gc-shape");
+		const announce = (desired.glass ? "on" : "off") + "/" + (effective ? "on" : "off");
+		if (announce === glassAnnounced) return;
+		glassAnnounced = announce;
+		document.dispatchEvent(new CustomEvent(GLASS_EVENT, { detail: {
+			glass: desired.glass,
+			effective
+		} }));
+	}
+	function setGlass(on) {
+		desired.glass = on === true;
+		store(LS_GLASS, desired.glass ? "on" : "off");
+		publishSettings();
+		renderGlass();
+		return desired.glass;
+	}
 	function publishSettings() {
 		if (!cfg.settings || typeof fetch !== "function") return;
 		try {
@@ -206,7 +236,8 @@
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					theme: desired.theme,
-					shape: desired.shape
+					shape: desired.shape,
+					glass: desired.glass
 				})
 			}).catch(() => {});
 		} catch {}
@@ -217,6 +248,12 @@
 			if (!data || typeof data !== "object") return null;
 			const theme = typeof data.theme === "string" ? data.theme : desired.theme;
 			const shape = data.shape === null || typeof data.shape === "string" ? data.shape : desired.shape;
+			const glass = typeof data.glass === "boolean" ? data.glass : desired.glass;
+			if (glass !== desired.glass) {
+				desired.glass = glass;
+				store(LS_GLASS, glass ? "on" : "off");
+				renderGlass();
+			}
 			if (theme === desired.theme && shape === desired.shape) return data;
 			desired.theme = theme;
 			desired.shape = shape || null;
@@ -346,19 +383,31 @@
 		rosterEvent: ROSTER_EVENT,
 		applyEvent: APPLY_EVENT,
 		sourceEvent: SOURCE_EVENT,
+		glassEvent: GLASS_EVENT,
 		config: cfg,
 		apply,
 		current,
 		mountSwitcher,
 		settingsSource: () => settingsSource,
 		themeSource: () => themeSource,
+		glass: () => desired.glass,
+		glassEffective: () => desired.glass && !reducedTransparency(),
+		setGlass,
 		ready: null
 	};
 	globalThis.GovernedCognition = GC;
 	if (typeof document !== "undefined") {
 		desired.theme = read(LS_THEME) || cfg.defaultTheme;
 		desired.shape = read(LS_SHAPE) || null;
+		desired.glass = read(LS_GLASS) === "on";
 		render();
+		renderGlass();
+		try {
+			if (typeof matchMedia === "function") {
+				const mq = matchMedia("(prefers-reduced-transparency: reduce)");
+				if (mq && typeof mq.addEventListener === "function") mq.addEventListener("change", renderGlass);
+			}
+		} catch {}
 		GC.ready = loadRoster().then(() => loadSettings().then((data) => {
 			settingsSource = data ? "origin" : "local";
 			return roster;

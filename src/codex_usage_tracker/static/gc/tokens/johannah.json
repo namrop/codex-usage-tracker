@@ -39,7 +39,9 @@
       "gold-soft": "#dcc38a",
       "green-mist": "#7aa38f",
       "atlas-gold": "#d7af77",
-      "atlas-wine": "#823236"
+      "atlas-wine": "#823236",
+      "accent-red": "#8b2942",
+      "accent-purple": "#432660"
     },
     "scheme": "light"
   },
@@ -128,6 +130,8 @@
     "motion": "hushed but PRESENT: longer periods, 0.3 pulse amplitude. Never zero \u2014 hush is a value, not a code path.",
     "scrollbar": "Keeper-ruled 2026-08-29: scrollbars are quiet structure, not signal \u2014 dim muted-family thumb (hover slightly brighter), track on panel. Intentionally diverges from diadem's odysseus-inherited amber thumb (style.css var(--amber)); recorded as keeper-ruled divergence entry 1 in tests/test_extraction.py.",
     "ai_usage_sets": "LANE-DRAFTED, KEEPER-TUNABLE (kintsugi render: only the default theme inherits proven values). series-rank is a ten-ink ramp entirely from her existing token layer \u2014 inks dark enough to hold a line on paper: ink green, signal wine, ownvoice purple, gold-deep, green-mid, rose, atlas wine, muted plum, gold, green mist. harness: claude_code = ink green, claude_code_secondary = green-mid, hermes = gold, opencode = signal wine.",
+    "accents": "KEEPER-FRAMED 2026-08-30, verbatim: 'high signal, very low frequency of use.' accent-red = jlmu.love --signal #8b2942 (the site's OFFICIAL accent_color) and accent-purple = --ownvoice #432660 (the felt-heart purple anchor) join the extras as rare-emphasis inks — reached for deliberately, at most once or twice on a surface, never structural, never a status channel. They share hexes with the ruled violation/intent roles because all four descend from the same two site tokens; the ROLE uses stay governed by role doctrine, and these extras exist so an app can place one deliberate heartword-red or ownvoice-purple stroke without borrowing a governance channel to do it. Existing role assignments unchanged.",
+    "background": "assets-src/johannah/background.webp derives from jlmu.love's own outer surround: public/surfaces/codex0-literary-toile-endpaper.webp (the Codex 0 literary-toile endpaper — lanterns, compasses, green books, wine buds on cream), washed 68% toward --paper-dusk #f1e8d2 and kept a seamless 768px tile so it reads as quiet paper under interface text. Render hints: repeat at 650px, the site's own repeat size (DESIGN.md).",
     "ai-usage.series-rank": "Corrected 2026-08-29: rank-2 no longer wears the violation hue (#8b2942 \u2014 violation is never decorative; replaced with a documented lift of attested atlas-wine) and rank-8 no longer wears the muted text hue (replaced with attested gold-soft). Remaining ramp is palette-attested; keeper-tunable."
   }
 }

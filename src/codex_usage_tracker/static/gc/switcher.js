@@ -44,8 +44,11 @@
 		themeGroup.className = "gc-switcher-themes";
 		const shapeGroup = document.createElement("fieldset");
 		shapeGroup.className = "gc-switcher-shape";
+		const glassGroup = document.createElement("fieldset");
+		glassGroup.className = "gc-switcher-glass";
 		panel.appendChild(themeGroup);
 		panel.appendChild(shapeGroup);
+		panel.appendChild(glassGroup);
 		root.appendChild(gear);
 		host.appendChild(root);
 		document.body.appendChild(panel);
@@ -88,6 +91,33 @@
 			const title = SHAPE_TITLE[value];
 			return title ? { title } : null;
 		}
+		const GLASS_TITLE = "liquid glass on premier surfaces — refraction on Chromium; plain frosted glass on Safari/Firefox; your reduced-transparency system setting turns it off entirely";
+		function renderGlassOption() {
+			glassGroup.textContent = "";
+			if (typeof GC.setGlass !== "function" || typeof GC.glass !== "function") {
+				glassGroup.hidden = true;
+				return;
+			}
+			glassGroup.hidden = false;
+			const legend = document.createElement("legend");
+			legend.textContent = "glass";
+			glassGroup.appendChild(legend);
+			const wrap = document.createElement("label");
+			wrap.className = "gc-switcher-option";
+			wrap.title = GLASS_TITLE;
+			const input = document.createElement("input");
+			input.type = "checkbox";
+			input.name = id + "-glass";
+			input.checked = GC.glass();
+			input.addEventListener("change", () => {
+				GC.setGlass(input.checked);
+			});
+			const span = document.createElement("span");
+			span.textContent = "glass";
+			wrap.appendChild(input);
+			wrap.appendChild(span);
+			glassGroup.appendChild(wrap);
+		}
 		function renderOptions() {
 			state = GC.current();
 			fill(themeGroup, "theme", GC.themes(), state.theme, id + "-theme", (theme) => {
@@ -101,6 +131,7 @@
 				state.shape = shape;
 				GC.apply(state.theme, shape);
 			}, describeShape);
+			renderGlassOption();
 		}
 		function place() {
 			const r = gear.getBoundingClientRect();
@@ -158,11 +189,13 @@
 		}
 		document.addEventListener(GC.rosterEvent || "gc:roster", onExternalChange);
 		document.addEventListener(GC.applyEvent || "gc:apply", onExternalChange);
+		document.addEventListener(GC.glassEvent || "gc:glass", onExternalChange);
 		renderOptions();
 		root.destroy = () => {
 			close(false);
 			document.removeEventListener(GC.rosterEvent || "gc:roster", onExternalChange);
 			document.removeEventListener(GC.applyEvent || "gc:apply", onExternalChange);
+			document.removeEventListener(GC.glassEvent || "gc:glass", onExternalChange);
 			if (panel.parentNode) panel.parentNode.removeChild(panel);
 			if (root.parentNode) root.parentNode.removeChild(root);
 		};
