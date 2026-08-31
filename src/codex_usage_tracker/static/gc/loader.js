@@ -43,6 +43,7 @@
 	};
 	var roster = {
 		themes: SEED_THEMES.slice(),
+		background: {},
 		nativeShape: { ...SEED_NATIVE_SHAPE },
 		hardEdged: {},
 		shapes: SEED_SHAPES.slice(),
@@ -154,6 +155,20 @@
 		}
 		attempt();
 	}
+	function publishBackground(theme) {
+		const el = document.documentElement;
+		const bg = roster.background[theme];
+		if (!bg) {
+			el.style.removeProperty("--gc-bg-image");
+			el.style.removeProperty("--gc-bg-size");
+			el.style.removeProperty("--gc-bg-repeat");
+			return;
+		}
+		const base = sourceIdx.theme === 1 && cfg.fallback ? cfg.fallback : cfg.origin;
+		el.style.setProperty("--gc-bg-image", "url(\"" + absUrl(joinUrl(base, bg.file)) + "\")");
+		el.style.setProperty("--gc-bg-size", bg.size);
+		el.style.setProperty("--gc-bg-repeat", bg.repeat);
+	}
 	var themeSource = null;
 	function setSource(idx) {
 		const next = idx === 0 ? "origin" : idx === 1 ? "fallback" : "none";
@@ -183,6 +198,7 @@
 		setLink("gc-theme", "theme-" + theme + ".css", null, sourceIdx.theme, (idx) => {
 			if (idx >= 0) sourceIdx.theme = idx;
 			setSource(idx);
+			publishBackground(theme);
 			setLink("gc-shape", roster.shapeCss[resolved] || null, "gc-theme", sourceIdx.theme, (sidx) => {
 				if (sidx >= 0) sourceIdx.shape = sidx;
 			});
@@ -190,6 +206,7 @@
 		if (document.documentElement) {
 			document.documentElement.setAttribute("data-gc-theme", theme);
 			document.documentElement.setAttribute("data-gc-shape", resolved);
+			publishBackground(theme);
 		}
 		document.dispatchEvent(new CustomEvent(APPLY_EVENT, { detail: {
 			theme,
@@ -301,6 +318,7 @@
 		const native = {};
 		const hard = {};
 		const themeShapes = {};
+		const background = {};
 		for (const entry of data.themes) {
 			const name = entry && entry.name;
 			if (typeof name !== "string" || !name) continue;
@@ -308,6 +326,12 @@
 			native[name] = typeof entry.native_shape === "string" ? entry.native_shape : "rounded";
 			themeShapes[name] = Array.isArray(entry.shapes) && entry.shapes.length ? entry.shapes.slice() : null;
 			hard[name] = entry.hard_edged === true;
+			const bg = entry.assets && entry.assets.background;
+			background[name] = bg && typeof bg.file === "string" ? {
+				file: bg.file,
+				size: typeof bg.size === "string" ? bg.size : "cover",
+				repeat: typeof bg.repeat === "string" ? bg.repeat : "no-repeat"
+			} : null;
 		}
 		let shapes = [];
 		let shapeCss = {};
@@ -326,7 +350,8 @@
 			hardEdged: hard,
 			themeShapes,
 			shapes,
-			shapeCss
+			shapeCss,
+			background
 		} : null;
 	}
 	function adoptRoster(parsed, source) {

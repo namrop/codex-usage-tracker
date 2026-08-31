@@ -57,6 +57,11 @@ export interface GovernedCognitionSurface {
 export interface GovernedCognitionSwitcherSurface {
     mount(target: string | Element, opts?: SwitcherMountOptions): Element;
 }
+export interface ThemeBackground {
+    file: string;
+    size: string;
+    repeat: string;
+}
 declare global {
     var GovernedCognition: GovernedCognitionSurface | undefined;
     var GovernedCognitionSwitcher: GovernedCognitionSwitcherSurface | undefined;

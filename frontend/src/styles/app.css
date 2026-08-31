@@ -41,12 +41,19 @@
   --page-veil: color-mix(in srgb, var(--bg) var(--page-veil-strength), transparent);
 }
 
-/* johannah IS the jlmu.love toile — a busy mid-contrast paper pattern,
- * not a dim scene. It needs the reference's heavier knock-back; the dark
- * themes are already near-black and a heavier veil would leave the glass
- * nothing to refract (SURFACES.md §B). */
+/* johannah IS the jlmu.love toile — a busy mid-contrast paper pattern, not a
+ * dim scene, so it takes the reference's knock-back rather than the dark
+ * themes' (they are already near-black, and a heavier veil would leave the
+ * glass nothing to refract — SURFACES.md §B).
+ *
+ * 30% is jlmu.love's own number. The earlier 62% was measured against GC's
+ * knocked-back 768px re-render of the endpaper; the keeper ruled that
+ * derivative out on 2026-08-31 and GC now ships the plate verbatim, so the
+ * extra wash would be a second knock-back on an already-correct field. Every
+ * dashboard surface here is an opaque plane, so the toile is atmosphere in
+ * the field and gutters and never sits behind a number. */
 html[data-gc-theme="johannah"] {
-  --page-veil-strength: 62%;
+  --page-veil-strength: 30%;
 }
 
 * {

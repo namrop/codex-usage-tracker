@@ -75,13 +75,13 @@
       "tokens": "tokens/johannah.json",
       "assets": {
         "background": {
-          "file": "assets/johannah-bg-3f9a4a0f4f3f.webp",
-          "bytes": 54502,
-          "sha256": "3f9a4a0f4f3f92891dc6c4951404edfe99a8466cb3a1dc235a3473902eaafafa",
+          "file": "assets/johannah-bg-98aa005880e1.webp",
+          "bytes": 187496,
+          "sha256": "98aa005880e1963f574c2cb8e7892a0fa4395479b3f5c1421ce49c1757555de9",
           "size": "650px",
           "repeat": "repeat",
-          "width": 768,
-          "height": 768
+          "width": 1024,
+          "height": 1024
         }
       }
     },
