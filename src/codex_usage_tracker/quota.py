@@ -894,6 +894,78 @@ def _tmux_keys(session_name: str, *keys: str) -> None:
     )
 
 
+class ClaudeProbeBlocked(RuntimeError):
+    """The ``/usage`` TUI probe reached a screen it cannot drive past.
+
+    Raised instead of ``TimeoutError`` so the retry wrapper does not spend two
+    more windows on a screen that will not change on its own: a login menu, a
+    first-run onboarding step, or a CLI that already exited. The lane records
+    the class, and the last captured screen is persisted beside the probe lock
+    so the next real occurrence is legible without re-driving the TUI.
+    """
+
+
+# Screens that no keystroke from this probe can resolve. Each marker maps to the
+# reason surfaced in the exception message.
+_CLAUDE_PROBE_BLOCKERS: tuple[tuple[str, str], ...] = (
+    ("Select login method", "login required"),
+    ("Paste code here if prompted", "browser login pending"),
+    ("Choose the text style", "first-run onboarding (theme picker)"),
+    ("Not logged in", "login required"),
+)
+
+# The composer is a line that starts with the prompt cursor and is not a menu
+# option. Claude Code draws the same cursor glyph in front of the highlighted
+# entry of every dialog (numbered onboarding menus, the yes/no trust prompt),
+# which is why gating on the bare glyph typed ``/usage`` into a menu.
+_CLAUDE_COMPOSER_RE = re.compile(r"^❯(?!\s*\d+\.)(?!\s*(?:No|Yes)\b)", re.MULTILINE)
+
+# Seconds after sending ``/usage`` before it is sent again if the usage view has
+# not rendered and the composer is visible (the first send was swallowed).
+CLAUDE_USAGE_RESEND_AFTER = 5.0
+CLAUDE_USAGE_MAX_SENDS = 3
+
+
+def _claude_prompt_ready(screen: str) -> bool:
+    return _CLAUDE_COMPOSER_RE.search(screen) is not None
+
+
+def _claude_probe_blocker(screen: str) -> str | None:
+    for marker, reason in _CLAUDE_PROBE_BLOCKERS:
+        if marker in screen:
+            return reason
+    return None
+
+
+def _claude_trust_dialog_keys(screen: str) -> tuple[str, ...]:
+    """Keys that select "Yes, I trust this folder" in the workspace trust prompt.
+
+    Enter confirms the highlighted option, and Claude Code highlights "No, exit"
+    by default (observed on 2.1.257), so a bare Enter exits the CLI and the
+    probe times out on an empty pane.
+    """
+    for line in screen.splitlines():
+        if "❯" in line and "Yes, I trust this folder" in line:
+            return ("Enter",)
+    return ("Down", "Enter")
+
+
+def _persist_probe_screen(target: Path, screen: str) -> None:
+    """Keep the last screen of a failed probe beside the probe lock (0600).
+
+    Lines carrying URLs are dropped: a login screen embeds an OAuth state/code
+    in its link, and nothing in the usage view is a URL.
+    """
+    kept = [line for line in screen.splitlines() if "http" not in line]
+    path = target.with_name(f".{target.name}.last-screen.txt")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(kept).rstrip() + "\n")
+    except OSError:
+        pass
+
+
 def capture_claude_code_usage_screen(
     *,
     claude_command: str | Path = "claude",
@@ -971,28 +1043,47 @@ def capture_claude_code_usage_screen(
         (str(claude_command), "--safe-mode", "--session-id", stable_session_id)
     )
     started = time.monotonic()
-    usage_sent = False
+    usage_sends = 0
+    usage_sent_at = 0.0
+    screen = ""
     try:
         subprocess.run(command, check=True, capture_output=True, text=True, timeout=5.0)
         while time.monotonic() - started < timeout:
-            screen = _tmux_capture(tmux_session)
+            try:
+                screen = _tmux_capture(tmux_session)
+            except subprocess.CalledProcessError as exc:
+                _persist_probe_screen(target, screen)
+                raise ClaudeProbeBlocked(
+                    "Claude Code exited before the /usage screen rendered"
+                ) from exc
+            blocker = _claude_probe_blocker(screen)
+            if blocker is not None:
+                _persist_probe_screen(target, screen)
+                raise ClaudeProbeBlocked(f"Claude Code /usage probe blocked: {blocker}")
             if "Quick safety check" in screen and "Yes, I trust this folder" in screen:
-                _tmux_keys(tmux_session, "Enter")
+                _tmux_keys(tmux_session, *_claude_trust_dialog_keys(screen))
                 time.sleep(0.5)
                 continue
-            if not usage_sent and "❯" in screen:
-                _tmux_keys(tmux_session, "/usage", "Enter")
-                usage_sent = True
-                time.sleep(0.5)
-                continue
-            if usage_sent and "Current session" in screen and "Current week (all models)" in screen:
+            if usage_sends and "Current session" in screen and "Current week (all models)" in screen:
                 try:
                     _claude_usage_values(screen)
                 except ValueError:
                     time.sleep(0.25)
                     continue
                 return screen
+            resend_due = (
+                usage_sends > 0
+                and usage_sends < CLAUDE_USAGE_MAX_SENDS
+                and time.monotonic() - usage_sent_at >= CLAUDE_USAGE_RESEND_AFTER
+            )
+            if (usage_sends == 0 or resend_due) and _claude_prompt_ready(screen):
+                _tmux_keys(tmux_session, "/usage", "Enter")
+                usage_sends += 1
+                usage_sent_at = time.monotonic()
+                time.sleep(0.5)
+                continue
             time.sleep(0.25)
+        _persist_probe_screen(target, screen)
         raise TimeoutError("Claude Code /usage screen did not become ready")
     finally:
         try:
