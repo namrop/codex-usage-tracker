@@ -4,6 +4,7 @@ import { useGlass } from "./hooks/useGlass";
 import { usePageBackground } from "./hooks/usePageBackground";
 import { usePalette } from "./hooks/usePalette";
 import { BillingCard } from "./components/BillingCard";
+import { BurnRateCard } from "./components/BurnRateCard";
 import { GlassPanels } from "./components/GlassPanels";
 import { OpsHero } from "./components/OpsHero";
 import { deriveResetChips } from "./components/ResetRail";
@@ -73,6 +74,7 @@ export default function App() {
         onRefresh={refresh}
       />
       <SubscriptionsCard palette={palette} subs={state.subs} />
+      <BurnRateCard burn={state.burn} />
       <BillingCard billing={state.billing} />
       <GlassPanels glass={glass} />
     </main>

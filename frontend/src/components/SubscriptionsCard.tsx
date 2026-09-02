@@ -210,7 +210,8 @@ function quotaAmount(value: unknown, unit: unknown): string {
   if (!hasQuotaValue(value)) return "Unavailable";
   if (!hasQuotaValue(unit)) return quotaNumberText(value);
   const unitText = String(unit);
-  if (unitText === "%") return `${quotaNumberText(value)}%`;
+  // "percent" is the ledger's spelling of "%": never print the word.
+  if (unitText === "%" || unitText.trim().toLowerCase() === "percent") return `${quotaNumberText(value)}%`;
   if (unitText.toLowerCase() === "usd") {
     const num = Number(value);
     if (Number.isFinite(num)) return `${num < 0 ? "−" : ""}$${Math.abs(num).toFixed(2)}`;
@@ -289,6 +290,13 @@ function SubscriptionWindow({ row }: { row: any }) {
 
   const metadataParts: string[] = [];
   if (hasQuotaValue(row.harness)) metadataParts.push(`Harness: ${String(row.harness)}`);
+  // Two accounts on one provider share harness and quota name; the account
+  // index is the only thing that tells their windows apart.
+  const accountCount = Number(row.provider_account_count);
+  const accountIndex = Number(row.provider_account_index);
+  if (Number.isSafeInteger(accountCount) && accountCount > 1) {
+    metadataParts.push(`Account ${Number.isSafeInteger(accountIndex) ? accountIndex : "?"} of ${accountCount}`);
+  }
   if (hasQuotaValue(row.quota_scope)) metadataParts.push(`Scope: ${String(row.quota_scope)}`);
   metadataParts.push(`Unit: ${displayUnit || "unavailable"}`);
 
@@ -395,8 +403,14 @@ function ProviderCard({ group, thresholdSeconds }: { group: ProviderGroup; thres
   const freshnessLabel = providerFreshness === "fresh"
     ? "Fresh"
     : providerFreshness === "stale" ? "Stale" : "Unknown freshness";
-  const sortedRows = group.rows.slice().sort((left, right) =>
-    String(left.quota_name || "").localeCompare(String(right.quota_name || "")));
+  // Account index first so a second account's windows sit together, then
+  // quota name within the account.
+  const sortedRows = group.rows.slice().sort((left, right) => {
+    const leftAccount = Number(left.provider_account_index) || 1;
+    const rightAccount = Number(right.provider_account_index) || 1;
+    if (leftAccount !== rightAccount) return leftAccount - rightAccount;
+    return String(left.quota_name || "").localeCompare(String(right.quota_name || ""));
+  });
 
   return (
     <article className="subscription-provider-card" id={providerCardDomId(group.key)}>
@@ -415,7 +429,10 @@ function ProviderCard({ group, thresholdSeconds }: { group: ProviderGroup; thres
           <p className="empty-state">No quota windows available for this provider.</p>
         )}
         {sortedRows.map((row, index) => (
-          <SubscriptionWindow key={`${row.quota_name}-${row.harness}-${index}`} row={row} />
+          <SubscriptionWindow
+            key={`${row.quota_name}-${row.harness}-${Number(row.provider_account_index) || 1}-${index}`}
+            row={row}
+          />
         ))}
       </div>
     </article>

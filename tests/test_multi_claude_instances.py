@@ -800,3 +800,131 @@ def test_quota_history_removes_provider_small_multiples_and_account_partition_he
     assert "account_ref" not in joined
     assert "source_namespace" not in joined
     assert "claude-code-secondary" not in joined
+
+
+def test_when_active_tick_probes_only_the_account_whose_window_is_burning(
+    tmp_path, monkeypatch
+):
+    """Five-minute active-window tick (2026-09-02): with --when-active, only
+    the Claude account whose latest five_hour observation shows usage and a
+    future reset is probed; the idle account stands down with zero rows and
+    no failure, and provider API lanes stay down entirely."""
+    _empty_other_collectors(monkeypatch)
+    api_attempts = []
+
+    def live_api(namespace, *, credentials_path, account_ref=None, **kwargs):
+        api_attempts.append((namespace, account_ref))
+        return [
+            normalize_fact(
+                {
+                    "fact_type": "quota_observation_v1",
+                    "schema_version": 1,
+                    "source_namespace": namespace,
+                    "source_observation_id": f"{namespace}-five",
+                    "harness": "claude_code",
+                    "observed_at": "2026-08-05T12:25:00Z",
+                    "provider": "anthropic",
+                    "account_ref": account_ref,
+                    "quota_name": "five_hour",
+                    "quota_scope": "account",
+                    "window_kind": "rolling",
+                    "limit_value": "100",
+                    "remaining_value": "41",
+                    "used_value": "59",
+                    "unit": "percent",
+                    "measurement_confidence": "exact",
+                    "resets_at": "2030-01-01T00:00:00Z",
+                }
+            )
+        ]
+
+    monkeypatch.setattr(collector_module, "collect_claude_code_quota_api", live_api)
+
+    class FrozenTick(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 5, 12, 30, tzinfo=tz)
+
+    monkeypatch.setattr(collector_module, "datetime", FrozenTick)
+    monkeypatch.setattr(
+        collector_module, "collect_claude_code_quota", lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("probe fallback must not run when the API works")
+        )
+    )
+    provider_calls = []
+    monkeypatch.setattr(
+        collector_module, "collect_openrouter_quota", lambda *a, **k: provider_calls.append("openrouter") or []
+    )
+    monkeypatch.setattr(
+        collector_module, "collect_deepseek_quota", lambda *a, **k: provider_calls.append("deepseek") or []
+    )
+
+    paths = _collection_paths(tmp_path)
+    # Seed the live ledger: primary is burning (59 used, future reset,
+    # observed 15 min ago); secondary is idle (0 used).
+    seed_rows = [
+        _quota_row("seed-primary", None, 59, quota_name="five_hour"),
+        _quota_row("seed-secondary", "claude-code-secondary", 0, quota_name="five_hour"),
+    ]
+    for row in seed_rows:
+        row["observed_at"] = "2026-08-05T12:15:00Z"
+        row["resets_at"] = "2030-01-01T00:00:00Z"
+    append_sqlite_facts(
+        paths["quota_ledger"], seed_rows, fact_type="quota_observation_v1"
+    )
+
+    result = collect_all(
+        claude_instances=[
+            ClaudeInstance("claude-code", tmp_path / "primary"),
+            ClaudeInstance("claude-code-secondary", tmp_path / "secondary"),
+        ],
+        claude_quota_command="claude",
+        claude_probe_dir=tmp_path / "claude-probe",
+        environment={},
+        live_quota=True,
+        scope="quota",
+        when_active=True,
+        **paths,
+    )
+
+    # Only the burning account was probed.
+    assert api_attempts == [("sol:claude-code-quota", None)]
+    assert result["sources"]["claude_code_quota"] == {"discovered": 1}
+    assert result["sources"]["claude_code_secondary_quota"] == {"discovered": 0}
+    # No provider API lane ran.
+    assert provider_calls == []
+    # A stood-down lane never registers as a lane at all — lanes track
+    # probes that ran; the sources map carries the zero-row standdown.
+    assert "claude_code_secondary_quota" not in result["lanes"]
+    assert "claude_code_quota" in result["lanes"]
+
+
+def test_when_active_tick_stands_down_when_nothing_is_burning(tmp_path, monkeypatch):
+    """Idle on both accounts: the tick writes nothing, probes nothing, and
+    still exits clean."""
+    _empty_other_collectors(monkeypatch)
+    monkeypatch.setattr(
+        collector_module,
+        "collect_claude_code_quota_api",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("no probe expected")),
+    )
+    paths = _collection_paths(tmp_path)
+    seed = _quota_row("seed-primary", None, 0, quota_name="five_hour")
+    seed["observed_at"] = "2026-08-05T12:15:00Z"
+    seed["resets_at"] = "2030-01-01T00:00:00Z"
+    append_sqlite_facts(paths["quota_ledger"], [seed], fact_type="quota_observation_v1")
+
+    result = collect_all(
+        claude_instances=[ClaudeInstance("claude-code", tmp_path / "primary")],
+        claude_quota_command="claude",
+        claude_probe_dir=tmp_path / "claude-probe",
+        environment={},
+        live_quota=True,
+        scope="quota",
+        when_active=True,
+        **paths,
+    )
+
+    assert result["sources"]["claude_code_quota"] == {"discovered": 0}
+    rows = read_sqlite_facts(paths["quota_ledger"], fact_type="quota_observation_v1")
+    assert len(rows) == 1  # only the seed

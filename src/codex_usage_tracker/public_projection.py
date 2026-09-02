@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -156,5 +158,33 @@ def write_public_projection(
         limit=limit,
         source=source,
     )
-    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    serialized = (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    _atomic_write_bytes(output_path, serialized)
     return output_path
+
+
+def _atomic_write_bytes(output_path: Path, data: bytes) -> None:
+    """Write ``data`` to ``output_path`` via a same-directory temp file + ``os.replace``.
+
+    Readers of the DMZ artifact never observe a truncated file: the destination
+    is either the previous complete payload or the new complete payload.
+    Mirrors the pattern in :mod:`unified_public_projection`.
+    """
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output_path.name}.", suffix=".tmp", dir=output_path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, output_path)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass

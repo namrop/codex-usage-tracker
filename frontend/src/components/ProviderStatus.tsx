@@ -1,6 +1,7 @@
 import type { Palette } from "../lib/palette";
 import { formatUtcHour, intFormat } from "../lib/format";
 import { subscriptionUnifiedProviderColor } from "../lib/providers";
+import { quotaRowProviderKey } from "../lib/quota";
 
 // Provider API status strip · 48 hours: provider status-feed badges over
 // observed per-UTC-hour call health, where a dim cell means no traffic
@@ -52,7 +53,9 @@ export function ProviderStatus({ timeSeries, feeds, palette, loading }: {
     .filter((row) => Number(row.total_events) > 0)
     .sort((a, b) => Number(b.total_events) - Number(a.total_events))
     .map((row) => ({
-      row,
+      // Rows may arrive raw or canonical; fill provider_canonical once so
+      // the color slot and the feed fallback key on it either way.
+      row: { ...row, provider_canonical: quotaRowProviderKey(row) || String(row.provider || "unknown") },
       windowEvents: row.events.slice(offset).reduce((sum: number, n: number) => sum + n, 0),
       windowErrors: row.errors.slice(offset).reduce((sum: number, n: number) => sum + n, 0),
     }));
@@ -61,10 +64,14 @@ export function ProviderStatus({ timeSeries, feeds, palette, loading }: {
   const foldedNames = folded
     .map((entry) => `${entry.row.provider} (${intFormat(entry.windowEvents)} calls, ${intFormat(entry.windowErrors)} errors)`)
     .join(", ");
-  const totalErrors = ranked.reduce((sum, entry) => sum + Number(entry.row.total_errors), 0);
-  const summary = ranked.length
-    ? `${ranked.length} providers · ${intFormat(totalErrors)} errored calls in the seven-day window.`
-    : "No provider traffic in the window.";
+  // The summary reads the same 48-cell window the strip draws — never the
+  // seven-day totals the series also carries.
+  const inWindow = ranked.filter((entry) => entry.windowEvents > 0);
+  const windowCalls = inWindow.reduce((sum, entry) => sum + entry.windowEvents, 0);
+  const windowErrors = inWindow.reduce((sum, entry) => sum + entry.windowErrors, 0);
+  const summary = inWindow.length
+    ? `${inWindow.length} provider${inWindow.length === 1 ? "" : "s"} · ${intFormat(windowCalls)} calls, ${intFormat(windowErrors)} errored, over the last ${CELLS} complete UTC hours.`
+    : `No provider traffic over the last ${CELLS} complete UTC hours.`;
 
   return (
     <>
@@ -89,15 +96,19 @@ export function ProviderStatus({ timeSeries, feeds, palette, loading }: {
                 : `${hourLabel} — no traffic`,
             });
           }
+          // The feed map is keyed by the raw provider id today; try that
+          // first, then the canonical id so a canonical-grouped row still
+          // finds its badge.
+          const feedEntry = feedMap[row.provider] ?? feedMap[row.provider_canonical];
           return (
-            <div className="status-row" key={row.provider}>
+            <div className="status-row" key={`${row.provider_canonical}-${index}`}>
               <div className="status-row-head">
                 <span
                   className="swatch-dot"
                   style={{ background: subscriptionUnifiedProviderColor(palette, { provider: row.provider_canonical }, index) }}
                 />
                 <span>{row.provider}</span>
-                <ProviderStatusBadge feedEntry={feedMap[row.provider]} />
+                <ProviderStatusBadge feedEntry={feedEntry} />
               </div>
               <div
                 className="status-cells"

@@ -54,6 +54,41 @@ THEME_SCREEN = """
    1. Light mode
 """
 
+# Claude Code 2.1.257 opening ``/usage`` as a Settings dialog while the usage
+# endpoint is rate limited (persisted probe screen, 2026-09-02). No composer,
+# no "Current session"; each attempt used to burn its full timeout.
+RATE_LIMITED_USAGE_SCREEN = """
+ ▐▛███▛█   Claude Code v2.1.257
+▝▜██████▀  Opus 5 (1M context) · Claude Max
+  ▝▝ ▝▝    ~/.local/state/codex-usage-tracker/claude-probe-secondary
+
+⚠ Safe mode: all customizations are disabled (CLAUDE.md, skills, plugins, hooks, MCP, agents, and more)
+  Restart without --safe-mode to re-enable
+⚠ Your login expires in 2 days · run /login to renew
+
+● Remote Control disconnected — /login
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Settings  Status   Config   Usage   Stats
+
+   Session
+
+   Total cost:            $0.0000
+   Total duration (API):  0s
+   Total duration (wall): 0s
+   Total code changes:    0 lines added, 0 lines removed
+   Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+
+   Error: Usage endpoint is rate limited. Please try again in a moment.
+
+   r to retry · Esc to cancel
+"""
+
+GENERIC_DIALOG_ERROR_SCREEN = RATE_LIMITED_USAGE_SCREEN.replace(
+    "Error: Usage endpoint is rate limited. Please try again in a moment.",
+    "Error: Something else went wrong.",
+)
+
 
 def _drive(monkeypatch, screens, *, timeout=1.0):
     sent: list[tuple[str, ...]] = []
@@ -105,7 +140,12 @@ def test_trust_prompt_confirms_when_yes_is_already_highlighted(tmp_path, monkeyp
 
 @pytest.mark.parametrize(
     ("screen", "reason"),
-    [(LOGIN_SCREEN, "login required"), (THEME_SCREEN, "first-run onboarding")],
+    [
+        (LOGIN_SCREEN, "login required"),
+        (THEME_SCREEN, "first-run onboarding"),
+        (RATE_LIMITED_USAGE_SCREEN, "usage endpoint rate limited"),
+        (GENERIC_DIALOG_ERROR_SCREEN, "usage dialog error: Something else went wrong."),
+    ],
 )
 def test_unresolvable_screens_fail_fast_and_persist_the_screen(tmp_path, monkeypatch, screen, reason):
     sent = _drive(monkeypatch, [screen, screen])
@@ -163,3 +203,16 @@ def test_persisted_screen_drops_url_lines(tmp_path):
     quota_module._persist_probe_screen(probe, "Select login method\nOpen https://claude.ai/oauth?code=secret\n ❯ 1. Claude account")
     text = (tmp_path / ".probe.last-screen.txt").read_text(encoding="utf-8")
     assert "secret" not in text and "Select login method" in text
+
+
+def test_usage_dialog_errors_block_but_healthy_screens_do_not():
+    assert quota_module._claude_probe_blocker(RATE_LIMITED_USAGE_SCREEN) == "usage endpoint rate limited"
+    assert quota_module._claude_probe_blocker(GENERIC_DIALOG_ERROR_SCREEN) == (
+        "usage dialog error: Something else went wrong."
+    )
+    # The rate-limited dialog hides the composer, so the resend path can never fire.
+    assert not quota_module._claude_prompt_ready(RATE_LIMITED_USAGE_SCREEN)
+    for healthy in (USAGE_SCREEN, COMPOSER_SCREEN, TRUST_SCREEN):
+        assert quota_module._claude_probe_blocker(healthy) is None
+    # "Error:" outside the usage dialog (e.g. a transcript line) is not a blocker.
+    assert quota_module._claude_probe_blocker(COMPOSER_SCREEN + "\n  Error: earlier tool call failed\n") is None

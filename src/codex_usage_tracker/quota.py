@@ -20,6 +20,11 @@ import httpx
 from .canonical_ledger import ValidationError, canonical_timestamp, decimal_string, normalize_fact
 from .ledger import reconcile_snapshot_windows
 
+try:  # list_pricing is the pricing source of truth; a missing entry means "unpriced".
+    from .list_pricing import _rates_for as _list_price_rates_for
+except ImportError:  # pragma: no cover - only when list_pricing is absent entirely
+    _list_price_rates_for = None
+
 OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance"
@@ -144,6 +149,10 @@ def _codex_snapshot_observations(
             ("spark_five_hour", "spark_session_used_pct", "spark_session_reset_at"),
             ("spark_week", "spark_weekly_used_pct", "spark_weekly_reset_at"),
         ):
+            # Same rule as the primary windows: a spark window the snapshot
+            # does not report is no row, not an all-None observation.
+            if snapshot.get(used_field) is None:
+                continue
             rows.append(
                 _quota(
                     namespace=source_namespace,
@@ -243,9 +252,25 @@ def collect_openrouter_quota(
     key = key_payload.get("data") if isinstance(key_payload.get("data"), Mapping) else key_payload
     total = credits.get("total_credits")
     spent = credits.get("total_usage")
+    # An account over its limit reports a negative balance / limit_remaining.
+    # The canonical contract keeps remaining_value non-negative, so the signed
+    # provider figure travels in an extension (the DeepSeek lane's convention)
+    # and the canonical field clamps at zero instead of ceding the lane.
+    provider_balance = None
     balance = None
     if total is not None and spent is not None:
-        balance = decimal_string(Decimal(str(total)) - Decimal(str(spent)), "remaining_value")
+        provider_balance = decimal_string(
+            Decimal(str(total)) - Decimal(str(spent)), "provider_balance", allow_negative=True
+        )
+        balance = max(Decimal("0"), Decimal(provider_balance))
+    provider_limit_remaining = decimal_string(
+        key.get("limit_remaining"), "provider_limit_remaining", allow_negative=True
+    )
+    key_remaining = (
+        None
+        if provider_limit_remaining is None
+        else max(Decimal("0"), Decimal(provider_limit_remaining))
+    )
     rows = [
         _quota(
             namespace=source_namespace,
@@ -259,6 +284,8 @@ def collect_openrouter_quota(
             limit=total,
             remaining=balance,
             used=spent,
+            x_provider_balance=provider_balance,
+            x_overdrawn=provider_balance is not None and Decimal(provider_balance) < 0,
         ),
         _quota(
             namespace=source_namespace,
@@ -270,8 +297,12 @@ def collect_openrouter_quota(
             window_kind="unknown",
             unit="credits",
             limit=key.get("limit"),
-            remaining=key.get("limit_remaining"),
+            remaining=key_remaining,
             used=key.get("usage"),
+            x_provider_limit_remaining=provider_limit_remaining,
+            x_overdrawn=(
+                provider_limit_remaining is not None and Decimal(provider_limit_remaining) < 0
+            ),
         ),
     ]
     return rows
@@ -777,33 +808,122 @@ def _parse_dt(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+OPENCODE_GO_ESTIMATE_LOOKBACK = timedelta(days=31)
+_OPENCODE_GO_LIST_PRICE_FIELDS = (
+    ("input_tokens", "input"),
+    ("cache_read_tokens", "cache_read"),
+    ("cache_write_tokens", "cache_write"),
+    # Canonical output_tokens already includes reasoning; reasoning is NOT
+    # added again here.
+    ("output_tokens", "output"),
+)
+
+
+def _opencode_go_event_cost(row: Mapping[str, Any]) -> tuple[Decimal | None, bool]:
+    """Value one opencode-go usage event in quota USD.
+
+    Returns ``(cost, list_priced)``. The OpenCode harness records the
+    provider's own quota cost (``x_opencode_quota_cost_usd``) and that wins.
+    Any other harness (Hermes routes through opencode-go too) is valued at the
+    underlying model's list price from ``list_pricing``; a model without a
+    rate — or a missing ``opencode-go`` pricing entry — is unvalued, never
+    silently priced.
+    """
+    value = row.get("x_opencode_quota_cost_usd")
+    if value is not None:
+        try:
+            return Decimal(str(value)), False
+        except InvalidOperation:
+            return None, False
+    if _list_price_rates_for is None:
+        return None, False
+    model = row.get("model_reported") or row.get("model_requested") or ""
+    try:
+        rates = _list_price_rates_for("opencode-go", str(model))
+    except Exception:
+        rates = None
+    if not isinstance(rates, Mapping):
+        return None, False
+    try:
+        total = Decimal("0")
+        for field, rate in _OPENCODE_GO_LIST_PRICE_FIELDS:
+            total += Decimal(int(row.get(field) or 0)) * Decimal(str(rates[rate]))
+    except (KeyError, InvalidOperation, TypeError, ValueError):
+        return None, False
+    return total / Decimal(1_000_000), True
+
+
+def _first_use_window_open(
+    occurrences: Iterable[datetime], duration: timedelta, now: datetime
+) -> datetime | None:
+    """Replay first-use anchored windows; return the open window's start, if any.
+
+    A window opens at the first event after the previous window closed
+    (``open + duration``) and closes ``duration`` later. ``occurrences`` must
+    be in time order.
+    """
+    open_at: datetime | None = None
+    for occurred in occurrences:
+        if open_at is None or occurred >= open_at + duration:
+            open_at = occurred
+    if open_at is not None and now < open_at + duration:
+        return open_at
+    return None
+
+
 def derive_opencode_go_quotas(
     usage_facts: Iterable[Mapping[str, Any]],
     source_namespace: str,
     *,
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Estimate Go subscription windows from OpenCode's local quota-cost values."""
+    """Estimate Go subscription windows from opencode-go usage events.
+
+    OpenCode Go's windows are not trailing slices: each opens at first use
+    after the previous window closed and runs for its full duration (the exact
+    collector reads the provider's ``resetInSec``). The estimate replays that
+    anchoring over every opencode-go event in time order — OpenCode-harness
+    rows carrying the provider's quota cost and any other harness's rows
+    valued at list price — and reports the window open at ``now``. With no
+    window open the estimate is 0 used / full remaining with null bounds.
+    Events are de-duplicated by canonical identity so the in-run adapter rows
+    and a ledger read of the same history never double count.
+    """
     observed_dt = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    facts = [row for row in usage_facts if row.get("provider") == "opencode-go"]
-    harnesses = sorted({str(row.get("harness")) for row in facts if row.get("x_opencode_quota_cost_usd") is not None})
+    events: list[tuple[datetime, Decimal | None, bool, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in usage_facts:
+        if row.get("provider") != "opencode-go":
+            continue
+        identity = (str(row.get("source_namespace")), str(row.get("source_event_id")))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        occurred = _parse_dt(row.get("occurred_at"))
+        if occurred is None or occurred > observed_dt:
+            continue
+        cost, list_priced = _opencode_go_event_cost(row)
+        events.append((occurred, cost, list_priced, str(row.get("harness"))))
+    events.sort(key=lambda entry: entry[0])
+    harnesses = sorted({harness for _, cost, _, harness in events if cost is not None})
     rows: list[dict[str, Any]] = []
     for name, duration, limit in GO_WINDOWS:
-        start = observed_dt - duration
+        open_at = _first_use_window_open((occurred for occurred, *_ in events), duration, observed_dt)
         used = Decimal("0")
-        valued_events = 0
-        for fact in facts:
-            occurred = _parse_dt(fact.get("occurred_at"))
-            if occurred is None or occurred < start or occurred > observed_dt:
-                continue
-            value = fact.get("x_opencode_quota_cost_usd")
-            if value is None:
-                continue
-            try:
-                used += Decimal(str(value))
-            except InvalidOperation:
-                continue
-            valued_events += 1
+        valued_events = unvalued_events = list_priced_events = 0
+        close_at: datetime | None = None
+        if open_at is not None:
+            close_at = open_at + duration
+            for occurred, cost, list_priced, _ in events:
+                if occurred < open_at or occurred >= close_at:
+                    continue
+                if cost is None:
+                    unvalued_events += 1
+                    continue
+                used += cost
+                valued_events += 1
+                if list_priced:
+                    list_priced_events += 1
         rows.append(
             _quota(
                 namespace=source_namespace,
@@ -818,12 +938,16 @@ def derive_opencode_go_quotas(
                 limit=limit,
                 used=used,
                 remaining=max(Decimal("0"), limit - used),
-                window_started_at=start.isoformat(),
-                window_ends_at=observed_dt.isoformat(),
+                resets_at=None if close_at is None else close_at.isoformat(),
+                window_started_at=None if open_at is None else open_at.isoformat(),
+                window_ends_at=None if close_at is None else close_at.isoformat(),
                 x_coverage={
                     "status": "partial",
+                    "anchor": "first_use_estimate",
                     "harnesses_with_values": harnesses,
                     "valued_events": valued_events,
+                    "unvalued_events": unvalued_events,
+                    "list_priced_events": list_priced_events,
                 },
             )
         )
@@ -912,7 +1036,17 @@ _CLAUDE_PROBE_BLOCKERS: tuple[tuple[str, str], ...] = (
     ("Paste code here if prompted", "browser login pending"),
     ("Choose the text style", "first-run onboarding (theme picker)"),
     ("Not logged in", "login required"),
+    # Claude Code 2.1.257 opens ``/usage`` as a Settings dialog; when the
+    # usage endpoint is rate limited that dialog shows an error with "r to
+    # retry", hides the composer, and never renders "Current session".
+    ("Usage endpoint is rate limited", "usage endpoint rate limited"),
 )
+
+# The ``/usage`` Settings dialog: its tab strip, or its retry/cancel footer.
+_CLAUDE_USAGE_DIALOG_RE = re.compile(
+    r"Settings\s+Status\s+Config\s+Usage\s+Stats|\br to retry\b"
+)
+_CLAUDE_DIALOG_ERROR_RE = re.compile(r"^\s*Error:\s*(.+?)\s*$", re.MULTILINE)
 
 # The composer is a line that starts with the prompt cursor and is not a menu
 # option. Claude Code draws the same cursor glyph in front of the highlighted
@@ -934,6 +1068,13 @@ def _claude_probe_blocker(screen: str) -> str | None:
     for marker, reason in _CLAUDE_PROBE_BLOCKERS:
         if marker in screen:
             return reason
+    # Any other error inside the usage dialog is equally undriveable: the
+    # composer is hidden so the resend path cannot fire, and each attempt
+    # would otherwise burn its full timeout.
+    if _CLAUDE_USAGE_DIALOG_RE.search(screen):
+        error = _CLAUDE_DIALOG_ERROR_RE.search(screen)
+        if error:
+            return f"usage dialog error: {error.group(1)}"
     return None
 
 

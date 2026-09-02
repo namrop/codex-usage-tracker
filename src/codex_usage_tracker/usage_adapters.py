@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import json
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any, Iterator, Iterable
 
@@ -60,19 +61,38 @@ _HERMES_PURPOSE_MAP = {
     "aux:approval": "x_aux_approval",
     "aux:title_generation": "x_aux_title_generation",
 }
+# The canonical contract's fixed purpose vocabulary (canonical_ledger
+# normalize_fact); anything else must be an ``x_`` extension name.
+_CANONICAL_PURPOSES = frozenset(
+    {"main", "background_review", "compression", "vision", "subagent", "historical_backfill", "other"}
+)
+_AUX_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
-def _hermes_purpose(value: Any, *, historical: bool) -> str:
+def _hermes_purpose(value: Any, *, historical: bool) -> tuple[str, str | None]:
     """Translate the sidecar purpose vocabulary into the canonical contract set.
 
     The Hermes sidecar records auxiliary lanes as ``aux:*``; the canonical
     ledger contract only allows the fixed purpose set plus ``x_`` extension
-    names. Exact semantic matches map to their canonical bucket, everything
-    else becomes a named ``x_aux_*`` extension so no lane is silently
-    relabeled as something it is not.
+    names. Exact semantic matches map to their canonical bucket; any other
+    ``aux:<name>`` becomes the named ``x_aux_<name>`` extension and any
+    other unknown value becomes ``other``, so no lane is silently relabeled
+    as something it is not and no raw value can fail contract validation
+    (which used to cede the whole Hermes lane).
+
+    Returns ``(purpose, raw)``: ``raw`` is the untranslated sidecar value
+    when a translation was invented here (recorded as ``x_aux_purpose``),
+    and ``None`` for exact matches and already-canonical values.
     """
     purpose = _optional_text(value) or ("historical_backfill" if historical else "main")
-    return _HERMES_PURPOSE_MAP.get(purpose, purpose)
+    if purpose in _HERMES_PURPOSE_MAP:
+        return _HERMES_PURPOSE_MAP[purpose], None
+    if purpose in _CANONICAL_PURPOSES or purpose.startswith("x_"):
+        return purpose, None
+    if purpose.startswith("aux:"):
+        slug = _AUX_SLUG_RE.sub("_", purpose[4:].casefold()).strip("_")
+        return (f"x_aux_{slug}" if slug else "other"), purpose
+    return "other", purpose
 
 
 def _base_event(*, namespace: str, event_id: str, harness: str, occurred: Any, recorded: Any, purpose: str="main") -> dict[str,Any]:
@@ -111,27 +131,32 @@ def collect_hermes_usage(db_path: str | Path, source_namespace: str, *, batch_si
             for raw in batch:
                 r=dict(raw); historical=r.get("record_kind")=="historical_aggregate"
                 status=r.get("cost_status") or "unknown"
+                unfiled_cost=None
                 if "cost_usd_micro" in r:
                     micro=r.get("cost_usd_micro")
                     cost_text=None if micro is None else f"{int(micro)/1_000_000:.6f}"
-                    if status=="included":
-                        estimated=actual=None
-                    elif cost_text is not None:
-                        estimated=cost_text; actual=None
-                    else:
-                        estimated=actual=None
+                    if status=="reconstructed": status="estimated" if cost_text is not None else "unknown"
+                    # File the sidecar's cost under the field its status
+                    # names; an "unknown" status keeps the figure only as an
+                    # extension so canon never claims a certainty the sidecar
+                    # did not.
+                    estimated=actual=None
+                    if status=="actual": actual=cost_text
+                    elif status=="estimated": estimated=cost_text
+                    elif status!="included": unfiled_cost=cost_text
                 else:
                     estimated=_cost(r.get("estimated_cost_usd")); actual=_cost(r.get("actual_cost_usd"))
                     if status=="reconstructed": status="estimated" if estimated is not None else ("actual" if actual is not None else "unknown")
                 if status=="included" or r.get("billing_mode") in {"subscription_included","subscription"}:
-                    status="included"; estimated=actual=None
+                    status="included"; estimated=actual=None; unfiled_cost=None
                 event_id=str(r.get("event_uid") or f"sqlite-row:{r['_immutable_rowid']}")
                 occurred=_timestamp(r.get("timestamp"),r.get("created_at"))
                 recorded=_timestamp(r.get("created_at"),r.get("timestamp"))
                 # The sidecar gains a model_reported column in its own lane;
                 # .get() is None-safe on databases from before that column.
                 model_reported=_optional_text(r.get("model_reported"))
-                row=_base_event(namespace=source_namespace,event_id=event_id,harness="hermes",occurred=occurred,recorded=recorded,purpose=_hermes_purpose(r.get("purpose"), historical=historical))
+                purpose,raw_purpose=_hermes_purpose(r.get("purpose"), historical=historical)
+                row=_base_event(namespace=source_namespace,event_id=event_id,harness="hermes",occurred=occurred,recorded=recorded,purpose=purpose)
                 row.update({
                   "event_uid":_optional_text(r.get("event_uid")),"surface":_optional_text(r.get("source")),"session_id":_optional_text(r.get("session_id")),
                   "provider":_optional_text(r.get("provider")),"model_requested":_optional_text(r.get("model")),"model_reported":model_reported,
@@ -146,11 +171,22 @@ def collect_hermes_usage(db_path: str | Path, source_namespace: str, *, batch_si
                   "estimated_cost_usd":estimated,"actual_cost_usd":actual,"cost_status":status,"cost_source":_optional_text(r.get("cost_source")),
                   "pricing_version":_optional_text(r.get("pricing_version")),"reconstructed_call_count":r.get("api_call_index") if historical else None,
                 })
+                if raw_purpose is not None: row["x_aux_purpose"]=raw_purpose
+                if unfiled_cost is not None: row["x_hermes_cost_usd"]=_cost(unfiled_cost)
                 yield normalize_fact(row)
     finally: con.close()
 
 
-def _read_claude_file(path: Path) -> list[dict[str,Any]]:
+def _read_claude_file(path: Path, *, skipped_files: list[dict[str,Any]] | None=None) -> list[dict[str,Any]]:
+    """Parse one transcript; a malformed interior line skips this FILE only.
+
+    A torn interior line used to raise ``MalformedLedgerError`` out of the
+    whole instance walk, and because the collector materializes the adapter,
+    every transcript for that instance was dropped and the lane ceded
+    permanently. The file is skipped instead and recorded in
+    ``skipped_files`` (path and line number) for the lane health report. A
+    torn LAST line is an in-progress write and stays silently deferred.
+    """
     lines=path.read_text(encoding="utf-8").splitlines(); parsed=[]
     last_nonempty=max((i for i,line in enumerate(lines) if line.strip()),default=-1)
     for index,line in enumerate(lines):
@@ -158,7 +194,9 @@ def _read_claude_file(path: Path) -> list[dict[str,Any]]:
         try: value=json.loads(line)
         except json.JSONDecodeError as exc:
             if index==last_nonempty: continue
-            raise MalformedLedgerError(f"{path}:{index+1}: malformed interior JSON: {exc.msg}") from exc
+            if skipped_files is not None:
+                skipped_files.append({"path":str(path),"line":index+1,"error":exc.msg})
+            return []
         if isinstance(value,dict): parsed.append(value)
     return parsed
 
@@ -175,6 +213,7 @@ def collect_claude_usage(
     source_namespace: str,
     *,
     settle_seconds: float = 300.0,
+    skipped_files: list[dict[str,Any]] | None = None,
 ) -> Iterator[dict[str,Any]]:
     """Read stable provider receipts; transcript content is never projected.
 
@@ -182,9 +221,15 @@ def collect_claude_usage(
     The latest stable snapshot supplies both receipt time and usage. A lone
     non-terminal receipt in a recently modified file is provisional and is
     deferred to a later collection pass.
+
+    Transcripts with a malformed interior line are skipped (never the whole
+    instance) and recorded in ``skipped_files``; the generator also returns
+    ``{"skipped_files": [...]}`` as its ``StopIteration`` value so a caller
+    that only materializes the stream still gets the diagnostics.
     """
+    skipped=skipped_files if skipped_files is not None else []
     root_path=Path(root).expanduser()
-    if not root_path.exists(): return
+    if not root_path.exists(): return {"skipped_files": skipped}
     now_timestamp = datetime.now(timezone.utc).timestamp()
     for path in sorted(root_path.rglob("*.jsonl")):
         try:
@@ -192,7 +237,7 @@ def collect_claude_usage(
         except OSError:
             continue
         grouped: dict[tuple[str,str],list[tuple[int,dict[str,Any]]]]={}
-        for sequence,item in enumerate(_read_claude_file(path)):
+        for sequence,item in enumerate(_read_claude_file(path, skipped_files=skipped)):
             message=item.get("message")
             if item.get("type")!="assistant" or not isinstance(message,dict): continue
             message_id=message.get("id"); session_id=item.get("sessionId") or item.get("session_id")
@@ -234,6 +279,7 @@ def collect_claude_usage(
               "cost_status":"included","cost_source":"subscription","estimated_cost_usd":None,"actual_cost_usd":None,
             })
             yield normalize_fact(row)
+    return {"skipped_files": skipped}
 
 
 def _tables(con: sqlite3.Connection) -> set[str]:

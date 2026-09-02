@@ -174,9 +174,15 @@ function cacheHitRateModel(timeSeries: any, palette: Palette): SeriesChartModel 
   };
 }
 
-// Spend sparkline (polish round item 12): the server's seven day-bucket
-// list-price estimates as a bare structure-role polyline — trend only; the
-// exact values ride the title.
+// Spend sparkline (polish round item 12): the server's per-UTC-calendar-day
+// list-price estimates (oldest first; the first and last day may be partial
+// and say so) as a bare structure-role polyline — trend only; the exact
+// values ride the title.
+function spendDayLabel(day: any): string {
+  const date = new Date(day.day_start).toLocaleString([], { timeZone: "UTC", month: "short", day: "numeric" });
+  return `${date} $${day.estimate_usd}${day && day.partial === true ? " (partial)" : ""}`;
+}
+
 function SpendSparkline({ days }: { days: any[] }) {
   const values = days.map((day) => Number(day && day.estimate_usd));
   if (days.length < 2 || !values.every((value) => Number.isFinite(value))) {
@@ -205,9 +211,7 @@ function SpendSparkline({ days }: { days: any[] }) {
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
-  const described = days
-    .map((day) => `${new Date(day.day_start).toLocaleString([], { timeZone: "UTC", month: "short", day: "numeric" })} $${day.estimate_usd}`)
-    .join(" · ");
+  const described = days.map(spendDayLabel).join(" · ");
   return (
     <svg
       id="unifiedSpendSpark"
@@ -407,7 +411,7 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
               {soonest ? <CountdownText resetAt={soonest.resetAt} weekly={soonest.weekly} /> : "—"}
             </div>
             <div className="hint" id="unifiedSoonestResetHint">
-              {soonest ? `${soonest.provider} ${soonest.windowName} · ${soonest.usedPct.toFixed(0)}% used` : "no exact resets reported"}
+              {soonest ? `${soonest.label} ${soonest.windowName} · ${soonest.usedPct.toFixed(0)}% used` : "no exact resets reported"}
             </div>
           </div>
           <div className={`metric${substituted > 0 ? " role-violation" : ""}`} id="unifiedSubstitutionTile">

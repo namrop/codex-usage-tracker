@@ -313,7 +313,13 @@ def _ledger_freshness(
         if lane_health_name
         else []
     )
-    stale_lanes = [lane["lane"] for lane in lanes if lane["status"] != "fresh"]
+    # A lane that has never succeeded is not "stale": nothing went quiet, it
+    # simply has no history yet (typically a lane registered before its
+    # credentials exist). It stays listed, under its own key, and never
+    # flips the surface — only a lane that HAS succeeded and then went quiet
+    # beyond the threshold does that.
+    stale_lanes = [lane["lane"] for lane in lanes if lane["status"] == "stale"]
+    never_lanes = [lane["lane"] for lane in lanes if lane["status"] == "never"]
     try:
         latest = max(
             datetime.fromtimestamp(candidate.stat().st_mtime, timezone.utc).replace(microsecond=0)
@@ -328,6 +334,7 @@ def _ledger_freshness(
         if lanes:
             payload["lanes"] = lanes
             payload["stale_lanes"] = stale_lanes
+            payload["never_lanes"] = never_lanes
         return payload
     age_seconds = (now - latest).total_seconds()
     status = "stale" if age_seconds > _PRIVATE_LEDGER_MAX_AGE_SECONDS else "fresh"
@@ -341,6 +348,7 @@ def _ledger_freshness(
     if lanes:
         payload["lanes"] = lanes
         payload["stale_lanes"] = stale_lanes
+        payload["never_lanes"] = never_lanes
     return payload
 
 
@@ -405,8 +413,10 @@ def _days_argument() -> tuple[int | None, tuple[Any, int] | None]:
         days = int(days_text)
     except ValueError:
         return None, (jsonify({"error": "days must be an integer"}), 400)
-    if days < 0:
-        return None, (jsonify({"error": "days must be nonnegative"}), 400)
+    if days < 1:
+        # days=0 used to be accepted and produced an empty window whose
+        # ``next_before`` cursor equalled ``before`` — a page that never advances.
+        return None, (jsonify({"error": "days must be at least 1"}), 400)
     if days > _MAX_PRIVATE_API_DAYS:
         return None, (jsonify({"error": f"days must be no greater than {_MAX_PRIVATE_API_DAYS}"}), 400)
     return days, None
@@ -560,19 +570,26 @@ def _build_provider_status_series(
     classes: dict[str, list[dict[str, int]]] = {}
     input_tokens: dict[str, list[int]] = {}
     cache_read_tokens: dict[str, list[int]] = {}
+    raw_ids: dict[str, set[str]] = {}
 
     for row in rows:
         occurred_at = _fact_datetime(row.get("occurred_at"))
         bucket_index = int((occurred_at - window_start).total_seconds() // 3600)
         if bucket_index < 0 or bucket_index >= bucket_count:
             continue
-        provider = str(row.get("provider") or "unknown")
+        # One row per canonical provider: "openai" and "openai-codex" are the
+        # same status feed and the same quota row, so they must not read as
+        # two providers on the strip.
+        raw_provider = str(row.get("provider") or "unknown")
+        provider = _canonical_quota_provider(raw_provider)
         if provider not in events:
             events[provider] = [0] * bucket_count
             errors[provider] = [0] * bucket_count
             classes[provider] = [{} for _index in range(bucket_count)]
             input_tokens[provider] = [0] * bucket_count
             cache_read_tokens[provider] = [0] * bucket_count
+            raw_ids[provider] = set()
+        raw_ids[provider].add(raw_provider)
         events[provider][bucket_index] += 1
         input_tokens[provider][bucket_index] += int(row.get("input_tokens") or 0)
         cache_read_tokens[provider][bucket_index] += int(row.get("cache_read_tokens") or 0)
@@ -601,7 +618,8 @@ def _build_provider_status_series(
         series.append(
             {
                 "provider": provider,
-                "provider_canonical": _canonical_quota_provider(provider),
+                "provider_canonical": provider,
+                "provider_raw_ids": sorted(raw_ids[provider]),
                 "events": events[provider],
                 "errors": errors[provider],
                 "input_tokens": input_tokens[provider],
@@ -709,22 +727,37 @@ def _build_list_price_daily(
     window_start: datetime,
     window_end: datetime,
 ) -> list[dict[str, Any]]:
-    """Per-day list-price estimates over the bounded hour window.
+    """Per-UTC-calendar-day list-price estimates over the bounded hour window.
 
-    Buckets are 24-hour slices anchored at ``window_start`` (a top-of-UTC-hour
-    boundary), so the hours=168 dashboard query yields seven of them. Each day
-    reuses :func:`estimate_list_price` over that day's (provider, model) token
-    aggregates; a day with no traffic prices honestly at $0.00 with full
-    coverage rather than being dropped, so the sparkline keeps calendar shape.
+    Buckets are UTC calendar days — from the UTC date of ``window_start``
+    through the UTC date of ``window_end`` — because the UI labels each entry
+    as a date. (The earlier 24-hour slices anchored at the sliding window
+    start were labelled as dates too, so every "day" was really a 16:00Z to
+    16:00Z span that straddled two calendar days.) ``day_start`` is that day's
+    00:00Z; an entry the window covers only partially (the first and last day
+    of a window that does not start and end at midnight) carries
+    ``partial: true``. Each day reuses :func:`estimate_list_price` over that
+    day's (provider, model) token aggregates; a day with no traffic prices
+    honestly at $0.00 with full coverage rather than being dropped, so the
+    sparkline keeps calendar shape. Oldest day first.
     """
-    window_seconds = (window_end - window_start).total_seconds()
-    day_count = int(window_seconds // 86400) + (1 if window_seconds % 86400 else 0)
+    first_day = window_start.astimezone(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    last_instant = window_end.astimezone(timezone.utc)
+    last_day = last_instant.replace(hour=0, minute=0, second=0, microsecond=0)
+    if last_day == last_instant and last_day > first_day:
+        # A window ending exactly at midnight covers nothing of that day.
+        last_day -= timedelta(days=1)
+    day_count = (last_day - first_day).days + 1
     daily_grouped: list[dict[tuple[str, str], dict[str, Any]]] = [
         {} for _ in range(day_count)
     ]
     for row in rows:
         occurred_at = _fact_datetime(row.get("occurred_at"))
-        day_index = int((occurred_at - window_start).total_seconds() // 86400)
+        if occurred_at < window_start or occurred_at >= window_end:
+            continue
+        day_index = (occurred_at - first_day).days
         if day_index < 0 or day_index >= day_count:
             continue
         key = (
@@ -748,13 +781,18 @@ def _build_list_price_daily(
                 for field in _LIST_PRICE_TOKEN_FIELDS
                 if field != "reasoning_tokens"
             )
-    return [
-        {
-            "day_start": _iso_z(window_start + timedelta(days=index)),
-            **estimate_list_price(daily_grouped[index].values()),
-        }
-        for index in range(day_count)
-    ]
+    entries: list[dict[str, Any]] = []
+    for index in range(day_count):
+        day_start = first_day + timedelta(days=index)
+        day_end = day_start + timedelta(days=1)
+        entries.append(
+            {
+                "day_start": _iso_z(day_start),
+                "partial": window_start > day_start or window_end < day_end,
+                **estimate_list_price(daily_grouped[index].values()),
+            }
+        )
+    return entries
 
 
 # ── Provider status feeds (keeper-ruled 2026-08-30: API liveness comes from
@@ -824,10 +862,18 @@ def _provider_status_snapshot(
         with _provider_status_lock:
             _provider_status_cache[url] = (now, entry)
         by_url[url] = entry
-    return {
+    projected = {
         provider: {**by_url[url], "feed_url": url}
         for provider, url in _PROVIDER_STATUS_FEEDS.items()
     }
+    # The status strip and the quota cards look feeds up by canonical provider
+    # ("openai-codex", "kimi-k3-coding"); the raw keys stay so nothing that
+    # still reads them breaks.
+    for provider, url in _PROVIDER_STATUS_FEEDS.items():
+        canonical = _canonical_quota_provider(provider)
+        if canonical not in projected:
+            projected[canonical] = {**by_url[url], "feed_url": url}
+    return projected
 
 
 def _canonical_quota_provider(value: Any) -> str:
@@ -835,6 +881,162 @@ def _canonical_quota_provider(value: Any) -> str:
     if not raw:
         raw = "unknown"
     return _QUOTA_PROVIDER_ALIASES.get(raw.casefold(), raw)
+
+
+# Burn-panel cadence contract: the hourly ai-quota-collect timer plus the
+# five-minute active-window tick (both Claude accounts, collector
+# ``--when-active`` gate) produce observations at least this dense while a
+# window is actually burning. 90 minutes so the ledger's own hourly
+# cadence — the baseline sampling, with its real probe drift — always
+# yields honest rise measurements; anything wider is a multi-window
+# conflation, not a burn sample.
+_BURN_MAX_SAMPLE_GAP_SECONDS = 90 * 60
+
+# A window whose resets_at is further away than this is not a session window
+# for burn purposes — projecting exhaustion against it would be noise.
+_BURN_MAX_WINDOW_SECONDS = 7 * 24 * 3600
+
+# Lookback margin ahead of the requested burn window so the first in-window
+# observation still has a predecessor to measure a rise from.
+_BURN_BASELINE_MARGIN_SECONDS = 90 * 60
+
+
+def _burn_seconds_until(resets_at: Any, *, now: datetime) -> float | None:
+    if not isinstance(resets_at, str):
+        return None
+    parsed = _rfc3339_order_key(resets_at)
+    if parsed is None:
+        return None
+    seconds = (parsed[0] - now).total_seconds()
+    return seconds if seconds > 0 else None
+
+
+def _build_quota_burn_projection(
+    rows: list[dict[str, Any]],
+    *,
+    generated_at: datetime,
+) -> dict[str, Any]:
+    """Project quota observations into per-window burn series.
+
+    One series per account window (the same identity rule the subscription
+    charts use — no cross-account merging). Every observation carries its
+    used percentage and observed timestamp; burn deltas are the positive
+    monotonic differences between successive observations of the same
+    window, so a reset reads as a gap rather than a negative burn. The
+    exhaustion projection divides only by a strictly positive derived rate
+    and never extends past the window's own ``resets_at``: if the honest
+    ETA lands after the reset, the panel says unknown instead of inventing
+    a lockout that will not happen.
+    """
+    grouped: dict[_QuotaSeriesIdentity, list[dict[str, Any]]] = {}
+    for row in rows:
+        observed_at = _fact_datetime(row.get("observed_at"))
+        if observed_at is None:
+            continue
+        if not _quota_observation_is_informative(row):
+            continue
+        grouped.setdefault(_quota_series_identity(row), []).append(row)
+
+    series: list[dict[str, Any]] = []
+    for identity in sorted(grouped, key=_quota_identity_sort_key):
+        provider, quota_name, _harness, _scope, window_kind, _unit, _account = identity
+        window_rows = sorted(grouped[identity], key=_quota_observation_order_key)
+        observations: list[dict[str, Any]] = []
+        deltas: list[dict[str, Any]] = []
+        previous: tuple[float, datetime] | None = None
+        for row in window_rows:
+            pct = _quota_utilization_pct(row)
+            observed_at = _fact_datetime(row.get("observed_at"))
+            observations.append(
+                {
+                    "observed_at": row.get("observed_at"),
+                    "used_pct": pct,
+                }
+            )
+            if pct is None or previous is None:
+                previous = (pct, observed_at) if pct is not None else None
+                continue
+            previous_pct, previous_at = previous
+            gap_seconds = (observed_at - previous_at).total_seconds()
+            if gap_seconds <= 0 or gap_seconds > _BURN_MAX_SAMPLE_GAP_SECONDS:
+                # Either out-of-order duplicates or a sampling gap so wide
+                # the difference is not a burn measurement.
+                previous = (pct, observed_at)
+                continue
+            rise = pct - previous_pct
+            if rise > 0:
+                deltas.append(
+                    {
+                        "from_observed_at": _iso_z(previous_at),
+                        "to_observed_at": row.get("observed_at"),
+                        "rise_pct": round(rise, 4),
+                        "gap_seconds": int(gap_seconds),
+                        "pct_per_hour": round(rise / (gap_seconds / 3600.0), 4),
+                    }
+                )
+            # A fall (reset) or a flat step advances the anchor without
+            # producing a delta; only genuine rises measure burn.
+            previous = (pct, observed_at)
+
+        latest_row = window_rows[-1]
+        latest_pct = _quota_utilization_pct(latest_row)
+        latest_observed = _fact_datetime(latest_row.get("observed_at"))
+        rate_window = deltas[-3:]
+        if rate_window:
+            # "While it burns": rises over the gaps they were measured
+            # across — idle spans between deltas do not dilute the rate,
+            # because the panel's question is how fast the window moves
+            # when it is moving.
+            total_rise = sum(float(delta["rise_pct"]) for delta in rate_window)
+            total_seconds = sum(float(delta["gap_seconds"]) for delta in rate_window)
+            pct_per_hour = (total_rise / (total_seconds / 3600.0)) if total_seconds > 0 else None
+        else:
+            pct_per_hour = None
+        resets_at = latest_row.get("resets_at")
+        seconds_to_reset = _burn_seconds_until(resets_at, now=generated_at)
+        exhaustion_at: str | None = None
+        if (
+            pct_per_hour is not None
+            and pct_per_hour > 0
+            and latest_pct is not None
+            and latest_pct < 100
+            and latest_observed is not None
+            and seconds_to_reset is not None
+            and seconds_to_reset <= _BURN_MAX_WINDOW_SECONDS
+        ):
+            seconds_to_empty = (100.0 - latest_pct) / pct_per_hour * 3600.0
+            if seconds_to_empty <= seconds_to_reset:
+                exhaustion_at = _iso_z(latest_observed + timedelta(seconds=seconds_to_empty))
+        entry: dict[str, Any] = {
+            "provider": provider,
+            "label": _quota_provider_label(provider),
+            "quota_name": quota_name,
+            "window_kind": window_kind,
+            "measurement_confidence": latest_row.get("measurement_confidence"),
+            "confidence_status": _quota_series_confidence(window_rows),
+            "resets_at": resets_at,
+            "seconds_to_reset": int(seconds_to_reset) if seconds_to_reset is not None else None,
+            "latest_observed_at": latest_row.get("observed_at"),
+            "latest_used_pct": latest_pct,
+            "burn_rate_pct_per_hour": round(pct_per_hour, 4) if pct_per_hour is not None else None,
+            "rate_window_deltas": len(rate_window),
+            "exhausted": latest_pct is not None and latest_pct >= 100,
+            "projected_exhaustion_at": exhaustion_at,
+            "deltas": deltas,
+            "observations": observations,
+        }
+        series.append(entry)
+
+    return {
+        "generated_at": _iso_z(generated_at),
+        "description": (
+            "Per-account subscription windows: observed used percent over time, "
+            "the burn rate derived from the last monotonic rises, and an "
+            "exhaustion projection that never extends past the window's own "
+            "reset."
+        ),
+        "series": series,
+    }
 
 
 def _quota_provider_label(provider: str) -> str:
@@ -905,6 +1107,23 @@ def _quota_observation_order_key(
         str(row.get("source_namespace") or ""),
         str(row.get("source_observation_id") or ""),
         canonical_row,
+    )
+
+
+def _quota_observation_is_informative(row: dict[str, Any]) -> bool:
+    """An observation with neither used nor remaining NOR an explicit
+    provider_state/coverage marker is a historical null (e.g. the
+    upstream-retired codex session window, whose old all-None rows stay
+    newest forever because collection stopped emitting that window). It is
+    not a card, not an ``unavailable_series`` entry, and not an observation
+    worth counting — the same rule ``latest`` applies. A null row that
+    CARRIES provider_state ("inactive_or_not_reported") or coverage is an
+    honest signal and stays."""
+    return (
+        row.get("used_value") is not None
+        or row.get("remaining_value") is not None
+        or row.get("x_provider_state") is not None
+        or row.get("x_coverage") is not None
     )
 
 
@@ -1036,6 +1255,8 @@ def _build_subscription_time_series(
     for row in rows:
         observed_at = _fact_datetime(row.get("observed_at"))
         if observed_at < window_start or observed_at >= window_end:
+            continue
+        if not _quota_observation_is_informative(row):
             continue
         identity = _quota_series_identity(row)
         provider = identity[0]
@@ -1576,7 +1797,11 @@ def create_app(
         cost_fields = ("estimated_cost_usd", "actual_cost_usd")
         totals: Dict[str, Any] = {field: sum(int(row.get(field) or 0) for row in rows) for field in token_fields}
         for field in cost_fields:
-            totals[field] = str(sum((Decimal(str(row.get(field))) for row in rows if row.get(field) is not None), Decimal("0")))
+            # Same number format as /api/billing: ``str(Decimal)`` emits
+            # scientific notation for tiny sums ("5E-7"), _decimal_text does not.
+            totals[field] = _decimal_text(
+                sum((Decimal(str(row.get(field))) for row in rows if row.get(field) is not None), Decimal("0"))
+            )
         # Canonical output includes reasoning when a harness reports both, so do
         # not count the diagnostic reasoning bucket a second time.
         totals["total_tokens"] = sum(totals[field] for field in token_fields if field != "reasoning_tokens")
@@ -1602,11 +1827,12 @@ def create_app(
                 key,
                 {
                     "provider": key[0],
+                    "provider_canonical": _canonical_quota_provider(key[0]),
                     "model": key[1],
                     "events": 0,
                     "api_modes": {},
                     **{field: 0 for field in token_fields},
-                    **{field: "0" for field in cost_fields},
+                    **{field: Decimal("0") for field in cost_fields},
                 },
             )
             bucket["events"] += 1
@@ -1618,7 +1844,7 @@ def create_app(
                 bucket[field] += int(row.get(field) or 0)
             for field in cost_fields:
                 if row.get(field) is not None:
-                    bucket[field] = str(Decimal(bucket[field]) + Decimal(str(row[field])))
+                    bucket[field] += Decimal(str(row[field]))
             harness = str(row.get("harness") or "unknown")
             harness_bucket = by_harness.setdefault(
                 harness,
@@ -1626,7 +1852,7 @@ def create_app(
                     "harness": harness,
                     "events": 0,
                     **{field: 0 for field in token_fields},
-                    **{field: "0" for field in cost_fields},
+                    **{field: Decimal("0") for field in cost_fields},
                 },
             )
             harness_bucket["events"] += 1
@@ -1634,28 +1860,33 @@ def create_app(
                 harness_bucket[field] += int(row.get(field) or 0)
             for field in cost_fields:
                 if row.get(field) is not None:
-                    harness_bucket[field] = str(
-                        Decimal(harness_bucket[field]) + Decimal(str(row[field]))
-                    )
-            # Provider-level throughput for the window donuts. The canonical key
-            # is resolved here rather than in the browser so the donut legend
-            # can join to a quota row without a second copy of the alias table.
+                    harness_bucket[field] += Decimal(str(row[field]))
+            # Provider-level throughput for the window donuts, grouped by the
+            # canonical provider: "openai" and "openai-codex" are one
+            # subscription and must be one arc, not two. The canonical key is
+            # resolved here rather than in the browser so the donut legend can
+            # join to a quota row without a second copy of the alias table;
+            # the raw ids merged into the row ride along for the ledger view.
+            canonical_provider = _canonical_quota_provider(key[0])
             provider_bucket = by_provider.setdefault(
-                key[0],
+                canonical_provider,
                 {
-                    "provider": key[0],
-                    "provider_canonical": _canonical_quota_provider(key[0]),
+                    "provider": canonical_provider,
+                    "provider_canonical": canonical_provider,
+                    "provider_raw_ids": set(),
                     "events": 0,
                     "substituted_events": 0,
                     **{field: 0 for field in token_fields},
                 },
             )
+            provider_bucket["provider_raw_ids"].add(key[0])
             provider_bucket["events"] += 1
             if _is_substituted_event(row):
                 provider_bucket["substituted_events"] += 1
             for field in token_fields:
                 provider_bucket[field] += int(row.get(field) or 0)
         for bucket in by_provider.values():
+            bucket["provider_raw_ids"] = sorted(bucket["provider_raw_ids"])
             bucket["total_tokens"] = sum(
                 bucket[field] for field in token_fields if field != "reasoning_tokens"
             )
@@ -1663,10 +1894,10 @@ def create_app(
             # cache read is billed and served differently from fresh input.
             bucket["cached_tokens"] = bucket["cache_read_tokens"]
             bucket["fresh_tokens"] = bucket["total_tokens"] - bucket["cache_read_tokens"]
-        for bucket in grouped.values():
+        for bucket in (*grouped.values(), *by_harness.values()):
             bucket["total_tokens"] = sum(bucket[field] for field in token_fields if field != "reasoning_tokens")
-        for bucket in by_harness.values():
-            bucket["total_tokens"] = sum(bucket[field] for field in token_fields if field != "reasoning_tokens")
+            for field in cost_fields:
+                bucket[field] = _decimal_text(bucket[field])
         totals["list_price"] = estimate_list_price(grouped.values())
         coverage = {
             "exact_events": sum(row.get("measurement_confidence") == "exact" for row in rows),
@@ -1707,9 +1938,9 @@ def create_app(
                 generated_at=generated_at,
             )
             # Daily list-price estimates for the spend sparkline (keeper polish
-            # round 2026-08-30). Day buckets are 24-hour slices of the queried
-            # hour window (UTC policy: series_end is a top-of-UTC-hour), so an
-            # hours=168 query yields exactly 7 buckets. Each bucket reuses
+            # round 2026-08-30). Day buckets are UTC calendar days spanning the
+            # queried hour window, so an hours=168 query yields 8 buckets with
+            # a partial first and last day. Each bucket reuses
             # estimate_list_price over its own (provider, model) aggregates —
             # unpriced tokens stay coverage per day, never a guess.
             payload["list_price_daily"] = _build_list_price_daily(
@@ -1876,12 +2107,7 @@ def create_app(
             # observation = no card. A null row that CARRIES provider_state
             # ("inactive_or_not_reported") is an honest signal and stays.
             "latest": [
-                project(row)
-                for row in latest
-                if row.get("used_value") is not None
-                or row.get("remaining_value") is not None
-                or row.get("x_provider_state") is not None
-                or row.get("x_coverage") is not None
+                project(row) for row in latest if _quota_observation_is_informative(row)
             ],
             "observations": [project(row) for row in rows] if include_history else [],
         }
@@ -1895,6 +2121,56 @@ def create_app(
                 generated_at=generated_at,
             )
         return jsonify(payload)
+
+    @app.route("/api/quota-burn")
+    def api_quota_burn():
+        if not resolved_quota_ledger:
+            return jsonify({"error": "quota ledger is not configured"}), 404
+        hours, hours_error = _hours_argument()
+        if hours_error is not None:
+            return hours_error
+        generated_at = datetime.now(timezone.utc)
+        if hours is None:
+            cutoff = generated_at - timedelta(days=_DEFAULT_PRIVATE_API_WINDOW_DAYS)
+            query_before = None
+        else:
+            # One extra baseline margin beyond the requested window so the
+            # earliest in-window observation has a predecessor to rise from
+            # (the ledger's hourly cadence is the floor); deltas whose
+            # ``to_observed_at`` falls outside the window are still honest
+            # history and stay — the margin only widens sampling context.
+            cutoff = generated_at - timedelta(hours=hours, seconds=_BURN_BASELINE_MARGIN_SECONDS)
+            # Inclusive-now, same rule as /api/subscriptions.
+            try:
+                query_before = generated_at + timedelta(microseconds=1)
+            except OverflowError:
+                query_before = generated_at
+        typed_filters = {
+            field: requested
+            for field in ("provider", "harness", "quota_name")
+            if (requested := request.args.get(field)) is not None
+        }
+        try:
+            rows = _private_facts(
+                resolved_quota_ledger,
+                fact_type="quota_observation_v1",
+                filters=typed_filters,
+                cutoff=cutoff,
+                before=query_before,
+                order="desc",
+            )
+        except UnsupportedLedgerSuffix:
+            return jsonify({"error": "unsupported ledger suffix"}), 400
+        except PrivateLedgerQueryTooLarge:
+            return jsonify({"error": "ledger query exceeds private API row limit"}), 413
+        except (MalformedLedgerError, ValidationError, IdentityConflictError):
+            return jsonify({"error": "configured private ledger is unavailable"}), 503
+        return jsonify(
+            _build_quota_burn_projection(
+                rows,
+                generated_at=generated_at,
+            )
+        )
 
     @app.route("/api/billing")
     def api_billing():

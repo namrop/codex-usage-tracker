@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import datetime
+
+import pytest
 
 from codex_usage_tracker.public_projection import (
     _read_usage_rows,
@@ -228,3 +231,68 @@ def test_public_projection_suppresses_multi_hour_sampling_gap_spikes():
     assert sanitized[1]["data_gap"] is False
     assert sanitized[1]["total_tokens"] == 43493712
     assert sanitized[1]["api_calls"] == 347
+
+
+def test_write_public_projection_is_atomic_and_leaves_original_untouched_on_failure(tmp_path, monkeypatch):
+    ledger = tmp_path / "codex_usage_ledger.jsonl"
+    state_db = tmp_path / "state.db"
+    _make_state_db(state_db)
+    _write_usage_ledger(
+        ledger,
+        [
+            {"fetched_at": "2026-06-04T01:00:00+00:00", "session_used_pct": 0.0, "weekly_used_pct": 0.0},
+            {"fetched_at": "2026-06-04T02:00:00+00:00", "session_used_pct": 1.0, "weekly_used_pct": 0.0},
+        ],
+    )
+    output_path = default_public_projection_path(str(ledger))
+    original = '{"rows": [], "summary": {}, "source": "previous-complete-payload"}\n'
+    output_path.write_text(original, encoding="utf-8")
+
+    def failing_replace(src, dst, *args, **kwargs):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        write_public_projection(str(ledger), state_db_path=str(state_db), source="test-public")
+
+    # Destination is byte-for-byte the prior complete payload — never truncated.
+    assert output_path.read_text(encoding="utf-8") == original
+    # No temp-file litter left behind in the DMZ directory.
+    assert [p.name for p in output_path.parent.iterdir() if p.name.startswith(".codex_token_chart_public.json.")] == []
+
+    # And with a working os.replace the new payload lands whole.
+    monkeypatch.undo()
+    write_public_projection(str(ledger), state_db_path=str(state_db), source="test-public")
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["source"] == "test-public"
+    assert payload["rows"][0]["total_tokens"] == 1050
+
+
+def test_write_public_projection_uses_same_directory_temp_and_replace(tmp_path, monkeypatch):
+    ledger = tmp_path / "codex_usage_ledger.jsonl"
+    state_db = tmp_path / "state.db"
+    _make_state_db(state_db)
+    _write_usage_ledger(
+        ledger,
+        [
+            {"fetched_at": "2026-06-04T01:00:00+00:00", "session_used_pct": 0.0, "weekly_used_pct": 0.0},
+            {"fetched_at": "2026-06-04T02:00:00+00:00", "session_used_pct": 1.0, "weekly_used_pct": 0.0},
+        ],
+    )
+    seen = []
+    real_replace = os.replace
+
+    def spying_replace(src, dst, *args, **kwargs):
+        seen.append((str(src), str(dst)))
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", spying_replace)
+
+    output_path = write_public_projection(str(ledger), state_db_path=str(state_db), source="test-public")
+
+    assert len(seen) == 1
+    src, dst = seen[0]
+    assert dst == str(output_path)
+    assert os.path.dirname(src) == str(output_path.parent)
+    assert os.path.basename(src).startswith(".codex_token_chart_public.json.")

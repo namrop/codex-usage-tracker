@@ -22,6 +22,12 @@ export interface SubsPanelState {
   loading: boolean;
 }
 
+export interface BurnPanelState {
+  data: any | null;
+  message: string | null;
+  contentVisible: boolean;
+}
+
 export interface BillingPanelState {
   data: any | null;
   message: string | null;
@@ -36,6 +42,7 @@ export interface DashboardState {
   donutFive: any | null;
   listPriceDay: any | null;
   subs: SubsPanelState;
+  burn: BurnPanelState;
   billing: BillingPanelState;
   providerStatusFeeds: Record<string, any> | null;
   refreshing: boolean;
@@ -47,6 +54,7 @@ const INITIAL_STATE: DashboardState = {
   donutFive: null,
   listPriceDay: null,
   subs: { data: null, notice: null, placeholder: false, loading: true },
+  burn: { data: null, message: "Loading window burn rate…", contentVisible: false },
   billing: { data: null, message: "Loading billing facts…", contentVisible: false },
   providerStatusFeeds: null,
   refreshing: false,
@@ -169,6 +177,33 @@ async function loadSubscriptions(set: Set): Promise<void> {
   }
 }
 
+async function loadBurn(set: Set): Promise<void> {
+  try {
+    const response = await fetch("/api/quota-burn?hours=6", { signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw new Error("unavailable");
+    const data = await response.json();
+    const series = Array.isArray(data.series) ? data.series : [];
+    if (!series.length) {
+      set((prev) => ({
+        ...prev,
+        burn: { data: null, message: "No actively-sampled windows in the last 6 hours.", contentVisible: false },
+      }));
+      return;
+    }
+    set((prev) => ({
+      ...prev,
+      burn: { data, message: null, contentVisible: true },
+    }));
+  } catch (error) {
+    set((prev) => {
+      if (prev.burn.contentVisible) {
+        return { ...prev, burn: { ...prev.burn, message: "Refresh failed — showing last good data." } };
+      }
+      return { ...prev, burn: { data: null, message: "Window burn rate unavailable.", contentVisible: false } };
+    });
+  }
+}
+
 async function loadBilling(set: Set): Promise<void> {
   try {
     const response = await fetch("/api/billing?days=30", { signal: AbortSignal.timeout(30000) });
@@ -223,6 +258,7 @@ export function useDashboardData(): { state: DashboardState; refresh: () => void
       await Promise.allSettled([
         loadUnifiedUsage(setState),
         loadSubscriptions(setState),
+        loadBurn(setState),
         loadBilling(setState),
         loadProviderStatusFeeds(setState),
       ]);

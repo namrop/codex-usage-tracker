@@ -12,7 +12,10 @@ Rates are USD per MILLION tokens. Entries marked ASSUMED were seeded
 model with no entry (and no provider default) counts as unpriced and is
 reported as coverage, never silently priced.
 
-Reasoning tokens bill at the output rate (the provider convention).
+Reasoning tokens are NOT billed on top of output tokens: canonical
+``output_tokens`` already includes reasoning (see README, "reasoning is
+diagnostic and is not added twice where canonical output already includes
+it"), so the estimate bills ``output_tokens`` alone at the output rate.
 """
 
 from __future__ import annotations
@@ -31,11 +34,18 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
     "anthropic": {
         "models": {
             "claude-fable-5": {"input": "10", "output": "50", "cache_read": "1.00", "cache_write": "12.50"},
+            # claude-fable-5-1: cache-read $0.25 confirmed from Anthropic's
+            # current published table (checked 2026-09-02); cache write
+            # follows the Fable-tier 1.25x-input convention used for
+            # claude-fable-5 above.
+            "claude-fable-5-1": {"input": "10", "output": "50", "cache_read": "0.25", "cache_write": "12.50"},
             "claude-opus-5": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},
             "claude-opus-4-8": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},
             "claude-opus-4-6": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},
-            # Introductory rate through 2026-08-31; rises to 3/15/0.30/3.75
-            # on Sep 1 — flip these four numbers then.
+            # Published rate as of 2026-09-02 is still 2/10/0.20/2.50 (the
+            # earlier "rises on Sep 1" note did not materialize in the
+            # published table). Re-verify against the live table before
+            # changing these four numbers.
             "claude-sonnet-5": {"input": "2", "output": "10", "cache_read": "0.20", "cache_write": "2.50"},
             "claude-sonnet-4-6": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.75"},
             "claude-haiku-4-5": {"input": "1", "output": "5", "cache_read": "0.10", "cache_write": "1.25"},
@@ -70,6 +80,16 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
             "glm-5.3": {"input": "1.40", "output": "4.40", "cache_read": "0.26", "cache_write": "0"},
         },
         "default": {"input": "1.40", "output": "4.40", "cache_read": "0.26", "cache_write": "0"},
+    },
+    # OpenCode Go is a subscription (no per-token bill); these are the
+    # underlying model's list rates (same as the zai glm-5.3 entry) used to
+    # estimate quota consumption. qwen3.7-max stays unpriced until a rate is
+    # known — no provider default, so it surfaces as coverage.
+    "opencode-go": {
+        "models": {
+            "glm-5.3": {"input": "1.40", "output": "4.40", "cache_read": "0.26", "cache_write": "0"},
+        },
+        "default": None,
     },
     # Moonshot list: K3 $3/$15, cache-hit input $0.30.
     "kimi-coding": {
@@ -126,10 +146,9 @@ def estimate_list_price(buckets: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         priced_tokens += tokens
         total += (
             Decimal(int(bucket.get("input_tokens") or 0)) * Decimal(rates["input"])
-            + (
-                Decimal(int(bucket.get("output_tokens") or 0))
-                + Decimal(int(bucket.get("reasoning_tokens") or 0))
-            ) * Decimal(rates["output"])
+            # output_tokens already includes reasoning — do not add
+            # reasoning_tokens on top (it is diagnostic only).
+            + Decimal(int(bucket.get("output_tokens") or 0)) * Decimal(rates["output"])
             + Decimal(int(bucket.get("cache_read_tokens") or 0)) * Decimal(rates["cache_read"])
             + Decimal(int(bucket.get("cache_write_tokens") or 0)) * Decimal(rates["cache_write"])
         ) / _MTOK

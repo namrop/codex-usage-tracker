@@ -1,7 +1,7 @@
 import type { Palette } from "../lib/palette";
 import { compactIntFormat } from "../lib/format";
 import { subscriptionUnifiedProviderColor } from "../lib/providers";
-import { quotaPercentFor, type QuotaRow } from "../lib/quota";
+import { quotaPercentFor, quotaRowProviderKey, type QuotaRow } from "../lib/quota";
 
 // Window throughput donut (keeper-ratified flow rework, akasan 2026-08-30).
 // One SOLID arc per provider (keeper-ruled 2026-08-30: the same-hue
@@ -42,7 +42,12 @@ export function Donut({ svgId, legendId, summaryId, legendAriaLabel, payload, qu
     );
   }
 
-  const providers = ((payload.by_provider || []) as any[]).filter((row) => Number(row.total_tokens) > 0);
+  // Usage rows may arrive raw or canonical; normalize once so
+  // provider_canonical is always the key for the color slot and the quota
+  // join (canonical when the API carries it, else the raw provider).
+  const providers = ((payload.by_provider || []) as any[])
+    .filter((row) => Number(row.total_tokens) > 0)
+    .map((row) => ({ ...row, provider_canonical: quotaRowProviderKey(row) || String(row.provider || "unknown") }));
   providers.sort((a, b) => Number(b.total_tokens) - Number(a.total_tokens));
   const windowTotal = providers.reduce((sum, row) => sum + Number(row.total_tokens), 0);
 
@@ -65,6 +70,7 @@ export function Donut({ svgId, legendId, summaryId, legendAriaLabel, payload, qu
   const legendRows: { key: string; color: string; provider: string; detail: string }[] = [];
   const minorRows: any[] = [];
   providers.forEach((row, index) => {
+    const canonical = String(row.provider_canonical);
     const color = subscriptionUnifiedProviderColor(palette, { provider: row.provider_canonical }, index);
     const span = Number(row.total_tokens) / windowTotal;
     // Noise fold (polish round item 4a): under 0.1% of window tokens a
@@ -77,7 +83,7 @@ export function Donut({ svgId, legendId, summaryId, legendAriaLabel, payload, qu
         d: donutArcPath(100, 100, 74, cursor + gap, Math.min(cursor + span - gap, 0.99999)),
         color,
         minor,
-        key: `${row.provider}-${index}`,
+        key: `${canonical}-${index}`,
       });
       cursor += span;
     }
@@ -89,11 +95,11 @@ export function Donut({ svgId, legendId, summaryId, legendAriaLabel, payload, qu
     const cachedShare = row.total_tokens
       ? ((Number(row.cached_tokens || 0) / Number(row.total_tokens)) * 100).toFixed(0)
       : "0";
-    const quota = quotaPercentFor(quotaLatest, row.provider_canonical, windowNames);
+    const quota = quotaPercentFor(quotaLatest, canonical, windowNames);
     const detail = quota
       ? ` ${share}% of window tokens · ${cachedShare}% cached · ${quota.pct.toFixed(0)}% of ${windowNoun} used${quota.accounts > 1 ? " (worst account)" : ""}`
       : ` ${share}% of window tokens · ${cachedShare}% cached`;
-    legendRows.push({ key: `${row.provider}-${index}`, color, provider: String(row.provider), detail });
+    legendRows.push({ key: `${canonical}-${index}`, color, provider: String(row.provider), detail });
   });
 
   const combined = minorRows.reduce((sum, row) => sum + Number(row.total_tokens), 0);
@@ -112,8 +118,8 @@ export function Donut({ svgId, legendId, summaryId, legendAriaLabel, payload, qu
           {arcs.map((arc) => (
             <path key={arc.key} d={arc.d} fill="none" stroke={arc.color} strokeWidth={arc.minor ? "10" : "30"} />
           ))}
-          <text x="100" y="96" textAnchor="middle" className="donut-centre">{compactIntFormat(windowTotal)}</text>
-          <text x="100" y="114" textAnchor="middle" className="donut-centre-caption">tokens</text>
+          <text x="100" y="96" textAnchor="middle" className="donut-center-value">{compactIntFormat(windowTotal)}</text>
+          <text x="100" y="114" textAnchor="middle" className="donut-center-caption">tokens</text>
         </svg>
         <ol id={legendId} className="donut-legend" aria-label={legendAriaLabel}>
           {legendRows.map((row) => (
@@ -121,7 +127,7 @@ export function Donut({ svgId, legendId, summaryId, legendAriaLabel, payload, qu
               <span className="swatch-dot" style={{ background: row.color }} />
               <div>
                 <strong>{row.provider}</strong>
-                <span>{row.detail}</span>
+                <span className="legend-detail">{row.detail}</span>
               </div>
             </li>
           ))}

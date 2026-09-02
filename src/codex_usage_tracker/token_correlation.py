@@ -141,8 +141,7 @@ def _load_token_windows(
                 ).fetchone()
                 if present is None:
                     continue
-                rows = conn.execute(
-                    f"""
+                query = f"""
                     SELECT
                         timestamp,
                         session_id,
@@ -161,13 +160,24 @@ def _load_token_windows(
                       AND timestamp >= ?
                       AND timestamp < ?
                     ORDER BY timestamp ASC
-                    """,
-                    (start_epoch, end_epoch),
-                ).fetchall()
+                    """
+                try:
+                    rows = conn.execute(query, (start_epoch, end_epoch)).fetchall()
+                except sqlite3.Error as exc:
+                    # The table exists but the query failed (renamed column,
+                    # schema drift, ...). Swallowing this produced silent
+                    # zero totals with exit 0; surface it instead.
+                    raise RuntimeError(
+                        f"usage-events query against {table} in {path} failed: {exc}"
+                    ) from exc
                 break
             finally:
                 conn.close()
+        except RuntimeError:
+            raise
         except sqlite3.Error:
+            # Could not open/inspect this candidate (unreadable file, not a
+            # database, ...) — fall through to the next candidate.
             continue
     if rows is None:
         return totals

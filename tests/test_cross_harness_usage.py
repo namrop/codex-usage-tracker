@@ -431,6 +431,236 @@ def test_codex_quota_nulls_and_opencode_partial_coverage(tmp_path):
     # Null weekly emits no row (keeper ruling 2026-08-30); the live window survives.
     assert len(facts)==1 and facts[0]["quota_name"]=="five_hour" and facts[0]["used_value"] == "20"
     assert all("raw_payload" not in f for f in facts)
-    quotas=derive_opencode_go_quotas([event(provider="opencode-go", harness="opencode", x_opencode_quota_cost_usd="3")],"ns:go",now=datetime(2026,7,12,tzinfo=timezone.utc))
+    # The window is anchored at first use, so ``now`` sits inside the window
+    # the 12:00 event opened.
+    quotas=derive_opencode_go_quotas([event(provider="opencode-go", harness="opencode", x_opencode_quota_cost_usd="3")],"ns:go",now=datetime(2026,7,12,13,tzinfo=timezone.utc))
     assert {q["quota_name"] for q in quotas}=={"five_hour","week","month"}
     assert all(q["measurement_confidence"]=="estimated" and q["x_coverage"]["harnesses_with_values"]==["opencode"] for q in quotas)
+    assert all(q["used_value"]=="3" and q["x_coverage"]["anchor"]=="first_use_estimate" for q in quotas)
+
+
+# --- OpenCode Go estimate: valuation and first-use anchored windows -------------
+
+
+def _go_event(event_id, occurred, **updates):
+    return event(
+        source_event_id=event_id,
+        provider="opencode-go",
+        occurred_at=occurred,
+        recorded_at=occurred,
+        **updates,
+    )
+
+
+def test_opencode_go_estimate_values_hermes_rows_at_list_price_and_counts_unpriced():
+    now = datetime(2026, 9, 2, 12, tzinfo=timezone.utc)
+    rows = [
+        # OpenCode harness: the provider's own quota cost wins.
+        _go_event("oc", "2026-09-02T10:00:00Z", harness="opencode", x_opencode_quota_cost_usd="0.5"),
+        # Hermes routes through opencode-go with no quota cost: list price
+        # (glm-5.3: 1.40 in / 4.40 out / 0.26 cache read per MTok). Canonical
+        # output_tokens already includes reasoning, so reasoning is NOT added.
+        _go_event(
+            "hermes-priced", "2026-09-02T10:30:00Z", harness="hermes",
+            model_requested="glm-5.3", model_reported="glm-5.3",
+            input_tokens=1_000_000, cache_read_tokens=1_000_000, cache_write_tokens=0,
+            output_tokens=1_000_000, reasoning_tokens=500_000,
+        ),
+        # A model with no rate is coverage, never silently priced.
+        _go_event(
+            "hermes-unpriced", "2026-09-02T11:00:00Z", harness="hermes",
+            model_requested="qwen-unpriced-model", model_reported=None,
+            input_tokens=10, output_tokens=10,
+        ),
+        # Another provider's row never counts.
+        event(source_event_id="zai", provider="zai", harness="hermes", occurred_at="2026-09-02T11:00:00Z"),
+    ]
+    quotas = {q["quota_name"]: q for q in derive_opencode_go_quotas(rows, "ns:go", now=now)}
+    five = quotas["five_hour"]
+    assert five["used_value"] == "6.56"  # 0.5 + (1.40 + 0.26 + 4.40)
+    assert five["remaining_value"] == "5.44"
+    assert five["unit"] == "usd" and five["measurement_confidence"] == "estimated"
+    assert five["window_kind"] == "rolling"
+    assert five["x_coverage"] == {
+        "status": "partial",
+        "anchor": "first_use_estimate",
+        "harnesses_with_values": ["hermes", "opencode"],
+        "valued_events": 2,
+        "unvalued_events": 1,
+        "list_priced_events": 1,
+    }
+
+
+def test_opencode_go_estimate_windows_anchor_at_first_use():
+    rows = [
+        _go_event("a", "2026-09-02T00:00:00Z", harness="opencode", x_opencode_quota_cost_usd="1"),
+        _go_event("b", "2026-09-02T04:59:00Z", harness="opencode", x_opencode_quota_cost_usd="2"),
+        # 05:30 is after the first five-hour window closed (05:00): it opens
+        # a new one, so a trailing slice would have counted b but the
+        # anchored window does not.
+        _go_event("c", "2026-09-02T05:30:00Z", harness="opencode", x_opencode_quota_cost_usd="4"),
+    ]
+    now = datetime(2026, 9, 2, 6, tzinfo=timezone.utc)
+    five = next(q for q in derive_opencode_go_quotas(rows, "ns:go", now=now) if q["quota_name"] == "five_hour")
+    assert five["used_value"] == "4"
+    assert five["window_started_at"] == "2026-09-02T05:30:00Z"
+    assert five["window_ends_at"] == five["resets_at"] == "2026-09-02T10:30:00Z"
+    assert five["x_coverage"]["valued_events"] == 1
+    # The week window opened with the first event and still holds all three.
+    week = next(q for q in derive_opencode_go_quotas(rows, "ns:go", now=now) if q["quota_name"] == "week")
+    assert week["used_value"] == "7"
+    assert week["window_started_at"] == "2026-09-02T00:00:00Z"
+    assert week["resets_at"] == "2026-09-09T00:00:00Z"
+
+
+def test_opencode_go_estimate_reports_no_open_window_without_fabricating_bounds():
+    rows = [_go_event("old", "2026-09-01T00:00:00Z", harness="opencode", x_opencode_quota_cost_usd="9")]
+    now = datetime(2026, 9, 2, 12, tzinfo=timezone.utc)
+    quotas = {q["quota_name"]: q for q in derive_opencode_go_quotas(rows, "ns:go", now=now)}
+    five = quotas["five_hour"]
+    assert five["used_value"] == "0" and five["remaining_value"] == "12"
+    assert five["window_started_at"] is None and five["window_ends_at"] is None and five["resets_at"] is None
+    assert five["x_coverage"]["valued_events"] == 0
+    # The week window is still open from that event.
+    assert quotas["week"]["used_value"] == "9"
+    # Future events (clock skew) and duplicate identities never count twice.
+    duplicated = rows + [dict(rows[0]), _go_event("future", "2026-09-03T00:00:00Z", harness="opencode", x_opencode_quota_cost_usd="1")]
+    again = {q["quota_name"]: q for q in derive_opencode_go_quotas(duplicated, "ns:go", now=now)}
+    assert again["week"]["used_value"] == "9"
+
+
+# --- Hermes sidecar: purpose translation and cost filing --------------------------
+
+
+def _sidecar_db(path, rows):
+    con = sqlite3.connect(path)
+    con.execute("""CREATE TABLE usage_events (
+      id INTEGER PRIMARY KEY, event_uid TEXT, timestamp REAL, harness TEXT, session_id TEXT, run_id TEXT,
+      source TEXT, purpose TEXT, record_kind TEXT, usage_source TEXT, measurement_confidence TEXT,
+      provider TEXT, model TEXT, api_mode TEXT, billing_base_url TEXT, billing_mode TEXT,
+      input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, cache_write_tokens INTEGER,
+      reasoning_tokens INTEGER, cost_usd_micro INTEGER, cost_status TEXT, cost_source TEXT,
+      pricing_version TEXT, latency_ms INTEGER, request_status TEXT, error_class TEXT, api_call_index INTEGER,
+      created_at REAL)""")
+    con.executemany("INSERT INTO usage_events VALUES (" + ",".join("?" * 30) + ")", rows)
+    con.commit(); con.close()
+
+
+def _sidecar_row(n, uid, *, purpose="main", micro=None, status="unknown"):
+    return (n, uid, 1783857600 + n, "hermes", f"s{n}", "r", "discord", purpose, "api_attempt", "provider_reported", "exact",
+            "zai", "glm-5.3", None, None, "", 10, 20, 0, 0, 5, micro, status, "none", None, None, "ok", None, 1, 1783857600 + n)
+
+
+def test_hermes_unmapped_aux_purpose_becomes_named_extension_and_keeps_raw_value(tmp_path):
+    db = tmp_path / "usage_events.db"
+    _sidecar_db(db, [
+        _sidecar_row(1, "u1", purpose="aux:summarization"),
+        _sidecar_row(2, "u2", purpose="aux:Odd Name/2"),
+        _sidecar_row(3, "u3", purpose="totally-unknown"),
+        _sidecar_row(4, "u4", purpose="aux:approval"),
+        _sidecar_row(5, "u5", purpose="background_review"),
+    ])
+    by = {r["source_event_id"]: r for r in collect_hermes_usage(db, "ns:hermes")}
+    # Every row validated (the lane no longer cedes on one raw aux value).
+    assert set(by) == {"u1", "u2", "u3", "u4", "u5"}
+    assert by["u1"]["purpose"] == "x_aux_summarization" and by["u1"]["x_aux_purpose"] == "aux:summarization"
+    assert by["u2"]["purpose"] == "x_aux_odd_name_2" and by["u2"]["x_aux_purpose"] == "aux:Odd Name/2"
+    assert by["u3"]["purpose"] == "other" and by["u3"]["x_aux_purpose"] == "totally-unknown"
+    # Exact matches and canonical values are untouched (and carry no extension:
+    # the live ledger already holds them without one).
+    assert by["u4"]["purpose"] == "x_aux_approval" and "x_aux_purpose" not in by["u4"]
+    assert by["u5"]["purpose"] == "background_review" and "x_aux_purpose" not in by["u5"]
+
+
+def test_hermes_sidecar_cost_is_filed_under_its_cost_status(tmp_path):
+    db = tmp_path / "usage_events.db"
+    _sidecar_db(db, [
+        _sidecar_row(1, "actual", micro=1_500_000, status="actual"),
+        _sidecar_row(2, "estimated", micro=250_000, status="estimated"),
+        _sidecar_row(3, "unknown", micro=750_000, status="unknown"),
+        _sidecar_row(4, "included", micro=750_000, status="included"),
+        _sidecar_row(5, "reconstructed", micro=10_000, status="reconstructed"),
+    ])
+    by = {r["source_event_id"]: r for r in collect_hermes_usage(db, "ns:hermes")}
+    assert by["actual"]["actual_cost_usd"] == "1.5" and by["actual"]["estimated_cost_usd"] is None
+    assert by["actual"]["cost_status"] == "actual" and "x_hermes_cost_usd" not in by["actual"]
+    assert by["estimated"]["estimated_cost_usd"] == "0.25" and by["estimated"]["actual_cost_usd"] is None
+    assert by["unknown"]["estimated_cost_usd"] is None and by["unknown"]["actual_cost_usd"] is None
+    assert by["unknown"]["cost_status"] == "unknown" and by["unknown"]["x_hermes_cost_usd"] == "0.75"
+    assert by["included"]["estimated_cost_usd"] is None and "x_hermes_cost_usd" not in by["included"]
+    assert by["reconstructed"]["cost_status"] == "estimated" and by["reconstructed"]["estimated_cost_usd"] == "0.01"
+
+
+# --- Claude transcripts: a malformed interior line skips only that file -----------
+
+
+def _write_transcript(path, lines):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.utime(path, (1_783_857_600, 1_783_857_600))
+
+
+def test_claude_malformed_interior_line_skips_that_file_only_and_reports_it(tmp_path):
+    root = tmp_path / "projects"
+    good = {"type": "assistant", "timestamp": "2026-07-12T12:00:00Z", "sessionId": "s", "message": {"id": "m1", "model": "claude-opus", "usage": {"input_tokens": 1, "output_tokens": 2}, "stop_reason": "end_turn"}}
+    _write_transcript(root / "a" / "good.jsonl", [json.dumps(good)])
+    _write_transcript(root / "b" / "torn.jsonl", [json.dumps(dict(good, sessionId="t")), "{torn interior", json.dumps(dict(good, sessionId="t2"))])
+    skipped = []
+    facts = list(collect_claude_usage(root, "ns:claude", skipped_files=skipped))
+    assert [f["session_id"] for f in facts] == ["s"]
+    assert skipped == [{"path": str(root / "b" / "torn.jsonl"), "line": 2, "error": skipped[0]["error"]}]
+    # The generator's return value carries the same diagnostics for callers
+    # that only materialize the stream.
+    generator = collect_claude_usage(root, "ns:claude")
+    while True:
+        try:
+            next(generator)
+        except StopIteration as stop:
+            assert [entry["line"] for entry in stop.value["skipped_files"]] == [2]
+            break
+
+
+# --- Codex spark windows never emit all-None observations --------------------------
+
+
+def test_codex_spark_window_without_a_value_emits_no_row(tmp_path):
+    ledger = tmp_path / "codex.jsonl"
+    ledger.write_text(json.dumps({
+        "id": "snap", "fetched_at": "2026-07-12T12:00:00Z",
+        "session_used_pct": 20, "weekly_used_pct": 30,
+        "spark_session_used_pct": None, "spark_weekly_used_pct": 5,
+    }) + "\n")
+    facts = {f["quota_name"]: f for f in codex_quota_observations(ledger, "ns:codex")}
+    assert set(facts) == {"five_hour", "week", "spark_week"}
+    assert facts["spark_week"]["used_value"] == "5"
+
+
+# --- OpenRouter: an overdrawn account is an observation, not a ceded lane --------------
+
+
+def test_openrouter_overdraft_clamps_canonical_remaining_and_keeps_the_signed_figure(monkeypatch):
+    from codex_usage_tracker import quota as quota_module
+
+    class Response:
+        def __init__(self, data): self._data = data
+        def raise_for_status(self): pass
+        def json(self): return self._data
+
+    class Client:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get(self, url, headers):
+            if url == quota_module.OPENROUTER_CREDITS_URL:
+                return Response({"data": {"total_credits": 10, "total_usage": 12.5}})
+            return Response({"data": {"limit": 5, "limit_remaining": -3.5, "usage": 8.5}})
+
+    monkeypatch.setattr(quota_module.httpx, "Client", Client)
+    rows = {r["quota_name"]: r for r in quota_module.collect_openrouter_quota("sk-private-secret", "ns:or", observed_at="2026-09-02T12:00:00Z")}
+    credit = rows["credit_balance"]
+    assert credit["remaining_value"] == "0" and credit["used_value"] == "12.5"
+    assert credit["x_provider_balance"] == "-2.5" and credit["x_overdrawn"] is True
+    key = rows["api_key_quota"]
+    assert key["remaining_value"] == "0" and key["x_provider_limit_remaining"] == "-3.5"
+    assert key["x_overdrawn"] is True
+    assert "sk-private-secret" not in json.dumps(rows)

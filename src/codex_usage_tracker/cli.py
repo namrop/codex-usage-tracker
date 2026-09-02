@@ -165,6 +165,9 @@ def cmd_commit_ledger(args: argparse.Namespace) -> int:
 
 
 def cmd_write_public_projection(args: argparse.Namespace) -> int:
+    if getattr(args, "no_public_projection", False):
+        print("public_projection: skipped (--no-public-projection)")
+        return 0
     ledger_path = _resolve_ledger_path(args.atrium_root, args.ledger)
     try:
         output_path = write_public_projection(
@@ -307,6 +310,8 @@ def cmd_collect_all(args: argparse.Namespace) -> int:
             codex_quota_history=args.codex_quota_history,
             codex_quota_history_since=args.codex_quota_history_since,
             strict_sources=args.strict_sources,
+            quota_lanes=args.quota_lanes,
+            when_active=args.when_active,
         )
     except Exception as exc:
         print(f"collect-all failed: {type(exc).__name__}", file=sys.stderr)
@@ -637,6 +642,27 @@ def main() -> int:
         help="Skip the Claude Code /usage probe and provider network quota fetches",
     )
     collect_parser.add_argument("--dry-run", action="store_true", help="Validate and summarize without ledger writes")
+    collect_parser.add_argument(
+        "--quota-lanes",
+        dest="quota_lanes",
+        action="append",
+        default=None,
+        metavar="SOURCE",
+        help=(
+            "Collect only the named quota lanes (repeatable; e.g. "
+            "claude_code_quota / claude_code_secondary_quota); other lanes "
+            "report zero rows without probing"
+        ),
+    )
+    collect_parser.add_argument(
+        "--when-active",
+        action="store_true",
+        help=(
+            "Gate live Claude quota probes on the account's own five-hour "
+            "window showing active burn in the quota ledger (five-minute "
+            "active-window tick)"
+        ),
+    )
     collect_parser.set_defaults(func=cmd_collect_all)
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Run the web dashboard")

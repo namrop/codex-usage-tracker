@@ -2,7 +2,8 @@ import type { Palette } from "./palette";
 
 // Providers pin fixed slots of the rank set (nearest-hue to the retired
 // literal map) so a provider keeps one color across renders; unmapped
-// providers fall through by index.
+// providers walk the UNCLAIMED slots by index (below), so they never wear
+// a mapped provider's color.
 export const SUBSCRIPTION_UNIFIED_PROVIDER_RANK: Readonly<Record<string, number>> = Object.freeze({
   "openai-codex": 0,
   "anthropic": 5,
@@ -10,6 +11,14 @@ export const SUBSCRIPTION_UNIFIED_PROVIDER_RANK: Readonly<Record<string, number>
   "z-ai-glm": 7,
   "kimi-k3-coding": 2,
 });
+
+// The rank set has ten members (rank-1 … rank-10, indexed 0–9); these are
+// the slots the map above leaves free — 1, 4, 6, 8, 9 as of this writing —
+// derived rather than listed so a change to the map cannot desynchronize.
+export const SUBSCRIPTION_UNIFIED_UNCLAIMED_RANK_SLOTS: readonly number[] = Object.freeze(
+  Array.from({ length: 10 }, (_unused, slot) => slot)
+    .filter((slot) => !Object.values(SUBSCRIPTION_UNIFIED_PROVIDER_RANK).includes(slot)),
+);
 
 // Display-label mapping ONLY (polish round item 1): the unified utilization
 // legends read "Claude 1", "Codex", … instead of the full series labels that
@@ -68,12 +77,19 @@ export function providerKey(provider: unknown): string {
 
 export function subscriptionUnifiedProviderColor(
   palette: Palette,
-  row: { provider?: unknown } | null | undefined,
+  row: { provider?: unknown; provider_canonical?: unknown } | null | undefined,
   index: number,
 ): string {
-  const provider = String((row && row.provider) || "").trim().toLowerCase();
+  const canonical = row && row.provider_canonical;
+  const provider = String((canonical !== null && canonical !== undefined && canonical !== "" ? canonical : row && row.provider) || "")
+    .trim()
+    .toLowerCase();
   const rank = SUBSCRIPTION_UNIFIED_PROVIDER_RANK[provider];
   if (rank !== undefined && palette.rankColors[rank]) return palette.rankColors[rank];
+  // Unmapped: cycle the free slots only, so no collision with a pinned one.
+  const free = SUBSCRIPTION_UNIFIED_UNCLAIMED_RANK_SLOTS;
+  const slot = free.length ? free[((index % free.length) + free.length) % free.length] : undefined;
+  if (slot !== undefined && palette.rankColors[slot]) return palette.rankColors[slot];
   return palette.modelColors[index % palette.modelColors.length];
 }
 

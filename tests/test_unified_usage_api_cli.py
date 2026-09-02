@@ -1186,7 +1186,8 @@ def test_freshness_names_the_stale_lane_behind_a_healthy_heartbeat(tmp_path, mon
     freshness = client.get("/api/unified-usage?hours=3").get_json()["freshness"]
 
     assert freshness["status"] == "stale"
-    assert freshness["stale_lanes"] == ["claude_code_secondary", "opencode"]
+    assert freshness["stale_lanes"] == ["opencode"]
+    assert freshness["never_lanes"] == ["claude_code_secondary"]
     by_lane = {lane["lane"]: lane for lane in freshness["lanes"]}
     assert by_lane["claude_code_secondary"]["status"] == "never"
     assert by_lane["claude_code_secondary"]["age_seconds"] is None
@@ -1397,11 +1398,15 @@ def test_unified_usage_hour_windows_carry_daily_list_price_estimates(tmp_path, m
 
     payload = client.get("/api/unified-usage?hours=168").get_json()
     daily = payload["list_price_daily"]
+    # UTC calendar days: hours=168 ending 12:00Z spans eight dates, the first
+    # and last partial. 24-hour slices anchored at the window start were
+    # retired with the date labels (2026-09-02).
     assert [entry["day_start"] for entry in daily] == [
-        "2026-07-07T12:00:00Z", "2026-07-08T12:00:00Z", "2026-07-09T12:00:00Z",
-        "2026-07-10T12:00:00Z", "2026-07-11T12:00:00Z", "2026-07-12T12:00:00Z",
-        "2026-07-13T12:00:00Z",
+        "2026-07-07T00:00:00Z", "2026-07-08T00:00:00Z", "2026-07-09T00:00:00Z",
+        "2026-07-10T00:00:00Z", "2026-07-11T00:00:00Z", "2026-07-12T00:00:00Z",
+        "2026-07-13T00:00:00Z", "2026-07-14T00:00:00Z",
     ]
+    assert [entry["partial"] for entry in daily] == [True] + [False] * 6 + [True]
     # claude-sonnet-5 input lists at $2/MTok; glm-5.3 output at $4.40/MTok.
     assert daily[0]["estimate_usd"] == "2.00"
     assert daily[0]["priced_token_share"] == 1.0
@@ -1412,6 +1417,7 @@ def test_unified_usage_hour_windows_carry_daily_list_price_estimates(tmp_path, m
     # another day's share.
     assert daily[6]["unpriced_providers"] == ["mystery-lab"]
     assert 0.4 < daily[6]["priced_token_share"] < 0.6
+    assert daily[7]["estimate_usd"] == "0.00"
     # The weekly total the tile shows still rides totals.list_price.
     assert payload["totals"]["list_price"]["estimate_usd"] == "6.40"
     # Day-window queries have no hour-anchored series and carry no array.
@@ -1550,9 +1556,12 @@ def test_provider_status_series_buckets_traffic_errors_and_dominant_class(
     status = {row["provider"]: row for row in series["provider_status_series"]}
 
     # Busiest provider first, so the strip's row order is deterministic.
-    assert [row["provider"] for row in series["provider_status_series"]] == ["zai", "anthropic"]
+    # Rows key on the canonical provider id ("zai" raw -> "z-ai-glm"), so
+    # the strip joins to the quota cards without an alias table in the
+    # browser (2026-09-02).
+    assert [row["provider"] for row in series["provider_status_series"]] == ["z-ai-glm", "anthropic"]
 
-    zai = status["zai"]
+    zai = status["z-ai-glm"]
     assert zai["events"] == [2, 4, 2]
     assert zai["errors"] == [0, 3, 1]
     assert zai["top_error_classes"] == [None, "APITimeoutError", None]
@@ -1622,8 +1631,10 @@ def test_substituted_events_never_counts_a_null_reported_model(tmp_path, monkeyp
     data = client.get("/api/unified-usage?hours=3").get_json()
     assert data["window"]["event_count"] == 4
     assert data["totals"]["substituted_events"] == 1
+    # by_provider groups on the canonical id (raw "zai" -> "z-ai-glm"), so
+    # the substitution watch joins to the same provider arc as the donut.
     assert {row["provider"]: row["substituted_events"] for row in data["by_provider"]} == {
-        "zai": 1
+        "z-ai-glm": 1
     }
 
 
@@ -2062,7 +2073,7 @@ def test_collect_all_uses_estimate_without_calling_network_for_partial_opencode_
 
 @pytest.mark.parametrize(
     ("failure_mode", "expected_error"),
-    [("exception", "RuntimeError"), ("empty", "ValueError")],
+    [("exception", "RuntimeError"), ("empty", "EmptyLaneResult")],
 )
 def test_collect_all_falls_back_to_estimated_opencode_go_after_exact_failure(
     tmp_path, monkeypatch, failure_mode, expected_error
@@ -2363,7 +2374,9 @@ def test_readme_documents_private_ai_dashboard_and_new_projection_compatibility_
     assert "--unified-usage-ledger" in readme
     assert "AI Usage" in readme
     assert "hours=1..168" in readme
-    assert "provider=openai-codex" in readme
+    # The retired comparison chart pinned these provider/harness keys; the
+    # canonical-provider rework (2026-09-02) carries them in the quota paths
+    # instead, so they are no longer README phrases.
     assert "harness=claude_code" in readme
     assert "Do not publish" in readme
     assert "write-public-projection" in readme

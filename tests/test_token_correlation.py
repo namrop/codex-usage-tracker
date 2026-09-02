@@ -4,6 +4,8 @@ import json
 import sqlite3
 from datetime import datetime
 
+import pytest
+
 from codex_usage_tracker.dashboard import create_app
 from codex_usage_tracker.public_projection import build_public_projection
 from codex_usage_tracker.token_correlation import build_token_correlation_rows, resolve_state_db_path
@@ -230,6 +232,59 @@ def test_legacy_state_db_without_event_ledger_returns_zero_totals(tmp_path):
     assert first["total_tokens"] == 0
     assert first["usage_source"] is None
     assert first["measurement_confidence"] is None
+
+
+def test_schema_drift_in_event_table_raises_instead_of_silent_zeros(tmp_path):
+    """A present table whose query fails (renamed column) must not degrade to zero
+    totals with exit 0 — it must raise a clear error naming the query and cause."""
+    state_db = tmp_path / "state.db"
+    conn = sqlite3.connect(state_db)
+    # Same table name the reader looks for, but `timestamp` renamed to `ts`.
+    conn.execute(
+        """
+        CREATE TABLE llm_usage_events (
+            ts REAL NOT NULL,
+            session_id TEXT,
+            provider TEXT,
+            model TEXT,
+            api_call_index INTEGER,
+            record_kind TEXT,
+            usage_source TEXT,
+            measurement_confidence TEXT,
+            input_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cache_write_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            reasoning_tokens INTEGER DEFAULT 0
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(RuntimeError) as excinfo:
+        build_token_correlation_rows(_usage_rows(), state_db_path=str(state_db))
+
+    message = str(excinfo.value)
+    assert "usage-events query against llm_usage_events" in message
+    assert str(state_db) in message
+    assert "no such column" in message
+    assert isinstance(excinfo.value.__cause__, sqlite3.Error)
+
+
+def test_sidecar_schema_drift_raises_even_when_legacy_table_exists(tmp_path):
+    """The sidecar is preferred; if it is present but broken we must not silently
+    fall through to the legacy table and report stale/zero numbers."""
+    state_db = tmp_path / "state.db"
+    _make_event_state_db(state_db)
+    sidecar = tmp_path / "usage_events.db"
+    conn = sqlite3.connect(sidecar)
+    conn.execute("CREATE TABLE usage_events (ts REAL, provider TEXT)")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="usage-events query against usage_events"):
+        build_token_correlation_rows(_usage_rows(), state_db_path=str(state_db))
 
 
 def test_build_token_correlation_rows_marks_reset_drops_without_tokens_per_pct(tmp_path):

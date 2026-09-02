@@ -121,6 +121,9 @@ def commit_ledger(
         return CommitResult(False, f"No staged ledger changes after add ({relative_ledger}; rows={rows}).")
 
     _run_git(root, ["diff", "--cached", "--check"])
-    _run_git(root, ["commit", "-m", message])
+    # Pathspec commit: builds the commit from HEAD plus only the named path,
+    # so anything another lane stages between the check above and this call
+    # is neither swept in nor disturbed.
+    _run_git(root, ["commit", "-m", message, "--", relative_ledger])
     sha = _run_git(root, ["rev-parse", "--short", "HEAD"]).stdout.strip()
     return CommitResult(True, f"Committed {relative_ledger} (rows={rows}).", sha)

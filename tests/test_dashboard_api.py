@@ -741,7 +741,7 @@ def test_subscription_unavailable_path_renders_expected_provider_placeholders():
     assert "const contentVisible = !subs.loading && (Boolean(data) || subs.placeholder);" in card
 
     subs_loader = hook.split("async function loadSubscriptions", 1)[1].split(
-        "async function loadBilling", 1
+        "async function loadBurn", 1
     )[0]
     catch_branch = subs_loader.split("} catch (error) {", 1)[1]
     assert '"Subscription data unavailable."' in catch_branch
@@ -1507,12 +1507,24 @@ def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_rat
             remaining_value="1",
         ),
         observation(
-            "missing-ratio",
+            "impossible-ratio",
             "five_hour",
             "2026-08-05T10:20:00Z",
             "openai",
+            used_value="120",
+            remaining_value="0",
+        ),
+        # A historical all-null observation (no used, no remaining, no
+        # provider_state, no coverage) is not chart input: it is neither an
+        # unavailable series nor counted, the same rule ``latest`` applies.
+        observation(
+            "retired-null-window",
+            "session",
+            "2026-08-05T10:21:00Z",
+            "openai",
             used_value=None,
             remaining_value=None,
+            limit_value=None,
         ),
         observation(
             "claude-week",
@@ -1531,12 +1543,12 @@ def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_rat
             remaining_value="60",
         ),
         observation(
-            "go-week-missing",
+            "go-week-impossible",
             "week",
             "2026-08-05T10:35:00Z",
             "opencode-go",
-            used_value=None,
-            remaining_value=None,
+            used_value="120",
+            remaining_value="0",
         ),
         observation(
             "z-week",
@@ -1627,6 +1639,10 @@ def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_rat
     assert hermes_week["sample_count"] == 1
     assert hermes_week["confidence_status"] == "estimated"
     assert {row["quota_name"] for row in openai["unavailable_series"]} == {"five_hour"}
+    # Six openai-family rows are in-window and informative; the all-null
+    # "session" row is neither counted nor projected.
+    assert openai["observation_count"] == 6
+    assert "session" not in json.dumps(openai)
     five_hour = openai["unavailable_series"][0]
     assert five_hour == {
         "confidence_status": "exact",
@@ -1836,11 +1852,22 @@ def test_unified_five_hour_handles_one_series_and_missing_or_invalid_primary_dat
             remaining_value="75",
             limit_value="100",
         ),
+        # Present but impossible (used > limit): reported, not comparable.
         _quota_observation(
             "invalid-claude-five",
             "five_hour",
             provider="anthropic",
             observed_at="2026-08-05T11:20:00Z",
+            used_value="120",
+            remaining_value="0",
+            limit_value="100",
+        ),
+        # All-null: not reported at all as far as the chart is concerned.
+        _quota_observation(
+            "null-zai-five",
+            "five_hour",
+            provider="zai",
+            observed_at="2026-08-05T11:25:00Z",
             used_value=None,
             remaining_value=None,
             limit_value="100",
@@ -2402,3 +2429,528 @@ def test_page_and_apis_are_never_browser_cached(tmp_path):
     # ETag) — acceptable; the load-bearing claim is that it is NOT no-store.
     static = client.get("/static/vendor/chart.umd.min.js")
     assert static.headers.get("Cache-Control", "") != "no-store"
+
+
+# ── Backend fixes 2026-09-02 ─────────────────────────────────────────────
+
+
+class _FrozenNoon(datetime):
+    """2026-07-14T12:34:56Z, so an hours window ends at 12:00Z."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 7, 14, 12, 34, 56, tzinfo=tz)
+
+
+def _unified_client(tmp_path, rows):
+    ledger = tmp_path / "unified.jsonl"
+    ledger.write_text("\n".join(canonical_json(row) for row in rows) + "\n", encoding="utf-8")
+    return create_app(
+        atrium_root=str(tmp_path),
+        ledger=str(tmp_path / "codex.jsonl"),
+        unified_usage_ledger=str(ledger),
+    ).test_client()
+
+
+def _window_fact(source_id, occurred_at, provider, **updates):
+    row = _unified_usage_fact(
+        source_id,
+        occurred_at=occurred_at,
+        recorded_at=occurred_at,
+        provider=provider,
+        input_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        output_tokens=0,
+        reasoning_tokens=0,
+    )
+    row.update(updates)
+    return row
+
+
+def test_unified_usage_groups_providers_by_canonical_id_and_keeps_raw_ids(tmp_path, monkeypatch):
+    """"openai" and "openai-codex" are one subscription: one donut arc, one
+    status-strip row. The ledger view (by_provider_model) keeps the raw key
+    but names the canonical one so the two tables can join."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenNoon)
+    client = _unified_client(
+        tmp_path,
+        [
+            _window_fact("codex-raw", "2026-07-14T09:10:00Z", "openai", input_tokens=10,
+                         cache_read_tokens=4, model_requested="gpt-5"),
+            _window_fact("codex-canon", "2026-07-14T10:10:00Z", "openai-codex", input_tokens=20,
+                         model_requested="gpt-5", request_status="error", error_class="rate_limit"),
+            _window_fact("zai", "2026-07-14T10:20:00Z", "zai", output_tokens=3, model_requested="glm-5.3"),
+            _window_fact("z-ai", "2026-07-14T11:20:00Z", "z-ai", output_tokens=5, model_requested="glm-5.3"),
+            _window_fact("kimi", "2026-07-14T11:30:00Z", "kimi-coding", output_tokens=1, model_requested="k3"),
+            _window_fact("claude", "2026-07-14T11:40:00Z", "anthropic", output_tokens=2, model_requested="claude"),
+        ],
+    )
+
+    data = client.get("/api/unified-usage?hours=3").get_json()
+
+    by_provider = {row["provider"]: row for row in data["by_provider"]}
+    assert [row["provider"] for row in data["by_provider"]] == [
+        "openai-codex", "z-ai-glm", "anthropic", "kimi-k3-coding",
+    ]
+    codex = by_provider["openai-codex"]
+    assert codex["provider_canonical"] == "openai-codex"
+    assert codex["provider_raw_ids"] == ["openai", "openai-codex"]
+    assert codex["events"] == 2
+    assert codex["total_tokens"] == 34 and codex["cached_tokens"] == 4 and codex["fresh_tokens"] == 30
+    assert by_provider["z-ai-glm"]["provider_raw_ids"] == ["z-ai", "zai"]
+    assert by_provider["z-ai-glm"]["total_tokens"] == 8
+    assert by_provider["kimi-k3-coding"]["provider_raw_ids"] == ["kimi-coding"]
+    assert all(row["provider"] == row["provider_canonical"] for row in data["by_provider"])
+
+    # The ledger view stays keyed by the raw provider but can join to the
+    # canonical rows.
+    ledger_rows = {(row["provider"], row["model"]): row for row in data["by_provider_model"]}
+    assert ledger_rows[("openai", "gpt-5")]["provider_canonical"] == "openai-codex"
+    assert ledger_rows[("openai-codex", "gpt-5")]["provider_canonical"] == "openai-codex"
+    assert ledger_rows[("zai", "glm-5.3")]["provider_canonical"] == "z-ai-glm"
+    assert ledger_rows[("z-ai", "glm-5.3")]["provider_canonical"] == "z-ai-glm"
+
+    status = {row["provider"]: row for row in data["time_series"]["provider_status_series"]}
+    assert set(status) == {"openai-codex", "z-ai-glm", "anthropic", "kimi-k3-coding"}
+    assert status["openai-codex"]["provider_canonical"] == "openai-codex"
+    assert status["openai-codex"]["provider_raw_ids"] == ["openai", "openai-codex"]
+    assert status["openai-codex"]["events"] == [1, 1, 0]
+    assert status["openai-codex"]["errors"] == [0, 1, 0]
+    assert status["openai-codex"]["input_tokens"] == [10, 20, 0]
+    assert status["openai-codex"]["cache_read_tokens"] == [4, 0, 0]
+    assert status["openai-codex"]["dominant_error_class"] == "rate_limit"
+    assert status["z-ai-glm"]["events"] == [0, 1, 1]
+    assert status["z-ai-glm"]["provider_raw_ids"] == ["z-ai", "zai"]
+
+
+def test_provider_status_feed_map_is_resolvable_by_canonical_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(dashboard_module, "_provider_status_cache", {})
+    monkeypatch.setattr(
+        dashboard_module,
+        "_fetch_status_feed",
+        lambda url, timeout=6.0: {
+            "status": {"indicator": "none", "description": "ok"},
+            "incidents": [],
+        },
+    )
+
+    snapshot = dashboard_module._provider_status_snapshot(1000.0)
+    for provider, url in dashboard_module._PROVIDER_STATUS_FEEDS.items():
+        canonical = dashboard_module._canonical_quota_provider(provider)
+        # Raw keys survive; the canonical key resolves to the same feed.
+        assert snapshot[provider]["feed_url"] == url
+        assert snapshot[canonical]["feed_url"] == url
+    assert snapshot["openai-codex"]["feed_url"] == snapshot["openai"]["feed_url"]
+    assert snapshot["kimi-k3-coding"]["feed_url"].startswith("https://status.moonshot.cn")
+    assert snapshot["anthropic"]["indicator"] == "none"
+    # Nothing has a z-ai-glm feed, so the canonical key is honestly absent.
+    assert "z-ai-glm" not in snapshot
+
+    providers = create_app(ledger=str(tmp_path / "codex.jsonl")).test_client().get(
+        "/api/provider-status"
+    ).get_json()["providers"]
+    assert {"openai", "openai-codex", "anthropic", "kimi-coding", "kimi-k3-coding"} <= set(providers)
+
+
+def test_list_price_daily_buckets_by_utc_calendar_day_and_flags_partial_days(tmp_path, monkeypatch):
+    """The UI labels each entry as a calendar date, so entries must BE calendar
+    days: hours=168 ending 12:00Z spans eight UTC dates, the first and last
+    only partly covered. Traffic at 13:00Z on 07-13 lands on 07-13, not on a
+    12:00Z-anchored slice that straddles two dates."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenNoon)
+    client = _unified_client(
+        tmp_path,
+        [
+            # First (partial) day: window starts 07-07T12:00Z.
+            _window_fact("day0", "2026-07-07T13:00:00Z", "anthropic",
+                         model_requested="claude-sonnet-5", model_reported="claude-sonnet-5",
+                         input_tokens=1_000_000),
+            # Before the window: same date, must not be priced.
+            _window_fact("day0-early", "2026-07-07T11:00:00Z", "anthropic",
+                         model_requested="claude-sonnet-5", model_reported="claude-sonnet-5",
+                         input_tokens=1_000_000),
+            # A full middle day, late in the evening — stays on 07-13.
+            _window_fact("day6", "2026-07-13T23:30:00Z", "zai", model_requested="glm-5.3",
+                         model_reported="glm-5.3", output_tokens=1_000_000),
+            _window_fact("day6-unpriced", "2026-07-13T14:00:00Z", "mystery-lab",
+                         model_requested="whoknows", input_tokens=1_000_000),
+            # Last (partial) day: [07-14T00:00Z, 07-14T12:00Z).
+            _window_fact("day7", "2026-07-14T01:00:00Z", "anthropic",
+                         model_requested="claude-sonnet-5", model_reported="claude-sonnet-5",
+                         input_tokens=1_000_000),
+            # At series_end: not in the window at all.
+            _window_fact("day7-late", "2026-07-14T12:00:00Z", "anthropic",
+                         model_requested="claude-sonnet-5", model_reported="claude-sonnet-5",
+                         input_tokens=1_000_000),
+        ],
+    )
+
+    daily = client.get("/api/unified-usage?hours=168").get_json()["list_price_daily"]
+
+    assert [entry["day_start"] for entry in daily] == [
+        f"2026-07-{day:02d}T00:00:00Z" for day in range(7, 15)
+    ]
+    assert [entry["partial"] for entry in daily] == [True] + [False] * 6 + [True]
+    assert daily[0]["estimate_usd"] == "2.00"
+    assert daily[0]["priced_token_share"] == 1.0
+    assert daily[0]["unpriced_providers"] == []
+    assert [entry["estimate_usd"] for entry in daily[1:6]] == ["0.00"] * 5
+    assert daily[6]["estimate_usd"] == "4.40"
+    assert daily[6]["unpriced_providers"] == ["mystery-lab"]
+    assert 0.4 < daily[6]["priced_token_share"] < 0.6
+    assert daily[7]["estimate_usd"] == "2.00"
+    for entry in daily:
+        assert set(entry) >= {"day_start", "partial", "estimate_usd", "priced_token_share", "unpriced_providers"}
+
+    # A window that crosses one midnight yields two partial days.
+    class FrozenSmallHours(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 2, 10, 0, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenSmallHours)
+    daily = client.get("/api/unified-usage?hours=3").get_json()["list_price_daily"]
+    assert [(entry["day_start"], entry["partial"]) for entry in daily] == [
+        ("2026-07-13T00:00:00Z", True),
+        ("2026-07-14T00:00:00Z", True),
+    ]
+    # Complete hours [23:00Z, 02:00Z): the 23:30 glm fact stays on 07-13,
+    # the 01:00Z sonnet fact lands on 07-14 — each on its own calendar
+    # date, no day straddling. (The 14:00Z mystery fact is out of window.)
+    assert daily[0]["estimate_usd"] == "4.40"
+    assert daily[0]["unpriced_providers"] == []
+    assert daily[1]["estimate_usd"] == "2.00"
+
+
+def _lane_health_payload(**last_success_at):
+    return {
+        "schema_version": 1,
+        "scope": "usage",
+        "updated_at": "2026-07-14T12:30:00Z",
+        "lanes": {
+            lane: {
+                "last_run_at": "2026-07-14T12:30:00Z",
+                "last_success_at": value,
+                "last_error_class": None if value else "AuthError",
+                "rows_written": 0 if value is None else 3,
+                "quarantined_count": 0,
+            }
+            for lane, value in last_success_at.items()
+        },
+    }
+
+
+def _freshness_for(tmp_path, monkeypatch, lane_health):
+    import os
+
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenNoon)
+    usage = tmp_path / "unified.jsonl"
+    usage.write_text("", encoding="utf-8")
+    health = tmp_path / "health"
+    health.mkdir(exist_ok=True)
+    heartbeat = health / "usage-collect.ok"
+    heartbeat.touch()
+    stamp = datetime(2026, 7, 14, 12, 30, 0, tzinfo=timezone.utc).timestamp()
+    os.utime(heartbeat, (stamp, stamp))
+    (health / "lanes-usage.json").write_text(json.dumps(lane_health), encoding="utf-8")
+    client = create_app(unified_usage_ledger=str(usage)).test_client()
+    return client.get("/api/unified-usage?hours=3").get_json()["freshness"]
+
+
+def test_a_lane_that_never_succeeded_is_listed_but_does_not_stale_the_surface(tmp_path, monkeypatch):
+    """A lane registered before its credentials exist has no history to go
+    stale from. It stays visible under its own key; every chart stays up."""
+    freshness = _freshness_for(
+        tmp_path,
+        monkeypatch,
+        _lane_health_payload(hermes="2026-07-14T12:30:00Z", claude_code_secondary=None),
+    )
+
+    assert freshness["status"] == "fresh"
+    assert freshness["stale_lanes"] == []
+    assert freshness["never_lanes"] == ["claude_code_secondary"]
+    by_lane = {lane["lane"]: lane for lane in freshness["lanes"]}
+    assert by_lane["claude_code_secondary"]["status"] == "never"
+    assert by_lane["claude_code_secondary"]["age_seconds"] is None
+    assert by_lane["claude_code_secondary"]["last_error_class"] == "AuthError"
+    assert by_lane["hermes"]["status"] == "fresh"
+
+
+def test_a_lane_that_succeeded_then_went_quiet_still_stales_the_surface(tmp_path, monkeypatch):
+    freshness = _freshness_for(
+        tmp_path,
+        monkeypatch,
+        _lane_health_payload(
+            hermes="2026-07-14T12:30:00Z",
+            opencode="2026-07-11T12:30:00Z",
+            claude_code_secondary=None,
+        ),
+    )
+
+    assert freshness["status"] == "stale"
+    assert freshness["stale_lanes"] == ["opencode"]
+    assert freshness["never_lanes"] == ["claude_code_secondary"]
+    by_lane = {lane["lane"]: lane for lane in freshness["lanes"]}
+    assert by_lane["opencode"]["status"] == "stale"
+    assert by_lane["claude_code_secondary"]["status"] == "never"
+
+
+@pytest.mark.parametrize("route", ["/api/unified-usage", "/api/subscriptions", "/api/billing"])
+@pytest.mark.parametrize("query", ["days=0", "days=-1", "days=0&before=2026-07-14T12:00:00Z"])
+def test_private_reads_reject_zero_and_negative_day_windows(tmp_path, route, query):
+    """days=0 was accepted and produced a page whose next_before equalled
+    before — a cursor that never advances."""
+    for name in ("unified.jsonl", "quota.jsonl", "billing.jsonl"):
+        (tmp_path / name).write_text("", encoding="utf-8")
+    client = create_app(
+        ledger=str(tmp_path / "codex.jsonl"),
+        unified_usage_ledger=str(tmp_path / "unified.jsonl"),
+        quota_ledger=str(tmp_path / "quota.jsonl"),
+        billing_ledger=str(tmp_path / "billing.jsonl"),
+    ).test_client()
+
+    response = client.get(f"{route}?{query}")
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "days must be at least 1"
+    assert client.get(f"{route}?days=1").status_code == 200
+
+
+@pytest.mark.parametrize("route", ["/api/unified-usage", "/api/subscriptions"])
+def test_hour_windows_below_one_are_rejected(tmp_path, route):
+    for name in ("unified.jsonl", "quota.jsonl"):
+        (tmp_path / name).write_text("", encoding="utf-8")
+    client = create_app(
+        ledger=str(tmp_path / "codex.jsonl"),
+        unified_usage_ledger=str(tmp_path / "unified.jsonl"),
+        quota_ledger=str(tmp_path / "quota.jsonl"),
+    ).test_client()
+
+    for query in ("hours=0", "hours=-1"):
+        response = client.get(f"{route}?{query}")
+        assert response.status_code == 400
+        assert "hours must be between 1 and 168" == response.get_json()["error"]
+
+
+def test_unified_usage_costs_share_the_billing_number_format(tmp_path):
+    """str(Decimal) renders tiny sums in scientific notation ("5E-7"); the
+    billing endpoint never does. One number format across both surfaces, on
+    every cost field: totals, by_harness, by_provider_model."""
+    client = _unified_client(
+        tmp_path,
+        [
+            _unified_usage_fact("tiny-1", cost_status="estimated", estimated_cost_usd="0.0000005"),
+            _unified_usage_fact("tiny-2", cost_status="estimated", estimated_cost_usd="0.0000002"),
+            _unified_usage_fact("actual", cost_status="actual", actual_cost_usd="1.50",
+                                harness="claude_code"),
+            _unified_usage_fact("actual-zero", cost_status="actual", actual_cost_usd="0.00",
+                                harness="claude_code"),
+        ],
+    )
+
+    data = client.get("/api/unified-usage?days=36500").get_json()
+
+    assert data["totals"]["estimated_cost_usd"] == "0.0000007"
+    assert data["totals"]["actual_cost_usd"] == "1.5"
+    by_harness = {row["harness"]: row for row in data["by_harness"]}
+    assert by_harness["hermes"]["estimated_cost_usd"] == "0.0000007"
+    assert by_harness["hermes"]["actual_cost_usd"] == "0"
+    assert by_harness["claude_code"]["actual_cost_usd"] == "1.5"
+    assert by_harness["claude_code"]["estimated_cost_usd"] == "0"
+    (model_row,) = data["by_provider_model"]
+    assert model_row["estimated_cost_usd"] == "0.0000007"
+    assert model_row["actual_cost_usd"] == "1.5"
+    serialized = json.dumps(data)
+    assert "E-" not in serialized and "e-" not in serialized
+    # Identical rendering to /api/billing for the same Decimal.
+    from decimal import Decimal
+
+    assert dashboard_module._decimal_text(Decimal("0.0000005") + Decimal("0.0000002")) == "0.0000007"
+
+
+def test_subscription_chart_ignores_all_null_historical_observations(tmp_path, monkeypatch):
+    """``latest`` already drops an observation with neither used nor remaining
+    nor an explicit provider_state/coverage marker. The chart projection now
+    applies the same rule: no unavailable_series entry, not counted."""
+
+    class FrozenChartNow(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 5, 12, 34, 56, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenChartNow)
+    rows = [
+        _quota_observation(
+            "week-live", "week", observed_at="2026-08-05T10:05:00Z",
+            used_value="30", remaining_value="70", limit_value="100",
+        ),
+        # Historical null: the upstream-retired session window.
+        _quota_observation(
+            "session-null", "session", observed_at="2026-08-05T10:10:00Z",
+            used_value=None, remaining_value=None, limit_value=None,
+        ),
+        # A null that carries an honest provider_state stays.
+        _quota_observation(
+            "five-inactive", "five_hour", observed_at="2026-08-05T10:15:00Z",
+            used_value=None, remaining_value=None, limit_value=None,
+            x_provider_state="inactive_or_not_reported",
+        ),
+    ]
+    quota_ledger = tmp_path / "quota.jsonl"
+    quota_ledger.write_text("\n".join(canonical_json(row) for row in rows) + "\n", encoding="utf-8")
+    client = create_app(quota_ledger=str(quota_ledger)).test_client()
+
+    payload = client.get("/api/subscriptions?hours=3&history=0").get_json()
+
+    assert {row["quota_name"] for row in payload["latest"]} == {"week", "five_hour"}
+    providers = {row["provider"]: row for row in payload["time_series"]["providers"]}
+    openai = providers["openai-codex"]
+    assert openai["observation_count"] == 2
+    assert [series["quota_name"] for series in openai["series"]] == ["week"]
+    assert [series["quota_name"] for series in openai["unavailable_series"]] == ["five_hour"]
+    assert "session" not in json.dumps(payload["time_series"])
+
+
+def test_readme_documents_the_current_private_route_contracts():
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    assert "comparison chart" not in readme
+    # Freshness is derived from the collector heartbeat when present, falling
+    # back to ledger write time; never-succeeded lanes are named separately
+    # and do not stale the surface.
+    assert "collector heartbeat" in readme
+    assert "ledger-write freshness" not in readme
+    assert "never_lanes" in readme
+    subscriptions_doc = readme[readme.index("`GET /api/subscriptions`"):readme.index("`GET /api/billing`")]
+    assert "hours=1..168" in subscriptions_doc
+    assert "`observations` is always empty" in subscriptions_doc
+    assert "`history=1` is rejected with a 400" in subscriptions_doc
+
+
+def test_quota_burn_projects_per_window_series_rates_and_honest_etas(tmp_path, monkeypatch):
+    """Burn panel (2026-09-02): per-account five-hour windows with monotonic
+    rise deltas, a rate over the last three deltas, and an exhaustion ETA
+    that never extends past the window's own reset. Two Claude accounts are
+    two series — the identity rule from the subscription charts, applied to
+    burn."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenNoon)
+
+    def claude(source_id, observed_at, used, resets_at="2026-07-14T13:10:00Z", account=None):
+        row = _quota_observation(
+            source_id,
+            "five_hour",
+            observed_at=observed_at,
+            provider="anthropic",
+            harness="claude_code",
+            used_value=str(used),
+            remaining_value=str(100 - used),
+            limit_value="100",
+            resets_at=resets_at,
+            measurement_confidence="exact",
+        )
+        if account is not None:
+            # The primary account's canonical series carries a NULL
+            # account_ref; the fixture default is a non-empty string.
+            row["account_ref"] = account or None
+        return row
+
+    rows = [
+        # Primary account: 9:10 -> 12:00 climbing 23 -> 59 -> 92 -> 100
+        # (each rise spans 25 min = one hourly cadence plus tick density).
+        claude("p1", "2026-07-14T09:10:00Z", 23, account=""),
+        claude("p2", "2026-07-14T10:10:00Z", 59, account=""),
+        claude("p3", "2026-07-14T11:10:00Z", 92, account=""),
+        claude("p4", "2026-07-14T12:00:00Z", 100, account=""),
+        # Secondary account: flat at 5 until 10:10, then climbing — and its
+        # resets_at already passed relative to the frozen now, so no ETA.
+        claude("s1", "2026-07-14T09:10:00Z", 5, resets_at="2026-07-14T11:20:00Z",
+               account="claude-code-secondary"),
+        claude("s2", "2026-07-14T10:10:00Z", 23, resets_at="2026-07-14T11:20:00Z",
+               account="claude-code-secondary"),
+    ]
+    quota_ledger = tmp_path / "quota.jsonl"
+    quota_ledger.write_text("\n".join(canonical_json(row) for row in rows) + "\n", encoding="utf-8")
+    client = create_app(quota_ledger=str(quota_ledger)).test_client()
+
+    payload = client.get("/api/quota-burn?hours=3").get_json()
+
+    assert payload["generated_at"] == "2026-07-14T12:34:56Z"
+    # Two accounts, two series — never merged. account_ref itself is private
+    # and never crosses the API, so the series are keyed by what they show.
+    assert len(payload["series"]) == 2
+    primary = next(row for row in payload["series"] if row["latest_used_pct"] == 100.0)
+    secondary = next(row for row in payload["series"] if row["latest_used_pct"] == 23.0)
+    assert primary["provider"] == "anthropic"
+    assert primary["exhausted"] is True
+    assert primary["latest_used_pct"] == 100.0
+    assert [d["rise_pct"] for d in primary["deltas"]] == [36.0, 33.0, 8.0]
+    # Rate over the last three deltas: 77 points across 170 minutes.
+    assert primary["burn_rate_pct_per_hour"] == pytest.approx(77 / (170 / 60), rel=1e-3)
+    assert primary["rate_window_deltas"] == 3
+    assert primary["projected_exhaustion_at"] is None
+    assert [o["used_pct"] for o in primary["observations"]] == [23.0, 59.0, 92.0, 100.0]
+
+    secondary = next(row for row in payload["series"] if row["latest_used_pct"] == 23.0)
+    assert secondary["exhausted"] is False
+    assert secondary["seconds_to_reset"] is None
+    assert secondary["projected_exhaustion_at"] is None
+    assert [d["rise_pct"] for d in secondary["deltas"]] == [18.0]
+
+
+def test_quota_burn_reset_reads_as_a_gap_not_a_negative_burn(tmp_path, monkeypatch):
+    """A window that hits 100 and then observes a fresh window at low usage
+    must not produce a negative delta; the fall advances the anchor and the
+    next rise measures burn again. Flat steps produce no delta either."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenNoon)
+    rows = [
+        _quota_observation("a", "five_hour", observed_at="2026-07-14T10:20:00Z",
+                           provider="anthropic", harness="claude_code",
+                           used_value="90", remaining_value="10", limit_value="100",
+                           resets_at="2026-07-14T11:10:00Z", measurement_confidence="exact"),
+        _quota_observation("b", "five_hour", observed_at="2026-07-14T11:20:00Z",
+                           provider="anthropic", harness="claude_code",
+                           used_value="100", remaining_value="0", limit_value="100",
+                           resets_at="2026-07-14T11:10:00Z", measurement_confidence="exact"),
+        # Reset landed: fresh window at 5 with a new reset deadline.
+        _quota_observation("c", "five_hour", observed_at="2026-07-14T11:20:00Z",
+                           provider="anthropic", harness="claude_code",
+                           used_value="5", remaining_value="95", limit_value="100",
+                           resets_at="2026-07-14T15:20:00Z", measurement_confidence="exact"),
+        # Flat step: same value observed again — no delta.
+        _quota_observation("d", "five_hour", observed_at="2026-07-14T11:50:00Z",
+                           provider="anthropic", harness="claude_code",
+                           used_value="5", remaining_value="95", limit_value="100",
+                           resets_at="2026-07-14T15:20:00Z", measurement_confidence="exact"),
+        # Burning again.
+        _quota_observation("e", "five_hour", observed_at="2026-07-14T12:10:00Z",
+                           provider="anthropic", harness="claude_code",
+                           used_value="41", remaining_value="59", limit_value="100",
+                           resets_at="2026-07-14T15:20:00Z", measurement_confidence="exact"),
+    ]
+    quota_ledger = tmp_path / "quota.jsonl"
+    _write_usage_ledger(quota_ledger, rows)
+    client = create_app(quota_ledger=str(quota_ledger)).test_client()
+
+    series = client.get("/api/quota-burn?hours=3").get_json()["series"]
+    assert len(series) == 1
+    entry = series[0]
+    # Only the two genuine rises measure burn: 90->100 (60 min) and 5->41
+    # (20 min). The reset fall and the flat step advance the anchor without
+    # producing a delta; b and c share a timestamp, and a zero gap is never
+    # a measurement.
+    assert [d["rise_pct"] for d in entry["deltas"]] == [10.0, 36.0]
+    # Rate is "while it burns": 46 points across the 60+20 measured minutes,
+    # not across idle wall time between them.
+    assert entry["burn_rate_pct_per_hour"] == pytest.approx(46 / (80 / 60), rel=1e-3)
+    assert entry["latest_used_pct"] == 41.0
+
+
+def test_quota_burn_requires_configuration_and_hours_bounds(tmp_path, monkeypatch):
+    ledger = tmp_path / "quota.jsonl"
+    ledger.write_text("", encoding="utf-8")
+    client = create_app(quota_ledger=str(ledger)).test_client()
+    response = client.get("/api/quota-burn?hours=169")
+    assert response.status_code == 400
+    monkeypatch.delenv("QUOTA_LEDGER_PATH", raising=False)
+    unconfigured = create_app().test_client()
+    assert unconfigured.get("/api/quota-burn").status_code == 404

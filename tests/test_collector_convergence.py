@@ -735,3 +735,213 @@ def test_collect_claude_code_quota_retries_through_the_public_entrypoint(monkeyp
     )
     assert len(calls) == 2
     assert {row["quota_name"] for row in rows}
+
+
+# --- finalization corrections stay in the baseline's time bucket -------------
+
+
+def test_finalization_correction_carries_the_baselines_occurred_at(tmp_path, monkeypatch):
+    """A turn streaming at 13:59:50Z and finalizing at 14:00:20Z is one turn."""
+    usage = tmp_path / "usage.sqlite3"
+    original = _claude_fact(
+        request_status="unknown",
+        output_tokens=5,
+        occurred_at="2026-08-26T13:59:50Z",
+        recorded_at="2026-08-26T13:59:50Z",
+    )
+    append_sqlite_facts(usage, [original], fact_type="usage_event_v1")
+    finalized = dict(
+        original,
+        request_status="ok",
+        output_tokens=1028,
+        occurred_at="2026-08-26T14:00:20Z",
+        recorded_at="2026-08-26T14:00:20Z",
+    )
+    _stub_claude(monkeypatch, [finalized])
+
+    result = collect_all(**_kwargs(tmp_path, usage))
+
+    assert result["generated_corrections"] == 1
+    rows = read_sqlite_facts(usage, fact_type="usage_event_v1")
+    correction = next(row for row in rows if row["record_kind"] == "correction")
+    assert correction["occurred_at"] == "2026-08-26T13:59:50Z"
+    assert correction["recorded_at"] == "2026-08-26T14:00:20Z"
+    assert correction["output_tokens"] == 1023
+
+
+# --- one identity hash scheme ----------------------------------------------------
+
+
+def test_collector_identity_hash_matches_the_canonical_ledger_conflict_hash():
+    from codex_usage_tracker.canonical_ledger import _conflict_summary
+    from codex_usage_tracker.collector import _identity_sha256
+
+    row = _claude_fact("evt/with:oddéchars")
+    payload = json.dumps({"a": 1})
+    summary = _conflict_summary(
+        (row["source_namespace"], row["source_event_id"]), payload, payload
+    )
+    assert _identity_sha256(row) == summary.identity_sha256
+
+
+# --- skipped transcripts surface in the lane summary -------------------------------
+
+
+def test_malformed_transcript_is_counted_in_the_lane_summary_not_ceded(tmp_path, monkeypatch):
+    import os
+
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_hermes_usage", lambda *args: [])
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+    root = tmp_path / "claude"
+    good = {
+        "type": "assistant",
+        "timestamp": "2026-07-12T12:00:00Z",
+        "sessionId": "s",
+        "message": {
+            "id": "m1",
+            "model": "claude-opus",
+            "usage": {"input_tokens": 1, "output_tokens": 2},
+            "stop_reason": "end_turn",
+        },
+    }
+    for name, lines in (
+        ("good.jsonl", [json.dumps(good)]),
+        ("torn.jsonl", [json.dumps(dict(good, sessionId="t")), "{torn", json.dumps(dict(good, sessionId="t2"))]),
+    ):
+        path = root / "p" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        os.utime(path, (1_783_857_600, 1_783_857_600))
+    usage = tmp_path / "usage.sqlite3"
+
+    result = collect_all(**dict(_kwargs(tmp_path, usage), claude_root=root))
+
+    lane = result["lanes"]["claude_code"]
+    assert lane["ceded"] is False and lane["succeeded"] is True
+    assert lane["rows_written"] == 1 and lane["skipped_files"] == 1
+    assert result["warnings"] == [
+        {"source": "claude_code", "error": "MalformedLedgerError", "skipped_files": "1"}
+    ]
+    assert "torn.jsonl" not in json.dumps(result)
+    lanes = json.loads((tmp_path / "health" / "lanes-usage.json").read_text(encoding="utf-8"))
+    assert lanes["lanes"]["claude_code"]["skipped_files"] == 1
+    assert lanes["lanes"]["claude_code"]["last_success_at"] == lanes["updated_at"]
+
+
+# --- an empty exact result short-circuits to the estimate --------------------------
+
+
+def _quota_kwargs(tmp_path):
+    return dict(
+        state_db=tmp_path / "state.db",
+        claude_root=tmp_path / "claude",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "codex.jsonl",
+        usage_ledger=tmp_path / "usage.sqlite3",
+        quota_ledger=tmp_path / "quota.sqlite3",
+        scope="quota",
+    )
+
+
+def test_empty_exact_opencode_go_result_falls_back_without_backoff(tmp_path, monkeypatch):
+    calls: list[int] = []
+    slept: list[float] = []
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", lambda *args: [])
+    monkeypatch.setattr("codex_usage_tracker.collector.codex_quota_observations", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "codex_usage_tracker.collector.collect_exact_opencode_go_quota",
+        lambda *args, **kwargs: calls.append(1) or [],
+    )
+    monkeypatch.setattr("codex_usage_tracker.collector.derive_opencode_go_quotas", lambda *args, **kwargs: [])
+
+    result = collect_all(
+        **_quota_kwargs(tmp_path),
+        live_quota=True,
+        environment={"OPENCODE_GO_WORKSPACE_ID": "ws", "OPENCODE_GO_AUTH_COOKIE": "cookie"},
+        lane_sleep=slept.append,
+    )
+
+    assert len(calls) == 1 and slept == []
+    assert {"source": "opencode_go_quota", "error": "EmptyLaneResult"} in result["warnings"]
+    assert "opencode_go_quota_estimated" in result["sources"]
+    assert result["lanes"]["opencode_go_quota_estimated"]["succeeded"] is True
+
+
+# --- the opencode-go estimate never fabricates -------------------------------------
+
+
+def _hermes_go_fact(event_id: str, occurred_at: str) -> dict[str, Any]:
+    return _claude_fact(
+        event_id,
+        source_namespace="test:hermes",
+        harness="hermes",
+        provider="opencode-go",
+        model_requested="glm-5.3",
+        model_reported="glm-5.3",
+        request_status="ok",
+        occurred_at=occurred_at,
+        recorded_at=occurred_at,
+        input_tokens=1_000_000,
+        output_tokens=0,
+        cost_status="unknown",
+    )
+
+
+def test_opencode_go_estimate_cedes_when_the_read_lane_ceded_and_no_ledger_exists(tmp_path, monkeypatch):
+    def broken(*args):
+        raise OSError("private opencode path")
+
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", broken)
+    monkeypatch.setattr("codex_usage_tracker.collector.codex_quota_observations", lambda *args, **kwargs: [])
+    kwargs = _quota_kwargs(tmp_path)
+
+    result = collect_all(**kwargs, live_quota=False)
+
+    assert result["ceded"] == ["opencode", "opencode_go_quota"]
+    assert result["lanes"]["opencode_go_quota"]["last_error_class"] == "OpencodeGoSourcesUnavailable"
+    assert result["sources"]["opencode_go_quota"] == {"discovered": 0}
+    assert read_sqlite_facts(kwargs["quota_ledger"], fact_type="quota_observation_v1") == []
+
+
+def test_opencode_go_estimate_reads_hermes_rows_from_the_usage_ledger(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    def broken(*args):
+        raise OSError("private opencode path")
+
+    monkeypatch.setattr("codex_usage_tracker.collector.collect_opencode_usage", broken)
+    monkeypatch.setattr("codex_usage_tracker.collector.codex_quota_observations", lambda *args, **kwargs: [])
+    kwargs = _quota_kwargs(tmp_path)
+    recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    stale = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat().replace("+00:00", "Z")
+    append_sqlite_facts(
+        kwargs["usage_ledger"],
+        [_hermes_go_fact("recent", recent), _hermes_go_fact("stale", stale)],
+        fact_type="usage_event_v1",
+    )
+
+    result = collect_all(**kwargs, live_quota=False)
+
+    assert result["ceded"] == ["opencode"]
+    assert result["lanes"]["opencode_go_quota"]["succeeded"] is True
+    rows = {
+        row["quota_name"]: row
+        for row in read_sqlite_facts(kwargs["quota_ledger"], fact_type="quota_observation_v1")
+    }
+    # One million glm-5.3 input tokens at the opencode-go list rate.
+    assert rows["five_hour"]["used_value"] == "1.4"
+    assert rows["five_hour"]["x_coverage"]["list_priced_events"] == 1
+    assert rows["five_hour"]["x_coverage"]["harnesses_with_values"] == ["hermes"]
+    assert rows["five_hour"]["window_started_at"] is not None
+
+
+def test_opencode_go_estimate_defaults_to_the_private_ledger_when_unbound(tmp_path, monkeypatch):
+    from codex_usage_tracker.collector import _readable_usage_ledger
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert _readable_usage_ledger(None) is None
+    default = tmp_path / ".local" / "state" / "codex-usage-tracker" / "usage_events.sqlite3"
+    default.parent.mkdir(parents=True)
+    default.write_bytes(b"")
+    assert _readable_usage_ledger(None) == default
+    assert _readable_usage_ledger(tmp_path / "missing.sqlite3") is None

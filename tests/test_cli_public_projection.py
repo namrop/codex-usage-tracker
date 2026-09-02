@@ -85,6 +85,68 @@ def test_cmd_write_public_projection_uses_default_neighbor_path(tmp_path, monkey
     assert str(output) in capsys.readouterr().out
 
 
+def test_cmd_write_public_projection_honours_no_public_projection_flag(tmp_path, monkeypatch, capsys):
+    ledger = tmp_path / "codex_usage_ledger.jsonl"
+    state_db = tmp_path / "state.db"
+    _write_usage_ledger(ledger)
+    _make_state_db(state_db)
+    monkeypatch.setenv("HERMES_STATE_DB_PATH", str(state_db))
+    monkeypatch.setattr(
+        cli,
+        "write_public_projection",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not write when --no-public-projection is set")),
+    )
+
+    args = argparse.Namespace(
+        atrium_root=str(tmp_path),
+        ledger=str(ledger),
+        public_projection=str(tmp_path / "public.json"),
+        public_projection_source="test-public",
+        public_projection_limit=168,
+        no_public_projection=True,
+    )
+
+    assert cli.cmd_write_public_projection(args) == 0
+
+    captured = capsys.readouterr()
+    assert not (tmp_path / "public.json").exists()
+    assert not ledger.with_name("codex_token_chart_public.json").exists()
+    assert "skipped" in captured.out
+    assert "--no-public-projection" in captured.out
+    assert len(captured.out.strip().splitlines()) == 1
+
+
+def test_main_write_public_projection_with_no_public_projection_flag_skips_write(tmp_path, monkeypatch, capsys):
+    """End-to-end through argparse: the inherited --no-public-projection flag is honoured."""
+    import sys
+
+    ledger = tmp_path / "codex_usage_ledger.jsonl"
+    state_db = tmp_path / "state.db"
+    _write_usage_ledger(ledger)
+    _make_state_db(state_db)
+    monkeypatch.setenv("HERMES_STATE_DB_PATH", str(state_db))
+    projection = tmp_path / "public.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "codex-usage-tracker",
+            "write-public-projection",
+            "--atrium-root", str(tmp_path),
+            "--ledger", str(ledger),
+            "--public-projection", str(projection),
+            "--no-public-projection",
+        ],
+    )
+
+    assert cli.main() == 0
+
+    assert not projection.exists()
+    assert not ledger.with_name("codex_token_chart_public.json").exists()
+    out = capsys.readouterr().out
+    assert "skipped" in out and "--no-public-projection" in out
+
+
 def test_cmd_fetch_does_not_write_public_projection_without_explicit_path(tmp_path, monkeypatch):
     ledger = tmp_path / "codex_usage_ledger.jsonl"
     state_db = tmp_path / "state.db"

@@ -6,13 +6,15 @@ canonical usage, quota, and optional billing ledgers supplied by the caller.
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import hashlib
 import json
 import os
 from pathlib import Path
 import sqlite3
 import time
+import types
 from typing import Any, Callable, Iterable, Mapping
 
 from .claude_instances import (
@@ -25,6 +27,7 @@ from .canonical_ledger import (
     ConflictSummary,
     TOKEN_FIELDS,
     ValidationError,
+    _jcs_dumps,
     _read_facts_without_side_effects,
     append_facts,
     append_facts_quarantined,
@@ -33,10 +36,12 @@ from .canonical_ledger import (
     append_sqlite_facts_quarantined,
     append_sqlite_facts_quarantined_reconciled,
     canonical_json,
+    canonical_timestamp,
     normalize_fact,
     query_sqlite_facts,
 )
 from .quota import (
+    ClaudeProbeBlocked,
     ClaudeTokenExpired,
     codex_quota_observations,
     collect_claude_code_quota,
@@ -123,10 +128,14 @@ def _collect_claude_quota_with_probe_fallback(
     an expired access token — detected locally before the request or reported
     by a live 401 — falls back to the tmux ``/usage`` probe: launching the
     real CLI refreshes the OAuth token as a side effect, and that CLI-owned
-    refresh is deliberately the tracker's only refresh mechanism. Every other
-    API failure propagates so the lane retry/cede machinery handles it; the
-    API collector's single transport retry happens inside one lane attempt,
-    not as a second retry layer.
+    refresh is deliberately the tracker's only refresh mechanism.
+
+    Every retry this lane gets lives inside this call: the API collector's
+    single transport retry, and the probe's own bounded ``TimeoutError``
+    retries. The lane wrapper runs it exactly once (``retries_inside``) so
+    a blocked or timed-out probe is never relaunched 3x3 times, and a
+    ``ClaudeProbeBlocked`` screen is terminal — the lane cedes on first
+    sight. Every other failure propagates and cedes the lane.
     """
     try:
         return collect_claude_code_quota_api(
@@ -296,9 +305,14 @@ def _fact_sha256(row: Mapping[str, Any]) -> str:
 
 
 def _identity_sha256(row: Mapping[str, Any]) -> str:
+    """Hash the identity exactly as canonical_ledger's ConflictSummary does.
+
+    Both hash the JCS encoding of ``[namespace, id]`` so an adjudication
+    recorded here matches the identity a quarantined conflict reports.
+    """
     namespace = str(row.get("source_namespace") or "")
     event_id = str(row.get("source_event_id") or "")
-    return hashlib.sha256(f"{namespace}\0{event_id}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(_jcs_dumps([namespace, event_id]).encode("utf-8")).hexdigest()
 
 
 _ADJUDICATION_STORE_NAME = "adjudications.sqlite3"
@@ -413,6 +427,114 @@ def _default_lane_sleep(seconds: float) -> None:
     time.sleep(seconds)
 
 
+class EmptyLaneResult(ValueError):
+    """A ``require_rows`` lane read deterministically returned nothing.
+
+    Terminal at the lane level: an empty exact result is not a transient
+    fault, so it short-circuits to the estimated fallback without backoff.
+    """
+
+
+class OpencodeGoSourcesUnavailable(RuntimeError):
+    """Neither in-run OpenCode rows nor a readable usage ledger are available.
+
+    The estimate lane cedes rather than fabricating a 0-used observation.
+    """
+
+
+# Exceptions the lane wrapper never retries: the screen (or emptiness) will
+# not change on its own, and every retry would only burn its full timeout.
+_LANE_TERMINAL_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    ClaudeProbeBlocked,
+    EmptyLaneResult,
+)
+
+DEFAULT_USAGE_LEDGER = "~/.local/state/codex-usage-tracker/usage_events.sqlite3"
+OPENCODE_GO_ESTIMATE_LOOKBACK = timedelta(days=31)
+
+
+def _materialize_lane_read(value: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Materialize a lane read, keeping a generator adapter's return value.
+
+    Adapters that are generators (Claude usage) return per-run diagnostics —
+    ``{"skipped_files": [...]}`` — as their ``StopIteration`` value, which a
+    plain ``list()`` would discard. Plain iterables carry no diagnostics.
+    """
+    if not isinstance(value, types.GeneratorType):
+        return list(value), {}
+    rows: list[dict[str, Any]] = []
+    while True:
+        try:
+            rows.append(next(value))
+        except StopIteration as stop:
+            diagnostics = stop.value if isinstance(stop.value, dict) else {}
+            return rows, diagnostics
+
+
+def _readable_usage_ledger(path: str | Path | None) -> Path | None:
+    """The usage ledger the opencode-go estimate may read, or None.
+
+    The production quota lane runs without ``--usage-ledger``; the default
+    private ledger path stands in. A missing file or an unsupported suffix
+    means "no ledger fallback", never an error.
+    """
+    target = Path(DEFAULT_USAGE_LEDGER if path is None else path).expanduser()
+    if not target.is_file():
+        return None
+    try:
+        _ledger_backend(target)
+    except ValueError:
+        return None
+    return target
+
+
+def _read_opencode_go_ledger_rows(target: Path, *, since: datetime) -> list[dict[str, Any]]:
+    """Read-only: opencode-go usage events at or after ``since``."""
+    cutoff = canonical_timestamp(since.astimezone(timezone.utc).isoformat())
+    if _ledger_backend(target) == "sqlite":
+        return query_sqlite_facts(
+            target,
+            fact_type="usage_event_v1",
+            filters={"provider": "opencode-go"},
+            occurred_or_observed_at_gte=cutoff,
+        )
+    return [
+        row
+        for row in _read_facts_without_side_effects(target)
+        if row.get("fact_type") == "usage_event_v1"
+        and row.get("provider") == "opencode-go"
+        and str(row.get("occurred_at") or "") >= cutoff
+    ]
+
+
+def _opencode_go_estimate_inputs(
+    in_run_rows: Iterable[Mapping[str, Any]],
+    ledger_path: Path | None,
+    *,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Union of this run's OpenCode rows and the ledger's recent opencode-go history.
+
+    De-duplicated by canonical identity; the in-run row wins because it is
+    the fresher derivation. Only opencode-go rows are kept — Hermes routes
+    through opencode-go too, and those rows only ever exist in the ledger.
+    """
+    current = now or datetime.now(timezone.utc)
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in in_run_rows:
+        if row.get("provider") != "opencode-go":
+            continue
+        identity = (str(row.get("source_namespace")), str(row.get("source_event_id")))
+        merged.setdefault(identity, dict(row))
+    if ledger_path is not None:
+        for row in _read_opencode_go_ledger_rows(
+            ledger_path, since=current - OPENCODE_GO_ESTIMATE_LOOKBACK
+        ):
+            identity = (str(row.get("source_namespace")), str(row.get("source_event_id")))
+            merged.setdefault(identity, row)
+    return list(merged.values())
+
+
 def lane_health_name(scope: str) -> str:
     return f"lanes-{scope}.json"
 
@@ -477,6 +599,9 @@ def update_lane_health(
             "rows_written": int(outcome.get("rows_written") or 0),
             "quarantined_count": int(outcome.get("quarantined_count") or 0),
             "discovered": int(outcome.get("discovered") or 0),
+            # Transcripts this run skipped for a malformed interior line
+            # (Claude usage lanes); the lane still lands its other files.
+            "skipped_files": int(outcome.get("skipped_files") or 0),
             # A ceded lane exhausted its retries this run and was skipped so
             # the rest of the collection could land. ``last_success_at``
             # deliberately does not advance — freshness and the watchdog key
@@ -659,6 +784,14 @@ def _reconcile_finalized_claude_rows(
             correction = dict(row)
             correction.update(
                 {
+                    # The correction is the rest of the SAME turn: it belongs
+                    # in the baseline's time bucket, not the finalization's
+                    # (a turn streaming at 13:59:50Z and finalizing at
+                    # 14:00:20Z otherwise puts most of its tokens in the next
+                    # hour, and a public-projection window edge between the
+                    # pair loses the correction's attribution). recorded_at
+                    # stays the finalization time.
+                    "occurred_at": baseline["occurred_at"],
                     "source_event_id": f"{row['source_event_id']}:{finalization_suffix}",
                     "event_uid": None,
                     "logical_call_id": None,
@@ -724,6 +857,89 @@ class StrictSourcesError(RuntimeError):
         self.report_path = report_path
 
 
+# Active-window tick freshness: the five-minute timer must not re-probe an
+# account whose latest observation is newer than this (the tick and the
+# hourly collector can race near a cadence boundary; the ledger already
+# carries the answer).
+_BURN_TICK_FRESH_SECONDS = 180
+
+
+def _claude_window_is_burning(
+    quota_ledger: str | Path,
+    *,
+    account_ref: str | None,
+    now: datetime,
+) -> bool:
+    """True when this Claude account's five-hour window shows active burn.
+
+    Read-only against the live quota ledger: the account's newest five_hour
+    observation must report usage, carry a ``resets_at`` still in the
+    future, and be older than the tick-freshness bound. An absent or
+    unreadable ledger reads as not burning — the tick stands down rather
+    than probing on a guess (the hourly collector owns discovery).
+    """
+    target = Path(quota_ledger).expanduser()
+    if target.suffix != ".sqlite3" or not target.exists():
+        return False
+    filters = {"provider": "anthropic", "quota_name": "five_hour"}
+    if account_ref:
+        filters["account_ref"] = account_ref
+    try:
+        rows = query_sqlite_facts(
+            target,
+            fact_type="quota_observation_v1",
+            filters=filters,
+            order="desc",
+            # Several accounts share the newest timestamps; the exact
+            # account match is applied below because a NULL account_ref
+            # cannot be expressed as a string equality filter.
+            limit=20,
+            contract_validation=False,
+        )
+    except Exception:
+        return False
+    # Exact account identity: the primary account's series carries a NULL
+    # account_ref, so an omitted filter must not let another account's
+    # observation decide this account's gate.
+    rows = [
+        row
+        for row in rows
+        if (row.get("account_ref") or None) == (account_ref or None)
+    ]
+    if not rows:
+        return False
+    row = rows[0]
+    used = row.get("used_value")
+    try:
+        if used is None or Decimal(str(used)) <= 0:
+            return False
+    except Exception:
+        return False
+    resets_at = row.get("resets_at")
+    if not isinstance(resets_at, str):
+        return False
+    try:
+        parsed_reset = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed_reset.tzinfo is None or parsed_reset <= now:
+        return False
+    observed_at = row.get("observed_at")
+    if not isinstance(observed_at, str):
+        return False
+    try:
+        parsed_observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed_observed.tzinfo is None:
+        return False
+    age = (now - parsed_observed).total_seconds()
+    # Fresh-enough observations (the hourly collector just wrote one) stand
+    # the tick down; a genuinely older observation means the window is
+    # burning on tick cadence and needs a new sample.
+    return age > _BURN_TICK_FRESH_SECONDS
+
+
 def collect_all(
     *,
     state_db: str | Path,
@@ -755,6 +971,8 @@ def collect_all(
     lane_attempts: int = LANE_ATTEMPTS,
     lane_backoff_seconds: float = LANE_BACKOFF_SECONDS,
     lane_sleep: Callable[[float], None] | None = None,
+    quota_lanes: Iterable[str] | None = None,
+    when_active: bool = False,
 ) -> dict[str, Any]:
     """Collect independently persistable usage and/or quota source batches.
 
@@ -824,23 +1042,34 @@ def collect_all(
                 "rows_written": 0,
                 "quarantined_count": 0,
                 "discovered": 0,
+                "skipped_files": 0,
                 "ceded": False,
             },
         )
 
-    def _attempt_lane(operation: Callable[[], Any]) -> tuple[Any, str | None]:
+    def _attempt_lane(
+        operation: Callable[[], Any], *, retries_inside: bool = False
+    ) -> tuple[Any, str | None]:
         """Run one lane operation with bounded retries and growing backoff.
 
         Returns ``(value, None)`` on success or ``(None, error_class)`` after
         the final attempt fails. Only the exception's type name escapes —
         messages can embed credentials and private paths.
+
+        ``retries_inside`` marks an operation that already retries itself
+        (the Claude quota lane: API transport retry, probe TimeoutError
+        retries); it runs exactly once so the two layers never multiply.
+        ``_LANE_TERMINAL_EXCEPTIONS`` end the loop on first sight.
         """
         error_class: str | None = None
-        for attempt in range(1, attempts + 1):
+        total = 1 if retries_inside else attempts
+        for attempt in range(1, total + 1):
             if attempt > 1:
                 sleep(lane_backoff_seconds * (attempt - 1))
             try:
                 return operation(), None
+            except _LANE_TERMINAL_EXCEPTIONS as exc:
+                return None, type(exc).__name__
             except Exception as exc:
                 error_class = type(exc).__name__
         return None, error_class
@@ -858,20 +1087,33 @@ def collect_all(
         collect: Any,
         *,
         require_rows: bool = False,
+        retries_inside: bool = False,
     ) -> list[dict[str, Any]]:
         lane = _lane(source)
 
-        def read() -> list[dict[str, Any]]:
-            rows = list(collect())
+        def read() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            rows, diagnostics = _materialize_lane_read(collect())
             if require_rows and not rows:
-                raise ValueError(f"{source} returned no rows")
-            return rows
+                raise EmptyLaneResult(f"{source} returned no rows")
+            return rows, diagnostics
 
-        rows, error_class = _attempt_lane(read)
+        outcome, error_class = _attempt_lane(read, retries_inside=retries_inside)
         if error_class is not None:
             sources[source] = _source_result(0)
             _cede_lane(source, error_class)
             return []
+        rows, diagnostics = outcome
+        skipped = diagnostics.get("skipped_files") or []
+        lane["skipped_files"] = len(skipped)
+        if skipped:
+            # Count only: the paths are private and the report is not.
+            warnings.append(
+                {
+                    "source": source,
+                    "error": "MalformedLedgerError",
+                    "skipped_files": str(len(skipped)),
+                }
+            )
         sources[source] = _source_result(len(rows))
         lane["discovered"] = len(rows)
         # A clean read is already a success for a lane that is only ever read:
@@ -907,7 +1149,10 @@ def collect_all(
                 # rows ingested from the retired state.db layout carry
                 # full-precision floats. Sub-micro-dollar drift on the same
                 # identity is a unit rounding difference, not a content change.
-                frozenset({"estimated_cost_usd"})
+                # Likewise a cost refiled by its sidecar cost_status (actual
+                # vs estimated vs the unknown-only x_hermes_cost_usd) is the
+                # same figure under a different label, not a new fact.
+                frozenset({"estimated_cost_usd", "actual_cost_usd", "x_hermes_cost_usd"})
                 if hermes_sidecar_source
                 else frozenset()
             )
@@ -1088,6 +1333,28 @@ def collect_all(
             )
             opencode_go_workspace = env.get("OPENCODE_GO_WORKSPACE_ID")
             opencode_go_cookie = env.get("OPENCODE_GO_AUTH_COOKIE")
+
+            def _estimate_opencode_go(source_name: str) -> None:
+                """First-use anchored estimate over in-run + ledger opencode-go rows.
+
+                Never fabricates: when the OpenCode read lane ceded this run
+                AND no usage ledger is readable there is nothing to estimate
+                from, so the lane cedes instead of persisting "0 used".
+                """
+                ledger_path = _readable_usage_ledger(usage_ledger)
+                if _lane("opencode")["ceded"] and ledger_path is None:
+                    sources[source_name] = _source_result(0)
+                    _cede_lane(source_name, OpencodeGoSourcesUnavailable.__name__)
+                    return
+                estimated_rows = collect_source(
+                    source_name,
+                    lambda: derive_opencode_go_quotas(
+                        _opencode_go_estimate_inputs(opencode or [], ledger_path),
+                        f"{source_prefix}:opencode-go",
+                    ),
+                )
+                quota_sources.append((source_name, estimated_rows))
+
             if live_quota and opencode_go_workspace and opencode_go_cookie:
                 opencode_go_rows = collect_source(
                     "opencode_go_quota",
@@ -1101,30 +1368,40 @@ def collect_all(
                 if opencode_go_rows:
                     quota_sources.append(("opencode_go_quota", opencode_go_rows))
                 else:
-                    estimated_source = "opencode_go_quota_estimated"
-                    estimated_rows = collect_source(
-                        estimated_source,
-                        lambda: derive_opencode_go_quotas(
-                            opencode or [],
-                            f"{source_prefix}:opencode-go",
-                        ),
-                    )
-                    quota_sources.append((estimated_source, estimated_rows))
+                    _estimate_opencode_go("opencode_go_quota_estimated")
             else:
-                opencode_go_rows = collect_source(
-                    "opencode_go_quota",
-                    lambda: derive_opencode_go_quotas(
-                        opencode or [],
-                        f"{source_prefix}:opencode-go",
-                    ),
-                )
-                quota_sources.append(("opencode_go_quota", opencode_go_rows))
+                _estimate_opencode_go("opencode_go_quota")
 
             if live_quota:
+                # Five-minute active-window tick (keeper-approved burn panel,
+                # 2026-09-02): when the caller gates on activity, a Claude
+                # account is only probed when its own five-hour window is
+                # demonstrably burning; every other lane stands down for
+                # this run.
+                tick_now = datetime.now(timezone.utc)
+                claude_gate_open = (
+                    (not when_active)
+                    or _claude_window_is_burning(
+                        quota_ledger, account_ref=None, now=tick_now
+                    )
+                )
                 if claude_quota_command and not dry_run:
                     if configured_claude_instances:
                         for instance in configured_claude_instances:
                             source = instance.quota_source_key
+                            if quota_lanes is not None and source not in quota_lanes:
+                                sources[source] = _source_result(0)
+                                continue
+                            if when_active and not _claude_window_is_burning(
+                                quota_ledger,
+                                account_ref=instance.account_ref,
+                                now=tick_now,
+                            ):
+                                # Standing down is not a failure: the window
+                                # is idle and the hourly collector owns
+                                # discovery.
+                                sources[source] = _source_result(0)
+                                continue
                             quota_sources.append(
                                 (
                                     source,
@@ -1139,10 +1416,11 @@ def collect_all(
                                             claude_config_dir=instance.quota_config_dir,
                                             account_ref=instance.account_ref,
                                         ),
+                                        retries_inside=True,
                                     ),
                                 )
                             )
-                    else:
+                    elif claude_gate_open:
                         quota_sources.append(
                             (
                                 "claude_code_quota",
@@ -1155,9 +1433,12 @@ def collect_all(
                                         probe_dir=claude_probe_dir,
                                         timeout=claude_quota_timeout,
                                     ),
+                                    retries_inside=True,
                                 ),
                             )
                         )
+                    else:
+                        sources["claude_code_quota"] = _source_result(0)
                 elif claude_quota_command:
                     # The Claude `/usage` capture creates a probe directory, lock,
                     # and tmux session; dry-run remains process/filesystem safe.
@@ -1166,7 +1447,12 @@ def collect_all(
                             sources[instance.quota_source_key] = _source_result(0)
                     else:
                         sources["claude_code_quota"] = _source_result(0)
-                openrouter_key = env.get("OPENROUTER_API_KEY")
+                # The active-window tick is a Claude-only lane: provider API
+                # quotas stand down under --when-active (their windows do not
+                # burn on minutes).
+                openrouter_key = (
+                    env.get("OPENROUTER_API_KEY") if live_quota and not when_active else None
+                )
                 if openrouter_key:
                     quota_sources.append(
                         (
@@ -1180,7 +1466,9 @@ def collect_all(
                             ),
                         )
                     )
-                deepseek_key = env.get("DEEPSEEK_API_KEY")
+                deepseek_key = (
+                    env.get("DEEPSEEK_API_KEY") if live_quota and not when_active else None
+                )
                 if deepseek_key:
                     quota_sources.append(
                         (
@@ -1195,7 +1483,9 @@ def collect_all(
                         )
                     )
 
-                kimi_key = env.get("KIMI_CODING_API_KEY")
+                kimi_key = (
+                    env.get("KIMI_CODING_API_KEY") if live_quota and not when_active else None
+                )
                 if kimi_key:
                     quota_sources.append(
                         (
@@ -1210,7 +1500,11 @@ def collect_all(
                         )
                     )
 
-                z_ai_key = env.get("Z_AI_API_KEY") or env.get("ZAI_API_KEY")
+                z_ai_key = (
+                    (env.get("Z_AI_API_KEY") or env.get("ZAI_API_KEY"))
+                    if live_quota and not when_active
+                    else None
+                )
                 if z_ai_key:
                     quota_sources.append(
                         (

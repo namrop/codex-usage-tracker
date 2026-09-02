@@ -29,10 +29,20 @@ def test_opus_tier_math_covers_all_four_rates():
     assert result["unpriced_providers"] == []
 
 
-def test_reasoning_bills_at_the_output_rate():
-    plain = estimate_list_price([_bucket("zai", "glm-5.3", output_tokens=1_000_000)])
-    with_reasoning = estimate_list_price([_bucket("zai", "glm-5.3", reasoning_tokens=1_000_000)])
-    assert plain["estimate_usd"] == with_reasoning["estimate_usd"] == "4.40"
+def test_reasoning_is_not_added_on_top_of_output():
+    """Canonical output_tokens already includes reasoning; do not bill it twice.
+
+    A bucket with output 254 and reasoning 39 must price exactly as 254 output
+    tokens (the README contract: reasoning is diagnostic, not re-added).
+    """
+    with_reasoning = estimate_list_price([_bucket("zai", "glm-5.3", output_tokens=254, reasoning_tokens=39)])
+    output_only = estimate_list_price([_bucket("zai", "glm-5.3", output_tokens=254)])
+    assert with_reasoning["estimate_usd"] == output_only["estimate_usd"]
+    # Scale up so the cent rounding cannot mask a double-count.
+    big = estimate_list_price([_bucket("zai", "glm-5.3", output_tokens=1_000_000, reasoning_tokens=1_000_000)])
+    assert big["estimate_usd"] == "4.40"
+    reasoning_only = estimate_list_price([_bucket("zai", "glm-5.3", reasoning_tokens=1_000_000)])
+    assert reasoning_only["estimate_usd"] == "0.00"
 
 
 def test_unknown_provider_is_coverage_not_a_guess():
@@ -64,3 +74,40 @@ def test_every_seeded_rate_parses_as_decimal():
         for rates in tables:
             for key in ("input", "output", "cache_read", "cache_write"):
                 Decimal(rates[key])
+
+
+def test_claude_fable_5_1_rates():
+    rates = LIST_PRICES["anthropic"]["models"]["claude-fable-5-1"]
+    assert rates == {"input": "10", "output": "50", "cache_read": "0.25", "cache_write": "12.50"}
+    result = estimate_list_price([_bucket(
+        "anthropic", "claude-fable-5-1",
+        input_tokens=1_000_000, output_tokens=100_000,
+        cache_read_tokens=4_000_000, cache_write_tokens=200_000,
+    )])
+    # 10 + 5 + 1.00 + 2.50 = 18.50
+    assert result["estimate_usd"] == "18.50"
+    assert result["priced_token_share"] == 1.0
+
+
+def test_claude_sonnet_5_still_at_published_2_10_rate():
+    assert LIST_PRICES["anthropic"]["models"]["claude-sonnet-5"] == {
+        "input": "2", "output": "10", "cache_read": "0.20", "cache_write": "2.50",
+    }
+
+
+def test_opencode_go_prices_glm_but_leaves_qwen_unpriced():
+    entry = LIST_PRICES["opencode-go"]
+    assert entry["default"] is None
+    assert entry["models"]["glm-5.3"] == LIST_PRICES["zai"]["models"]["glm-5.3"]
+
+    priced = estimate_list_price([_bucket("opencode-go", "glm-5.3", input_tokens=1_000_000, output_tokens=1_000_000)])
+    assert priced["estimate_usd"] == "5.80"
+    assert priced["unpriced_providers"] == []
+
+    mixed = estimate_list_price([
+        _bucket("opencode-go", "glm-5.3", input_tokens=1_000_000),
+        _bucket("opencode-go", "qwen3.7-max", input_tokens=1_000_000),
+    ])
+    assert mixed["estimate_usd"] == "1.40"
+    assert mixed["priced_token_share"] == 0.5
+    assert mixed["unpriced_providers"] == ["opencode-go"]

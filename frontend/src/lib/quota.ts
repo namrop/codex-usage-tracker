@@ -6,6 +6,7 @@ export const QUOTA_FIVE_HOUR_NAMES: ReadonlySet<string> = new Set(["five_hour", 
 
 export interface QuotaRow {
   provider?: unknown;
+  provider_canonical?: unknown;
   quota_name?: unknown;
   unit?: unknown;
   used_value?: unknown;
@@ -15,15 +16,35 @@ export interface QuotaRow {
   [key: string]: unknown;
 }
 
+// The join key for a quota row: the canonical provider id when the API
+// carries one, else the raw ledger value (usage rows key on the canonical
+// id, so a raw "z-ai" row must not be compared against "z-ai-glm").
+export function quotaRowProviderKey(row: { provider?: unknown; provider_canonical?: unknown } | null | undefined): string {
+  if (!row) return "";
+  const canonical = row.provider_canonical;
+  return String((canonical !== null && canonical !== undefined && canonical !== "" ? canonical : row.provider) || "").trim();
+}
+
+// A row reads as a percentage when the provider reports percent outright,
+// or when it reports its own unit on a normalized 0–100 scale (kimi's
+// `provider_unit` with limit 100) — the same rule the subscription card
+// uses to display the window as a percentage.
+export function isPercentQuotaRow(row: { unit?: unknown; limit_value?: unknown } | null | undefined): boolean {
+  if (!row) return false;
+  const unit = String(row.unit || "").trim().toLowerCase();
+  if (unit === "percent") return true;
+  return unit === "provider_unit" && Number(row.limit_value) === 100;
+}
+
 export function quotaPercentFor(
   quotaLatest: QuotaRow[] | undefined,
   canonicalProvider: string,
   windowNames: ReadonlySet<string>,
 ): { pct: number; accounts: number } | null {
   const rows = (quotaLatest || []).filter((row) =>
-    String(row.provider || "") === canonicalProvider
+    quotaRowProviderKey(row) === canonicalProvider
     && windowNames.has(String(row.quota_name || ""))
-    && String(row.unit || "") === "percent"
+    && isPercentQuotaRow(row)
     && row.used_value != null && row.limit_value != null);
   if (!rows.length) return null;
   let worst: number | null = null;
@@ -75,7 +96,7 @@ export function normalizedQuotaSeries(series: any, bucketCount: number): Normali
   const providerAccountCount = Number(series.provider_account_count);
   const providerAccountIndex = Number(series.provider_account_index);
   return {
-    provider: String(series.provider || "unknown"),
+    provider: quotaRowProviderKey(series) || "unknown",
     label: String(series.label || series.quota_name || "Quota"),
     quota_name: String(series.quota_name || "unknown"),
     harness: series.harness ? String(series.harness) : "",

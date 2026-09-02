@@ -366,3 +366,75 @@ def test_collector_cedes_the_lane_on_other_api_errors_without_probing(
     assert {"source": "claude_code_secondary_quota", "error": "ValueError"} in result[
         "warnings"
     ]
+
+
+# --- probe retries never stack with the lane retry ------------------------------
+
+
+def _expired_api(namespace, *, credentials_path, account_ref=None, **kwargs):
+    raise ClaudeTokenExpired("expired")
+
+
+def test_blocked_probe_is_terminal_for_the_lane(tmp_path, monkeypatch):
+    from codex_usage_tracker import quota as quota_module
+
+    _empty_other_collectors(monkeypatch)
+    monkeypatch.setattr(collector_module, "collect_claude_code_quota_api", _expired_api)
+    launches = []
+
+    def blocked(**kwargs):
+        launches.append(1)
+        raise quota_module.ClaudeProbeBlocked(
+            "Claude Code /usage probe blocked: usage endpoint rate limited"
+        )
+
+    monkeypatch.setattr(quota_module, "capture_claude_code_usage_screen", blocked)
+    monkeypatch.setattr(quota_module.time, "sleep", lambda _: None)
+    slept = []
+
+    result = collect_all(
+        claude_instances=[ClaudeInstance("claude-code-secondary", tmp_path / "secondary")],
+        claude_quota_command="claude",
+        claude_probe_dir=tmp_path / "claude-probe",
+        environment={},
+        live_quota=True,
+        scope="quota",
+        lane_sleep=slept.append,
+        **_collection_paths(tmp_path),
+    )
+
+    # One launch, no lane backoff, and the lane names the blocker.
+    assert len(launches) == 1 and slept == []
+    assert result["ceded"] == ["claude_code_secondary_quota"]
+    assert result["lanes"]["claude_code_secondary_quota"]["last_error_class"] == "ClaudeProbeBlocked"
+
+
+def test_probe_timeouts_are_retried_inside_the_probe_only(tmp_path, monkeypatch):
+    from codex_usage_tracker import quota as quota_module
+
+    _empty_other_collectors(monkeypatch)
+    monkeypatch.setattr(collector_module, "collect_claude_code_quota_api", _expired_api)
+    launches = []
+
+    def timing_out(**kwargs):
+        launches.append(1)
+        raise TimeoutError("Claude Code /usage screen did not become ready")
+
+    monkeypatch.setattr(quota_module, "capture_claude_code_usage_screen", timing_out)
+    monkeypatch.setattr(quota_module.time, "sleep", lambda _: None)
+    slept = []
+
+    result = collect_all(
+        claude_quota_command="claude",
+        claude_probe_dir=tmp_path / "claude-probe",
+        environment={},
+        live_quota=True,
+        scope="quota",
+        lane_sleep=slept.append,
+        **_collection_paths(tmp_path),
+    )
+
+    # The probe's own three attempts, not 3x3, and no lane-level backoff.
+    assert len(launches) == quota_module.CLAUDE_USAGE_PROBE_ATTEMPTS
+    assert slept == []
+    assert result["lanes"]["claude_code_quota"]["last_error_class"] == "TimeoutError"

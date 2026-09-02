@@ -438,25 +438,6 @@ summary {
   height: auto;
 }
 
-.donut-track {
-  fill: none;
-  stroke: color-mix(in srgb, var(--line) 24%, transparent);
-  stroke-width: 17;
-}
-
-/* Each provider owns one contiguous span of the ring, split into a
- * fresh arc and a dimmed cached arc. stroke-opacity is a number, not a
- * color: the cached tail is the SAME provider color, so the eye reads
- * one provider, two kinds of throughput. */
-.donut-arc {
-  fill: none;
-  stroke-width: 17;
-}
-
-.donut-arc.cached {
-  stroke-opacity: 0.38;
-}
-
 /* SVG text sizes are viewBox user units (the viewBox is 200x200), so
  * these scale with the ring rather than with the page. */
 .donut-center-value {
@@ -1488,6 +1469,34 @@ html[data-gc-shape="slanted"] *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* -- burn panel (2026-09-02): per-account window burn. The table inherits
+ * the estate table-wrap; the sparkline path picks up the palette ink via
+ * currentColor so themes pass through untouched. -- */
+.burn-table {
+  min-width: 640px;
+}
+
+.burn-spark {
+  display: block;
+}
+
+.burn-spark path {
+  stroke: currentColor;
+  opacity: 0.85;
+}
+
+.burn-table th[scope="row"] {
+  white-space: nowrap;
+}
+
+.burn-exhausted :is(th, td) {
+  opacity: 0.62;
+}
+
+.burn-projected td:last-child {
+  font-variant-numeric: tabular-nums;
 }
 /* Type bridge — font APPLICATION only, the one documented exception to
  * the purity scan (mirrors diadem's excluded theme-default.css). The

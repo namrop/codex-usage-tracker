@@ -387,23 +387,35 @@ and is not added twice where canonical output already includes it.
 The dashboard exposes private aggregates when configured with
 `UNIFIED_USAGE_LEDGER_PATH`, `QUOTA_LEDGER_PATH`, and `BILLING_LEDGER_PATH` (or
 the corresponding `create_app` arguments). Usage and subscription responses
-include a three-hour ledger-write freshness contract (`fresh`, `stale`, or
-`empty`); the UI stops rendering ordinary charts/rows when either canonical lane
-is stale:
+include a three-hour freshness contract (`fresh`, `stale`, or `empty`) derived
+from the collector heartbeat file when present, falling back to the ledger's
+write time. When the collector's per-lane health file is readable the response
+also lists every lane: a lane that has succeeded before and gone quiet past the
+threshold is named in `stale_lanes` and makes the surface stale; a lane that has
+never succeeded (status `never`, typically registered before its credentials
+exist) is named in `never_lanes` and does not. The UI stops rendering ordinary
+charts/rows when either canonical lane is stale:
 
 - `GET /api/unified-usage` supports `provider`, `harness`, `purpose`,
   `model_requested`, `days`, and `before`; it returns token/request-cost totals,
-  selected window metadata, harness and provider/model groups, and
+  selected window metadata, harness and provider/model groups (provider groups
+  key on the canonical provider id and list the raw ids they merged), and
   exact/reconstructed coverage. Supplying `hours=1..168` instead of `days`
-  aligns the response to
-  complete UTC hours and adds zero-filled chart series. The model chart uses
-  reported model when available (requested model otherwise), keeps the five
-  largest provider/model pairs, and rolls the rest into `Other models`. The
-  comparison chart defines OpenAI Codex subscription traffic by
-  `provider=openai-codex` and Claude Code traffic by `harness=claude_code`;
+  aligns the response to complete UTC hours and adds zero-filled chart series
+  plus per-UTC-calendar-day list-price estimates (`list_price_daily`, first
+  and last day flagged `partial`). The model chart uses reported model when
+  available (requested model otherwise), keeps the five largest
+  provider/model pairs, and rolls the rest into `Other models`;
 - `GET /api/subscriptions` supports `provider`, `harness`, `quota_name`,
   `days`, and `before`; it returns the latest observation per subscription
-  window and normalized observation history;
+  window and normalized observation history. Supplying `hours=1..168`
+  instead of `days` aligns the response to complete UTC hours and returns
+  the hourly chart projection; in hours mode `observations` is always empty
+  and `history=1` is rejected with a 400 (`history=0` is the default there;
+  day-window queries accept `history=1` to include the observation history).
+  `days` must be at least 1 on every private read. Claude Code subscription
+  traffic is identified by `harness=claude_code` across both configured
+  account instances;
 - `GET /api/billing` supports `provider`, `transaction_kind`, `status`,
   `currency`, `days`, and `before`; it returns signed totals separately by
   currency and transaction kind plus an allowlisted transaction projection.
