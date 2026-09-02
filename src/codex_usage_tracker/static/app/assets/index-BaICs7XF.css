@@ -1300,13 +1300,12 @@ tbody tr:hover {
  * The app does not pick a number — it wires the token and the reader
  * tunes it.
  *
- * TWO LIMITS STILL HOLD, and the second block below is where they live:
+ * ONE LIMIT STILL HOLDS, and the second block below is where it lives:
  * chart surfaces and the folded numeric tables stay OPAQUE planes inside
  * the glass panel (a canvas carries no text a wash can rescue, and
- * refraction across gridlines reads as damage); and johannah gets no
- * panel glass at all, because its reading planes are opaque paper —
- * that is what the source site authored. The johannah gate is a
- * --gc-scheme read in GlassPanels.tsx, not a theme name.
+ * refraction across gridlines reads as damage). The johannah limit is
+ * withdrawn (keeper, 2026-09-02): a paper theme's panels glass like every
+ * other's, and the slider decides how far.
  *
  * Every rule here is gated on data-glass="on", which <GlassPanels> writes
  * only after checking GovernedCognition.glassEffective() (the toggle AND
@@ -1315,26 +1314,10 @@ tbody tr:hover {
  * is byte-for-byte the plain panels.
  * ============================================================ */
 
-/* the backdrop the <GlassLayer> component renders into — behind
- * everything its host paints, never taking a pointer. No overflow clip
- * here: a square clip would cut the lens's own rounded corners off. */
-.glass-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-
-/* The frost plane. It carries the backdrop-filter the LIBRARY cannot: its
- * own frost sits on the same element as its SVG `filter`, which makes that
- * element a backdrop root and empties its backdrop (lib/glass.ts records
- * the finding and the verification). This element has no filter, so its
- * blur lands; the lens draws over it. */
-.glass-frost {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
+/* The layer element itself — its backdrop-filter, its lens, its frost —
+ * is GC's (static/gc/glass.css) on the .gc-glass-layer span GC's renderer
+ * appends to each panel this app attaches (2026-09-02: "GC owns the
+ * library, the apps call it"). Nothing here styles it. */
 
 /* THE CLASS. The panel's flat fill becomes the slider-driven wash, its
  * hairline and drop shadow step aside (the lens draws both), and it
@@ -1347,7 +1330,7 @@ tbody tr:hover {
 }
 
 /* the panel's real content rides above the lens */
-:is(.title-panel, .card)[data-glass="on"] > :not(.glass-layer) {
+:is(.title-panel, .card)[data-glass="on"] > :not(.gc-glass-layer) {
   position: relative;
   z-index: 1;
 }

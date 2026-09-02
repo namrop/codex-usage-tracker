@@ -330,3 +330,23 @@ docs/surfaces/governed-cognition-glass-on-opacity-{005,090}-top.png
 
 The johannah pair is the no-op evidence; the namrop pair is the clearest
 reading of the lenses; every `-charts` shot is the chart-legibility evidence.
+
+---
+
+## 2026-09-02 — GC owns the renderer
+
+Keeper-ruled: "GC owns the library, the apps call it." `liquid-glass-react`
+left `dependencies`; `components/GlassLayer.tsx`, the knob reads and the
+frost shim in `lib/glass.ts` are gone. `GlassPanels` still names the class
+(`.shell > .title-panel, .shell > .card`) and still writes the app's own
+`data-glass` mounted-flag for the style layer, but it hands each panel to
+`GovernedCognition.glassAttach()` and takes it back with `glassDetach()`;
+GC mounts one `.gc-glass-layer` span per panel with the whole effect on that
+element, sizes a lens to it, and — under the slanted shape — takes the
+panel's cut polygon onto the layer (a clip on the panel would blind the
+filter). The johannah panel exception is withdrawn by the same day's ruling:
+a paper theme's panels glass like every other's, and the slider decides.
+The GC snapshot under `static/gc/` was refreshed to the dist that carries
+the renderer. Verified in headless Chromium against `:5174` on namrop /
+slanted: four panels carry a GC layer, all four clip-handed, lens on the
+layer, no old plate markup.

@@ -46,6 +46,16 @@ export interface GovernedCognitionSurface {
      * viable on CONTENT panels: turn it up until the text underneath reads. */
     glassOpacity(): number;
     setGlassOpacity(value: number): number;
+    /** THE RENDERER (2026-09-02, keeper: "GC owns the library, the apps call
+     * it"). Make an element a glass host; a layer mounts on it while glass is
+     * effective and leaves when it is not, the host's own inline styles come
+     * back on detach. Which elements are the app's glass class, and how many
+     * are attached at once on a long page, are the app's decisions; nothing
+     * else is. */
+    glassAttach(el: Element): void;
+    glassDetach(el: Element): void;
+    /** how many hosts carry a mounted layer right now */
+    glassLayers(): number;
     config: GCConfig;
     rosterEvent: string;
     applyEvent: string;

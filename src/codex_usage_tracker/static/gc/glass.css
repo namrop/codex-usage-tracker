@@ -49,3 +49,42 @@
     --gc-glass-tint: var(--gc-panel);
   }
 }
+
+/* ============================================================
+ * THE LAYER (2026-09-02, keeper: "GC owns the library, the apps call it").
+ * glass.ts mounts one of these inside every attached host while glass is
+ * effective; this sheet is attached only while the toggle is on, so with
+ * glass off these rules exist nowhere. The whole effect is on this ONE
+ * element: nothing is nested under it, and it is the element that carries
+ * the host's cut polygon when the host has one (a clip-path on the host
+ * would make the host a backdrop root and blind the filter). The knobs
+ * above feed it directly — blur = (4 + blur * 32)px and saturate = N%,
+ * the scale the vendored lens chain was written for.
+ * ============================================================ */
+.gc-glass-layer {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+  -webkit-backdrop-filter: blur(calc((4 + var(--gc-glass-blur) * 32) * 1px)) saturate(calc(var(--gc-glass-saturate) * 1%));
+  backdrop-filter: blur(calc((4 + var(--gc-glass-blur) * 32) * 1px)) saturate(calc(var(--gc-glass-saturate) * 1%));
+}
+/* The lens: a reference filter in backdrop-filter, one per layer (glass.ts
+ * publishes --gc-glass-lens as url(#…) to an svg sized to the host). A var()
+ * cannot fall back to an earlier declaration the way an unparseable literal
+ * does, so the rule is gated on @supports: Chromium enters it and renders
+ * the lens; Firefox and Safari never enter it and keep the frost above. */
+@supports (backdrop-filter: url(#gc-lens) blur(1px)) {
+  .gc-glass-layer {
+    backdrop-filter: var(--gc-glass-lens) blur(calc((4 + var(--gc-glass-blur) * 32) * 1px)) saturate(calc(var(--gc-glass-saturate) * 1%));
+  }
+}
+/* A host that HANDED OVER a cut polygon paints nothing itself while glassed;
+ * the layer paints the slider's tint under the cut grammar's lift, exactly
+ * what the host painted before (the lift token is the slant grammar's and
+ * is absent under rounded shapes, where the fallback is no lift). */
+.gc-glass-layer[data-gc-clipped] {
+  background: linear-gradient(var(--gc-card-lift, transparent), var(--gc-card-lift, transparent)) var(--gc-glass-tint);
+}

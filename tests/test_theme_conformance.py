@@ -499,11 +499,13 @@ def test_glass_mounts_off_glass_effective_and_never_the_raw_toggle() -> None:
         "reading the raw toggle would render glass for a reader who asked "
         "for reduced transparency"
     )
-    # The lens is fed from the published knobs, read as numbers.
+    # 2026-09-02 ("GC owns the library, the apps call it"): the knobs are
+    # GC's end to end. The app reads none of them and draws nothing; it
+    # names its class and calls glassAttach / glassDetach.
     for token in ("--gc-glass-blur", "--gc-glass-saturate", "--gc-glass-displace",
                   "--gc-glass-aberration"):
-        assert token in joined, f"{token} is a published prop feed; feed it"
-    assert "parseFloat" in joined or "Number.parseFloat" in joined
+        assert token not in joined, f"{token} is GC's knob; the app must not read it"
+    assert "glassAttach(" in joined and "glassDetach(" in joined
     # And the palette re-resolves on the glass event like it does on a theme
     # swap, so the charts never read stale tokens.
     assert "glassEvent" in source("hooks/usePalette.ts")
@@ -521,17 +523,21 @@ def test_the_app_never_restyles_the_estate_pickers_own_nodes() -> None:
         )
 
 
-def test_liquid_glass_renderer_is_exact_pinned_and_stays_third_party() -> None:
-    """SURFACES.md names the renderer and says exact-pin it. It is
-    third-party, so it rides the vendor chunk — the app chunk stays under
-    the zero-literal law it could never satisfy."""
+def test_liquid_glass_renderer_is_gcs_and_no_library_is_in_the_loop() -> None:
+    """Keeper-ruled 2026-09-02: GC owns the renderer. The vendored loader
+    carries glassAttach/glassDetach, the app's dependencies name no glass
+    library, and neither built chunk carries the old renderer's markup."""
     import json
 
     manifest = json.loads((REPO_ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
-    pinned = manifest["dependencies"]["liquid-glass-react"]
-    assert re.fullmatch(r"\d+\.\d+\.\d+", pinned), (
-        f"exact-pin the renderer, got range {pinned!r}"
+    assert "liquid-glass-react" not in manifest.get("dependencies", {}), (
+        "the renderer is GC's now; the app must not carry a glass library"
     )
-    assert "liquid-glass-react" in "\n".join(source_files().values())
-    assert "glass__warp" in built_vendor_js(), "renderer missing from the vendor chunk"
-    assert "glass__warp" not in built_app_js(), "renderer leaked into the app chunk"
+    gc_dir = REPO_ROOT / "src" / "codex_usage_tracker" / "static" / "gc"
+    loader = (gc_dir / "loader.js").read_text(encoding="utf-8")
+    assert "glassAttach" in loader and "glassDetach" in loader, "re-vendor GC: the snapshot predates the renderer"
+    assert ".gc-glass-layer" in (gc_dir / "glass.css").read_text(encoding="utf-8"), "re-vendor GC: glass.css predates the layer rules"
+    assert "liquid-glass-react" not in "\n".join(source_files().values())
+    assert "glass__warp" not in built_vendor_js(), "the old renderer is still in the vendor chunk"
+    assert "glass__warp" not in built_app_js()
+    assert "glassAttach(" in built_app_js(), "the app chunk must call GC's renderer"

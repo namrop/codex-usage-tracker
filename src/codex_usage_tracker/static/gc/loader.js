@@ -1,4 +1,193 @@
 (function() {
+	//#region src/glass.ts
+	var SVG_NS = "http://www.w3.org/2000/svg";
+	var LAYER_CLASS = "gc-glass-layer";
+	var LENS_CLASS = "gc-glass-lens";
+	var CLIPPED_ATTR = "data-gc-clipped";
+	var HOST_ATTR = "data-gc-glass-host";
+	var KNOB_DEFAULTS = {
+		displace: 48,
+		aberration: 2
+	};
+	function readKnobs() {
+		try {
+			const cs = getComputedStyle(document.documentElement);
+			const num = (name, fallback) => {
+				const v = parseFloat(cs.getPropertyValue(name));
+				return Number.isFinite(v) ? v : fallback;
+			};
+			return {
+				displace: num("--gc-glass-displace", KNOB_DEFAULTS.displace),
+				aberration: num("--gc-glass-aberration", KNOB_DEFAULTS.aberration)
+			};
+		} catch {
+			return { ...KNOB_DEFAULTS };
+		}
+	}
+	function lensMarkup(id, k) {
+		const scale = -k.displace;
+		const a = k.aberration;
+		const stop = Math.max(30, 80 - a * 2);
+		return "<defs><radialGradient id=\"" + id + "-edge-mask\" cx=\"50%\" cy=\"50%\" r=\"50%\"><stop offset=\"0%\" stop-color=\"black\" stop-opacity=\"0\"/><stop offset=\"" + stop + "%\" stop-color=\"black\" stop-opacity=\"0\"/><stop offset=\"100%\" stop-color=\"white\" stop-opacity=\"1\"/></radialGradient><filter id=\"" + id + "\" x=\"-35%\" y=\"-35%\" width=\"170%\" height=\"170%\" color-interpolation-filters=\"sRGB\"><feImage x=\"0\" y=\"0\" width=\"100%\" height=\"100%\" result=\"DISPLACEMENT_MAP\" href=\"data:image/jpeg;base64,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cUAUAkEkziomgGgkoxZGgxZFQFQlYnQHRdPfj/10KCSCKESCNiVkViPSLpD0h6I0Q0I0A2IoBWBIJIBKBIJoJIJ2R2J0JWBUJ0JUB0XTv479dFZDYiglYigkhEgjZFQjRFQjRFQjQigFYigHYigmgEgmglYlYnQlQlYlQHQlQnQ9P/kf1yVkNiNCNkNiVENiNiViNEViNkVCVgKCViViViSCViSCVgdCViVCViVCdgVCVCdD1D+U/XBWQ2I0I2Q2JUQ2I0JWQ0I2JUQ2JUI2JUI2J0JWJWJWA2R0BWJ0I2JUJ2BUJUJ0P//EABkQAQEBAQEBAAAAAAAAAAAAAAECABEDEP/aAAgBAQABAgB1atWrVq1atWrVq1atWrVq1atWrVq1atWrVq+OrVq1atWrVq1atWrVq1atWrVq1atWrVq1atXxVppppppdWrVq1atWrVq1NNNNNNNNNNNPVWmmmmms6tWrVq1atWpppppppppppppp6q0000uc51atWrVq1ammmmmmmmmmmmmt1Vpppc5znVq1atWrVqaaaaaaaaaaaaaeqtNLnOc51atWrVq1ammmmmmmmmmmmmnqrS5znOc6tWrVq16222mmmmmmlVppp6tKuc5znOrVq1a9TbbbbTTTTTSq000qtLnOc5zq1atWrW0222200000qqqtKqrnOc5zq1atTbbbbbbbbTTTSqqqqqq5znOc6tTTTbbbbbbbbTTTSqqqqrlVznOctNNNtttttttttNNNNKqqqrqznKqrTTTTbbbbbbbbbTTTSqqqqrqznOc5aaaabbbbbbbbbaaaaVVVVVdWc5znVq1NNttttttttttNNKqqqqudWc5znVq16tbbbbbbbbbbTTSqqqq5XVnOc6tWrVrb1tttttttttNNKqqqqrWrK5VWmmm2230bbbbbbaaaXOc5zlVa1KuVVppptttt9G22222mmlzlVznK6tWVVWmmmm2222222222mlznOc5znLWppVVWmmm22222229bTWrOc5znOcq1qaaVpWmm222222229erVqznOc5znKtatStK0rTbTTbbbberXr1as5znOc5aVpppppWlabaabbbb1ta9WrVnOc5znU0rTTTTTTTTTbTTbbbTWvVq1as5znOdTTStNNNNNNNNNtNNtttN6tWvVq1ZznOrU00rTTTTTTTTTTTTTbTWvVq1atWrOc6tTTTStNNNNNNNNNNtNNtNa9WrVq1Z1Z1NNNNNK1q1NNNNNNNNNNNtNatWrVq1atWrU00000rWrVq1atWrVq1alaaa1atWrVq1NNNammmmla1atWrVq1aterVq16tWrVnVqa1NK1qaaaVX/xAAWEAADAAAAAAAAAAAAAAAAAAAhgJD/2gAIAQEAAz8AaExf/8QAGhEBAQEBAQEBAAAAAAAAAAAAAQISEQADEP/aAAgBAgEBAgDx48ePHjx48ePHjx48ePHjx48ePHjx48ePHj86IiIiIiInjx48ePHjx48IiIiIj0oooooooooRERER73ve60UUUUUUVrWiiiiiihERERER73ve97ooooorRWiiiiihKERERER73ve973RRRRWtFFFFFFCIiIiIiPe973ve60UUVrRRRRRRQiIlCIiI973ve973pRRWiiiiiiiiiiiiiiihEe973ve973RRWtFFFFFFFFFFFFFFFFFFa13ve973WitaKKKKKKKKKKKKKKKKKK1rWtd1rutFa1oooooooooooosssooorWta1rWta1rRRRRRRRRRRZZZZZZZZZWta1rWta1rRRRRRRRRZZZZZZZZZZZZe9a1rWta1rWitaKLLLLLLLLLLLLLLLLL3rWta1rWtFbLLLLLLLLLLLLLLLLLLLL3vWta1rWita1ssssssss+hZZZZZZZZe961rWta0Vre97LLLLLLLLLLLPoWWWWWXrWta1oorWta3ssss+hZZZZ9Cyyyyyyyyiita1orWta1ve9llllllllllllllllFFa0VorWta1ve9llllllllllllllllllFFFaK1rWta1rWiyyyyyyyyyyyyiiiiiiitFFa1rWta1oosoosssssoooosoooorRRRWta1rWta0UUUUUWUUUUUUUUUUUVoooorWta1rWtaKKKKKKmiiiiiiiiiiiiiiitd73ve61oSiiipoqaKKKKKKKKKK0UUUVrve973vREREZoSihEooooorRRRRWtd73ve9EREREREoSiiiiitFllllla73ve9ERERERESiiiiiitH0PoWWWWVrXe96IiIiMoiJRRRRRRWjwlFFllllFFd6IiIiIlCUUUUUUUUUePHjx48ePCIiIiIiIiUUUUUUUUUUUePHjx48ePHjx48ePHjx48IiUUUUUUJRRRX//xAAWEQADAAAAAAAAAAAAAAAAAAABYJD/2gAIAQIBAz8AtEV7/8QAFxEBAQEBAAAAAAAAAAAAAAAAAAECEP/aAAgBAwEBAgCtNNNNNNNNNNNNNNNNNNNNNNNNNNNNNcrTTTTTTTTTTTTTTTTTTTTTTTTTTTTTXKrTTTTTTTU000000000000000000001FVpppppqampqaaaaaaaaaaaaaaaaaaaa5Vaaaaampqampqammmmmmmmmmmlaaaaaaiq0001NTU1NTU1NTTTTTTTTTTSqqtNNNcqtNNSyzU1LNTU1NTTTTTTTTTSqqq001ytNLLLLNTU1NTU1NTbbbTTTTTSqqq001ytNLLLLLNTU1NTU3NttttNNNNNKqq001KrSyyyyyzU1NTU3Nzc02220000qqqqrSqqyyyyyzU1NTU3Nzc3NttttNNNKqqqqqqssssss1NTU3Nzc3NzbbbbTTTSqqqqqqrLLLLLNTU1Nzc3Nzc22220000qqqqqqqqssss1NTU3Nzc3NzbbbbbTTSqqqqqqqqqqzU1NTc3Nzc3Nzbc22000qqqqqqqqqqqtTU3Nzc3Nzc3NtzbTTSqqqqrKqqqqqtNNzc23Nzc3Nzc3NTU1KqqqrKqqqqqtNNNNttzc3Nzc3NzU1NLLLLLKqqqqqqqq0022223Nzc3NzU1NSyyyyyyqqqqqqqrTTbbbbc3Nzc3NTU1LLLLLLKsqqqqqqrTTTTbbbc3Nzc1NTUsssssssqqqqqqrTTTTTbbbTc3NTU1NTUsssssqqqqqqqq0000222023NTU1NTUsssssqqqqqqqq000000003NTU1NTU1LLLLLNKrTSqqqqtNNNNNNtNNTU1NSzUssss00qq0qqqqrTTTTTTTTTU1NTUs1LLLNNNKrTTTSqqq00000000001NTU1LNTU0000qtNNNKqqqtNNNNNNNNTU1NTUs1NNNNNKss1NNNK00qtK0000001NNTU0s000000qq000001NKrStNNNNK1NNNNStNNNNNKqtNNNNNNNK0000000rU0000rTTTTTSq00000rTTTTTTTTTTTTTTTTStNNNNKr/xAAUEQEAAAAAAAAAAAAAAAAAAACg/9oACAEDAQM/AAAf/9k=\" preserveAspectRatio=\"xMidYMid slice\"/><feColorMatrix in=\"DISPLACEMENT_MAP\" type=\"matrix\" values=\"0.3 0.3 0.3 0 0 0.3 0.3 0.3 0 0 0.3 0.3 0.3 0 0 0 0 0 1 0\" result=\"EDGE_INTENSITY\"/><feComponentTransfer in=\"EDGE_INTENSITY\" result=\"EDGE_MASK\"><feFuncA type=\"discrete\" tableValues=\"0 " + a * .05 + " 1\"/></feComponentTransfer><feOffset in=\"SourceGraphic\" dx=\"0\" dy=\"0\" result=\"CENTER_ORIGINAL\"/><feDisplacementMap in=\"SourceGraphic\" in2=\"DISPLACEMENT_MAP\" scale=\"" + scale + "\" xChannelSelector=\"R\" yChannelSelector=\"B\" result=\"RED_DISPLACED\"/><feColorMatrix in=\"RED_DISPLACED\" type=\"matrix\" values=\"1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0\" result=\"RED_CHANNEL\"/><feDisplacementMap in=\"SourceGraphic\" in2=\"DISPLACEMENT_MAP\" scale=\"" + (scale + a * .05 * k.displace) + "\" xChannelSelector=\"R\" yChannelSelector=\"B\" result=\"GREEN_DISPLACED\"/><feColorMatrix in=\"GREEN_DISPLACED\" type=\"matrix\" values=\"0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0\" result=\"GREEN_CHANNEL\"/><feDisplacementMap in=\"SourceGraphic\" in2=\"DISPLACEMENT_MAP\" scale=\"" + (scale + a * .1 * k.displace) + "\" xChannelSelector=\"R\" yChannelSelector=\"B\" result=\"BLUE_DISPLACED\"/><feColorMatrix in=\"BLUE_DISPLACED\" type=\"matrix\" values=\"0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0\" result=\"BLUE_CHANNEL\"/><feBlend in=\"GREEN_CHANNEL\" in2=\"BLUE_CHANNEL\" mode=\"screen\" result=\"GB_COMBINED\"/><feBlend in=\"RED_CHANNEL\" in2=\"GB_COMBINED\" mode=\"screen\" result=\"RGB_COMBINED\"/><feGaussianBlur in=\"RGB_COMBINED\" stdDeviation=\"" + Math.max(.1, .5 - a * .1) + "\" result=\"ABERRATED_BLURRED\"/><feComposite in=\"ABERRATED_BLURRED\" in2=\"EDGE_MASK\" operator=\"in\" result=\"EDGE_ABERRATION\"/><feComponentTransfer in=\"EDGE_MASK\" result=\"INVERTED_MASK\"><feFuncA type=\"table\" tableValues=\"1 0\"/></feComponentTransfer><feComposite in=\"CENTER_ORIGINAL\" in2=\"INVERTED_MASK\" operator=\"in\" result=\"CENTER_CLEAN\"/><feComposite in=\"EDGE_ABERRATION\" in2=\"CENTER_CLEAN\" operator=\"over\"/></filter></defs>";
+	}
+	var HOST_PROPS = [
+		"position",
+		"z-index",
+		"clip-path",
+		"background-color",
+		"background-image"
+	];
+	var hosts = /* @__PURE__ */ new Map();
+	var seq = 0;
+	var effectiveNow = false;
+	var knobsNow = { ...KNOB_DEFAULTS };
+	var settleTimers = [];
+	function sizeLens(svg, host) {
+		const r = host.getBoundingClientRect();
+		const w = Math.max(1, Math.round(r.width || host.offsetWidth || 0));
+		const h = Math.max(1, Math.round(r.height || host.offsetHeight || 0));
+		svg.setAttribute("width", String(w));
+		svg.setAttribute("height", String(h));
+		svg.style.width = w + "px";
+		svg.style.height = h + "px";
+	}
+	function saveHostProps(host) {
+		const out = {};
+		HOST_PROPS.forEach((p) => {
+			out[p] = [host.style.getPropertyValue(p), host.style.getPropertyPriority(p)];
+		});
+		return out;
+	}
+	function restoreHostProps(host, saved) {
+		HOST_PROPS.forEach((p) => {
+			const [value, priority] = saved[p];
+			if (value) host.style.setProperty(p, value, priority);
+			else host.style.removeProperty(p);
+		});
+	}
+	function handOff(host, m) {
+		restoreHostProps(host, m.saved);
+		const cs = getComputedStyle(host);
+		const clip = cs.clipPath && cs.clipPath !== "none" ? cs.clipPath : "";
+		if (cs.position === "static") host.style.setProperty("position", "relative");
+		if (cs.zIndex === "auto") host.style.setProperty("z-index", "0");
+		if (clip) {
+			host.style.setProperty("clip-path", "none");
+			host.style.setProperty("background-color", "transparent");
+			host.style.setProperty("background-image", "none");
+			m.layer.style.setProperty("clip-path", clip);
+			m.layer.setAttribute(CLIPPED_ATTR, "");
+			m.clipped = true;
+		} else {
+			host.style.setProperty("background-color", "var(--gc-glass-tint)");
+			m.layer.style.removeProperty("clip-path");
+			m.layer.removeAttribute(CLIPPED_ATTR);
+			m.clipped = false;
+		}
+	}
+	function mount(host) {
+		const id = "gc-lens-" + ++seq;
+		const layer = document.createElement("span");
+		layer.className = LAYER_CLASS;
+		layer.setAttribute("aria-hidden", "true");
+		layer.style.setProperty("--gc-glass-lens", "url(#" + id + ")");
+		const svg = document.createElementNS(SVG_NS, "svg");
+		svg.id = id + "-svg";
+		svg.setAttribute("class", LENS_CLASS);
+		svg.setAttribute("aria-hidden", "true");
+		svg.setAttribute("style", "position:fixed;left:0;top:0;opacity:0.01;pointer-events:none;z-index:-1000");
+		svg.innerHTML = lensMarkup(id, knobsNow);
+		const m = {
+			layer,
+			svg,
+			id,
+			ro: null,
+			saved: saveHostProps(host),
+			clipped: false
+		};
+		document.body.appendChild(svg);
+		sizeLens(svg, host);
+		host.appendChild(layer);
+		host.setAttribute(HOST_ATTR, "");
+		handOff(host, m);
+		if (typeof ResizeObserver === "function") {
+			m.ro = new ResizeObserver(() => sizeLens(svg, host));
+			m.ro.observe(host);
+		}
+		return m;
+	}
+	function unmount(host, m) {
+		if (m.ro) m.ro.disconnect();
+		m.svg.remove();
+		m.layer.remove();
+		host.removeAttribute(HOST_ATTR);
+		restoreHostProps(host, m.saved);
+	}
+	function retune() {
+		knobsNow = readKnobs();
+		hosts.forEach((m) => {
+			if (m) m.svg.innerHTML = lensMarkup(m.id, knobsNow);
+		});
+	}
+	function reconcile() {
+		hosts.forEach((m, host) => {
+			if (effectiveNow && !m) hosts.set(host, mount(host));
+			else if (!effectiveNow && m) {
+				unmount(host, m);
+				hosts.set(host, null);
+			}
+		});
+	}
+	function settle() {
+		settleTimers.forEach((t) => clearTimeout(t));
+		settleTimers = [];
+		const pass = () => {
+			retune();
+			hosts.forEach((m, host) => {
+				if (m) handOff(host, m);
+			});
+		};
+		pass();
+		[
+			150,
+			400,
+			900,
+			2e3,
+			4e3
+		].forEach((ms) => {
+			settleTimers.push(window.setTimeout(pass, ms));
+		});
+	}
+	function glassAttach(el) {
+		if (!(el instanceof HTMLElement)) return;
+		if (hosts.has(el)) return;
+		hosts.set(el, effectiveNow ? mount(el) : null);
+	}
+	function glassDetach(el) {
+		if (!(el instanceof HTMLElement)) return;
+		const m = hosts.get(el);
+		if (m) unmount(el, m);
+		hosts.delete(el);
+	}
+	function glassLayers() {
+		let n = 0;
+		hosts.forEach((m) => {
+			if (m) n++;
+		});
+		return n;
+	}
+	/** called by the loader: the effective state changed (toggle, clamp) */
+	function glassRendererSetEffective(effective) {
+		effectiveNow = effective;
+		if (effective) knobsNow = readKnobs();
+		reconcile();
+	}
+	/** called by the loader on every apply (theme/shape): re-evaluate hand-offs */
+	function glassRendererSettle() {
+		if (typeof window === "undefined") return;
+		settle();
+	}
+	//#endregion
 	//#region src/loader.ts
 	var SEED_THEMES = [
 		"governed-cognition",
@@ -30,7 +219,7 @@
 	var SOURCE_EVENT = "gc:source";
 	var GLASS_EVENT = "gc:glass";
 	function defaultOrigin() {
-		return "http://" + (typeof location !== "undefined" && location.hostname || "127.0.0.1") + ":7312";
+		return "https://gc.sol.pharos.zone";
 	}
 	var script = typeof document !== "undefined" ? document.currentScript : null;
 	var attr = (name) => script && "getAttribute" in script ? script.getAttribute(name) : null;
@@ -212,6 +401,7 @@
 			theme,
 			shape: resolved
 		} }));
+		glassRendererSettle();
 		return {
 			theme,
 			shape: resolved
@@ -241,6 +431,7 @@
 			document.documentElement.style.setProperty("--gc-glass-opacity", String(desired.glassOpacity));
 		}
 		setLink("gc-glass-css", desired.glass ? "glass.css" : null, "gc-shape");
+		glassRendererSetEffective(effective);
 		const announce = (desired.glass ? "on" : "off") + "/" + (effective ? "on" : "off") + "/" + desired.glassOpacity;
 		if (announce === glassAnnounced) return;
 		glassAnnounced = announce;
@@ -443,6 +634,9 @@
 		setGlass,
 		glassOpacity: () => desired.glassOpacity,
 		setGlassOpacity,
+		glassAttach,
+		glassDetach,
+		glassLayers,
 		ready: null
 	};
 	globalThis.GovernedCognition = GC;
