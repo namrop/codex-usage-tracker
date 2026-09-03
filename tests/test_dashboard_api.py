@@ -536,7 +536,7 @@ def test_estate_wide_token_composition_and_cache_hit_charts_exist():
     assert 'canvasId="cacheHitRateChart"' in card
     assert 'labelsId="cacheHitRateLabels"' in card
     assert "function cacheHitRateModel" in card
-    assert "spanGaps: spanGapBuckets" in card
+    assert "spanGaps: false" in card
     assert "prompt > 0 ? (cache / prompt) * 100 : null" in card
     assert "windowAverage" in card
     # Provider identity rides the same rank-slot mapping every other unified
