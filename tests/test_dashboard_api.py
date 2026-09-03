@@ -536,7 +536,7 @@ def test_estate_wide_token_composition_and_cache_hit_charts_exist():
     assert 'canvasId="cacheHitRateChart"' in card
     assert 'labelsId="cacheHitRateLabels"' in card
     assert "function cacheHitRateModel" in card
-    assert "spanGaps: false" in card
+    assert "spanGaps: spanGapBuckets" in card
     assert "prompt > 0 ? (cache / prompt) * 100 : null" in card
     assert "windowAverage" in card
     # Provider identity rides the same rank-slot mapping every other unified
@@ -2080,7 +2080,7 @@ def test_unified_subscription_provider_palette_is_stable_contrasting_and_scoped(
     # item 11: the five-hour canvas plots the trailing 48 buckets) — while the
     # tables keep rendering from the unsliced rows.
     card = frontend_surfaces.source("components/SubscriptionsCard.tsx")
-    assert "subscriptionQuotaDatasets(palette, chartRows)" in card
+    assert "subscriptionQuotaDatasets(palette, chartRows, bucketMinutes)" in card
     assert "chartBucketLimit={48}" in card
     assert "const color = subscriptionUnifiedProviderColor(palette, row, index);" in card
     assert "borderDash: subscriptionUnifiedQuotaDash(row)" in card
@@ -2154,7 +2154,7 @@ def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_ex
     assert "OpenAI / Codex reports no comparable five-hour quota" in quota_src
     assert "quotaConfidenceDash" in quota_src
     assert 'status === "exact" ? [] : [7, 5]' in quota_src
-    assert "spanGaps: false" in card
+    assert "spanGaps: spanGapBuckets" in card
     assert "confidence_status" in card
     assert ".destroy()" in canvas
     assert "animation: REDUCED_MOTION ? false" in chart
