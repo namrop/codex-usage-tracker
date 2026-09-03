@@ -99,6 +99,9 @@ function xScaleTicks(SERIES: Palette["series"], viewportWidth: number, extra: Re
   return {
     color: SERIES.muted,
     autoSkip: true,
+    // Edge labels are inner-aligned, which autoSkip does not measure; the
+    // padding keeps the first two ticks from touching at narrow widths.
+    autoSkipPadding: 28,
     maxRotation: 0,
     minRotation: 0,
     maxTicksLimit: xTickLimit(viewportWidth),
