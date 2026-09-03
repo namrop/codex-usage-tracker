@@ -35,6 +35,7 @@ export function withAlpha(color: string, alpha: number): string {
 }
 
 export interface SeriesPalette {
+  text: string;
   muted: string;
   line: string;
   input: string;
@@ -46,6 +47,13 @@ export interface SeriesPalette {
   gridSoft: string;
   tooltipBg: string;
 }
+
+// Hue-spread walk over the ten rank slots: adjacent rank members can sit
+// next to each other on the wheel (this theme's rank-1 and rank-2 are
+// near-identical light blues, screenshot-verified 2026-09-02), so anything
+// that hands consecutive series consecutive colours walks the set in this
+// order instead of by rank.
+export const RANK_SPREAD_ORDER: readonly number[] = Object.freeze([0, 5, 2, 7, 4, 9, 1, 6, 3, 8]);
 
 export interface Palette {
   series: SeriesPalette;
@@ -64,10 +72,14 @@ export function resolvePalette(): Palette {
   ));
   return {
     series: {
+      text: getColor("--text"),
       muted: getColor("--muted"),
       line: getColor("--line-soft"),
       input: getColor("--sky"),
-      cacheRead: getColor("--spark-session"),
+      // --cache-read (rank-9): --spark-session (rank-10) resolved to the same
+      // teal as --sky (role-info) in this theme, so Input and Cache read
+      // were indistinguishable in the composition chart.
+      cacheRead: getColor("--cache-read"),
       cacheWrite: getColor("--copper"),
       output: getColor("--weekly"),
       reasoning: getColor("--spark-weekly"),
@@ -76,7 +88,7 @@ export function resolvePalette(): Palette {
       tooltipBg: withAlpha(getColor("--bg"), 0.96),
     },
     rankColors,
-    modelColors: rankColors.slice(),
+    modelColors: RANK_SPREAD_ORDER.map((slot) => rankColors[slot]),
     harnessColors: {
       claude_code: getColor("--gc-cat-ai-usage-harness-claude_code"),
       claude_code_secondary: getColor("--gc-cat-ai-usage-harness-claude_code_secondary"),

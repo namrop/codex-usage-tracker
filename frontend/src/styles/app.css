@@ -21,6 +21,10 @@
   --muted-2: var(--gc-muted);
   --weekly: var(--gc-cat-ai-usage-series-rank-rank-7);
   --spark-session: var(--gc-cat-ai-usage-series-rank-rank-10);
+  /* Cache-read series: rank-9, not rank-10 — rank-10 and --gc-role-info
+   * (--sky, the Input series) resolve to near-identical teals in the
+   * neo-andean theme (screenshot-verified 2026-09-02). */
+  --cache-read: var(--gc-cat-ai-usage-series-rank-rank-9);
   --spark-weekly: var(--gc-cat-ai-usage-series-rank-rank-3);
   --warning: var(--gc-role-threshold);
   --danger: var(--gc-role-violation);
@@ -122,6 +126,12 @@ body {
 canvas {
   display: block;
   max-width: 100%;
+}
+
+/* `display: block` above outranks the UA's [hidden] rule; this makes the
+ * attribute mean what it says on a destroyed chart's canvas. */
+canvas[hidden] {
+  display: none;
 }
 
 /* OPAQUE PLANES — the chart-legibility law (SURFACES.md §A: "without

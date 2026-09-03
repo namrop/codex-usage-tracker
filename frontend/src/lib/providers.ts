@@ -1,4 +1,4 @@
-import type { Palette } from "./palette";
+import { RANK_SPREAD_ORDER, type Palette } from "./palette";
 
 // Providers pin fixed slots of the rank set (nearest-hue to the retired
 // literal map) so a provider keeps one color across renders; unmapped
@@ -13,10 +13,13 @@ export const SUBSCRIPTION_UNIFIED_PROVIDER_RANK: Readonly<Record<string, number>
 });
 
 // The rank set has ten members (rank-1 … rank-10, indexed 0–9); these are
-// the slots the map above leaves free — 1, 4, 6, 8, 9 as of this writing —
+// the slots the map above leaves free — 4, 9, 1, 6, 8 as of this writing —
 // derived rather than listed so a change to the map cannot desynchronize.
+// Walked in hue-spread order (RANK_SPREAD_ORDER), not by rank: the first
+// unmapped provider used to land on slot 1, the light blue beside
+// openai-codex's slot-0 cyan.
 export const SUBSCRIPTION_UNIFIED_UNCLAIMED_RANK_SLOTS: readonly number[] = Object.freeze(
-  Array.from({ length: 10 }, (_unused, slot) => slot)
+  RANK_SPREAD_ORDER
     .filter((slot) => !Object.values(SUBSCRIPTION_UNIFIED_PROVIDER_RANK).includes(slot)),
 );
 

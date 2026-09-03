@@ -8,8 +8,10 @@ import { useNow } from "../hooks/useNow";
 // same component, so role class, ticking countdown, and the card anchor stay
 // in one place. Only rows the provider measured EXACTLY qualify — the rail
 // claims "exact resets" and an estimated window has no honest countdown.
-// Same provider+window twice = a second account, numbered by the API's
-// provider_account_index when it carries one, else by order.
+// Same provider+window twice = a second account. When the API carries a
+// provider_account_count above one every chip of that provider is numbered
+// ("Claude 1", "Claude 2" — the same form the chart legends use); without
+// it, a duplicate window is numbered by order as "(2)".
 
 export interface ResetChipModel {
   // Canonical provider id (identity); `label` is the display form.
@@ -62,9 +64,11 @@ export function deriveResetChips(rows: QuotaRow[]): ResetChipModel[] {
     const dupKey = `${chip.provider}:${chip.windowName}`;
     const byOrder = (seen.get(dupKey) || 0) + 1;
     seen.set(dupKey, byOrder);
-    const ordinal = accountOrdinal || byOrder;
     const name = chipDisplayName(chip.cardKey, rawProvider);
-    return { ...chip, label: ordinal > 1 ? `${name} (${ordinal})` : name };
+    const label = accountOrdinal
+      ? `${name} ${accountOrdinal}`
+      : byOrder > 1 ? `${name} (${byOrder})` : name;
+    return { ...chip, label };
   });
 }
 
@@ -101,12 +105,20 @@ export function ResetChip({ chip, id, hidden }: { chip: ResetChipModel; id?: str
   );
 }
 
-export function ResetRail({ chips, loading }: { chips: ResetChipModel[]; loading: boolean }) {
+export function ResetRail({ chips, loading, unavailable = false }: {
+  chips: ResetChipModel[];
+  loading: boolean;
+  // A failed subscriptions fetch with no last-good payload: the rail must
+  // not read "Loading…" forever.
+  unavailable?: boolean;
+}) {
   const summary = loading
     ? "Loading subscription windows…"
-    : chips.length
-      ? `${chips.length} windows reporting exact resets; soonest first.`
-      : "No quota windows report an exact reset time.";
+    : unavailable
+      ? "Subscription windows unavailable."
+      : chips.length
+        ? `${chips.length} windows reporting exact resets; soonest first.`
+        : "No quota windows report an exact reset time.";
   return (
     <>
       <p id="resetRailSummary" className="chart-summary" aria-live="polite">{summary}</p>

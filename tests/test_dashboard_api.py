@@ -160,6 +160,14 @@ def test_dashboard_summary_exposes_banked_reset_credits(tmp_path, monkeypatch):
     assert b"Banked resets" not in page.data
 
 
+def _in_bucket(value, index, count=4):
+    """A ``count``-bucket series (four 15-minute buckets per hour) holding
+    ``value`` at ``index`` and ``None`` everywhere else."""
+    values = [None] * count
+    values[index] = value
+    return values
+
+
 def _quota_observation(source_id: str, quota_name: str, **updates):
     row = {
         "fact_type": "quota_observation_v1",
@@ -564,8 +572,10 @@ def test_captions_are_single_sentence_with_doctrine_at_section_level():
     # Subscriptions header, not on each twin utilization chart.
     assert joined.count("never tokens or dollars") == 1
     assert "this does not compare tokens or dollars" not in joined
-    # The UTC policy note lives once at section level.
-    assert joined.count("complete UTC hours (countdowns run in wall-clock time)") == 1
+    # The UTC policy note lives once at section level. Its bucket-width
+    # noun is derived from the API's bucket_minutes (15-minute buckets,
+    # keeper-ruled 2026-09-02), so the pin is the fixed clause.
+    assert joined.count("(countdowns run in wall-clock time)") == 1
 
 
 def test_subscription_meters_never_draw_a_lying_bar():
@@ -804,7 +814,7 @@ def test_subscription_chart_seeds_expected_providers_for_empty_and_partial_ledge
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 8, 5, 12, 30, tzinfo=tz)
+            return cls(2026, 8, 5, 12, 5, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
     expected = [
@@ -957,7 +967,7 @@ def test_unknown_provider_punctuation_does_not_merge_jsonl_and_sqlite_payloads(
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 8, 5, 12, 30, tzinfo=tz)
+            return cls(2026, 8, 5, 12, 5, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
     monkeypatch.setattr(
@@ -1038,7 +1048,7 @@ def test_unknown_provider_punctuation_does_not_merge_jsonl_and_sqlite_payloads(
         assert len(card["series"]) == 1
         assert card["series"][0]["provider"] == provider
         assert card["series"][0]["raw_provider_ids"] == [provider]
-        assert card["series"][0]["values"] == [expected_pct]
+        assert card["series"][0]["values"] == _in_bucket(expected_pct, 1)
 
     unified = chart["unified_weekly"]
     assert unified["series"] == []
@@ -1067,7 +1077,10 @@ def test_unknown_provider_punctuation_does_not_merge_jsonl_and_sqlite_payloads(
         assert private_value not in serialized
 
 
-def test_subscription_current_partial_hour_is_latest_but_not_charted(tmp_path, monkeypatch):
+def test_subscription_current_partial_bucket_is_latest_but_not_charted(tmp_path, monkeypatch):
+    """At 12:34 the chart ends on the 12:30 boundary (15-minute buckets,
+    keeper-ruled 2026-09-02): a 12:20 observation is the last complete
+    bucket, a 12:32 observation is ``latest`` but never charted."""
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -1076,17 +1089,17 @@ def test_subscription_current_partial_hour_is_latest_but_not_charted(tmp_path, m
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
     rows = [
         _quota_observation(
-            "complete-hour",
+            "complete-bucket",
             "week",
-            observed_at="2026-08-05T11:45:00Z",
+            observed_at="2026-08-05T12:20:00Z",
             used_value="10",
             remaining_value="90",
             limit_value="100",
         ),
         _quota_observation(
-            "current-hour",
+            "current-bucket",
             "week",
-            observed_at="2026-08-05T12:05:00Z",
+            observed_at="2026-08-05T12:32:00Z",
             used_value="90",
             remaining_value="10",
             limit_value="100",
@@ -1100,8 +1113,11 @@ def test_subscription_current_partial_hour_is_latest_but_not_charted(tmp_path, m
     ).get_json()
 
     assert payload["latest"][0]["used_value"] == "90"
-    week = payload["time_series"]["providers"][0]["series"][0]
-    assert week["values"] == [None, 10.0]
+    chart = payload["time_series"]
+    assert chart["window_start"] == "2026-08-05T10:30:00Z"
+    assert chart["window_end"] == "2026-08-05T12:30:00Z"
+    week = chart["providers"][0]["series"][0]
+    assert week["values"] == _in_bucket(10.0, 7, count=8)
     assert "90.0" not in json.dumps(payload["time_series"])
 
 
@@ -1209,7 +1225,7 @@ def test_subscription_exact_request_time_is_latest_without_admitting_future_fact
     provider = payload["time_series"]["providers"][0]
     assert provider["provider"] == "openai-codex"
     assert provider["observation_count"] == 1
-    assert provider["series"][0]["values"] == [10.0]
+    assert provider["series"][0]["values"] == _in_bucket(10.0, 1)
     assert provider["series"][0]["latest_observed_at"] == "2026-08-05T11:45:00Z"
 
     serialized = json.dumps(payload)
@@ -1237,7 +1253,7 @@ def test_subscription_series_identity_and_equal_timestamp_ties_have_jsonl_sqlite
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 8, 5, 12, 30, tzinfo=tz)
+            return cls(2026, 8, 5, 12, 5, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
     identities = [
@@ -1301,13 +1317,15 @@ def test_subscription_series_identity_and_equal_timestamp_ties_have_jsonl_sqlite
     openai = payloads[0]["time_series"]["providers"][0]
     week_series = [row for row in openai["series"] if row["quota_name"] == "week"]
     assert len(week_series) == 2
-    assert [row["values"] for row in week_series] == [[10.0], [80.0]]
+    assert [row["values"] for row in week_series] == [
+        _in_bucket(10.0, 0), _in_bucket(80.0, 0),
+    ]
     assert [row["label"] for row in week_series] == [
         "week · alpha-harness · account 1",
         "week · beta-harness · account 2",
     ]
     month = next(row for row in openai["series"] if row["quota_name"] == "month")
-    assert month["values"] == [95.0]
+    assert month["values"] == _in_bucket(95.0, 1)
     assert next(row for row in payloads[0]["latest"] if row["quota_name"] == "month")[
         "used_value"
     ] == "95"
@@ -1319,7 +1337,9 @@ def test_subscription_series_identity_and_equal_timestamp_ties_have_jsonl_sqlite
         "OpenAI / Codex · account 1",
         "OpenAI / Codex · account 2",
     ]
-    assert [row["values"] for row in openai_week] == [[10.0], [80.0]]
+    assert [row["values"] for row in openai_week] == [
+        _in_bucket(10.0, 0), _in_bucket(80.0, 0),
+    ]
     assert [row["provider_account_index"] for row in openai_week] == [1, 2]
     assert all(row["provider_account_count"] == 3 for row in openai_week)
     assert month["provider_account_index"] == 3
@@ -1350,7 +1370,7 @@ def test_subscription_null_and_literal_default_accounts_remain_distinct_across_b
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 8, 5, 12, 30, tzinfo=tz)
+            return cls(2026, 8, 5, 12, 5, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
     rows = [
@@ -1401,7 +1421,9 @@ def test_subscription_null_and_literal_default_accounts_remain_distinct_across_b
         "week · hermes · account 1",
         "week · hermes · account 2",
     ]
-    assert [series["values"] for series in openai["series"]] == [[10.0], [90.0]]
+    assert [series["values"] for series in openai["series"]] == [
+        _in_bucket(10.0, 1), _in_bucket(90.0, 1),
+    ]
 
     assert len(payload["latest"]) == 2
     assert {row["used_value"] for row in payload["latest"]} == {"10", "90"}
@@ -1415,7 +1437,9 @@ def test_subscription_null_and_literal_default_accounts_remain_distinct_across_b
         "OpenAI / Codex · account 1",
         "OpenAI / Codex · account 2",
     ]
-    assert [series["values"] for series in openai_unified] == [[10.0], [90.0]]
+    assert [series["values"] for series in openai_unified] == [
+        _in_bucket(10.0, 1), _in_bucket(90.0, 1),
+    ]
     assert not any(
         row["provider"] == "openai-codex" for row in unified["no_data_providers"]
     )
@@ -1435,13 +1459,16 @@ def test_subscription_null_and_literal_default_accounts_remain_distinct_across_b
         assert private_value not in serialized
 
 
-def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_ratios(
+def test_subscription_chart_uses_actual_last_samples_aliases_and_safe_ratios(
     tmp_path, monkeypatch
 ):
+    """Within one 15-minute bucket the last observation wins (09:05 then
+    09:10; 10:10 then the impossible 10:12), so the tie rule is exercised on
+    the bucket grid the charts actually draw."""
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 8, 5, 12, 34, 56, tzinfo=tz)
+            return cls(2026, 8, 5, 12, 4, 56, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
 
@@ -1466,7 +1493,7 @@ def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_rat
         observation(
             "codex-last",
             "week",
-            "2026-08-05T09:55:00Z",
+            "2026-08-05T09:10:00Z",
             "codex",
             used_value="20",
             remaining_value="80",
@@ -1483,7 +1510,7 @@ def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_rat
         observation(
             "impossible-last",
             "week",
-            "2026-08-05T10:50:00Z",
+            "2026-08-05T10:12:00Z",
             "openai-codex",
             used_value="120",
             remaining_value="0",
@@ -1608,12 +1635,13 @@ def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_rat
     assert payload["observations"] == []
     chart = payload["time_series"]
     assert chart["bucket_starts"] == [
-        "2026-08-05T09:00:00Z",
-        "2026-08-05T10:00:00Z",
-        "2026-08-05T11:00:00Z",
+        f"2026-08-05T{hour:02d}:{minute:02d}:00Z"
+        for hour in (9, 10, 11)
+        for minute in (0, 15, 30, 45)
     ]
     assert chart["window_end"] == "2026-08-05T12:00:00Z"
-    assert chart["bucket_count"] == 3
+    assert chart["bucket_minutes"] == 15
+    assert chart["bucket_count"] == 12
 
     providers = {row["provider"]: row for row in chart["providers"]}
     assert list(providers)[:5] == [
@@ -1631,11 +1659,13 @@ def test_subscription_hourly_chart_uses_actual_last_samples_aliases_and_safe_rat
         "week · hermes · account 1",
     ]
     codex_week, hermes_week = openai["series"]
-    assert codex_week["values"] == [None, None, 33.3333]
+    assert codex_week["values"] == _in_bucket(33.3333, 9, count=12)
     assert codex_week["sample_count"] == 1
     assert codex_week["confidence_status"] == "exact"
     assert codex_week["harness"] == "codex-cli"
-    assert hermes_week["values"] == [20.0, None, None]
+    # 09:00 bucket: the 09:10 sample wins over 09:05; 10:00 bucket: the
+    # impossible 10:12 sample wins over the valid 10:10 one and reads None.
+    assert hermes_week["values"] == _in_bucket(20.0, 0, count=12)
     assert hermes_week["sample_count"] == 1
     assert hermes_week["confidence_status"] == "estimated"
     assert {row["quota_name"] for row in openai["unavailable_series"]} == {"five_hour"}
@@ -1716,7 +1746,7 @@ def test_subscription_api_unifies_five_hour_quotas_without_substitution_or_accou
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 8, 5, 12, 30, tzinfo=tz)
+            return cls(2026, 8, 5, 12, 5, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
 
@@ -1792,16 +1822,12 @@ def test_subscription_api_unifies_five_hour_quotas_without_substitution_or_accou
         "Kimi K3 Coding",
     ]
     assert [row["values"] for row in five_hour["series"]] == [
-        [11.0],
-        [61.0],
-        [33.0],
-        [55.0],
-        [77.0],
+        _in_bucket(value, 1) for value in (11.0, 61.0, 33.0, 55.0, 77.0)
     ]
     assert [row["provider_account_index"] for row in five_hour["series"][:2]] == [1, 2]
     assert all(row["provider_account_count"] == 2 for row in five_hour["series"][:2])
-    assert [72.0] not in [row["values"] for row in five_hour["series"]]
-    assert [11.0 + 61.0] not in [row["values"] for row in five_hour["series"]]
+    assert _in_bucket(72.0, 1) not in [row["values"] for row in five_hour["series"]]
+    assert _in_bucket(11.0 + 61.0, 1) not in [row["values"] for row in five_hour["series"]]
     assert five_hour["no_data_providers"] == [
         {
             "provider": "openai-codex",
@@ -1821,12 +1847,7 @@ def test_subscription_api_unifies_five_hour_quotas_without_substitution_or_accou
         "kimi-k3-coding",
     ]
     assert [row["values"] for row in weekly["series"]] == [
-        [91.0],
-        [22.0],
-        [72.0],
-        [44.0],
-        [66.0],
-        [88.0],
+        _in_bucket(value, 1) for value in (91.0, 22.0, 72.0, 44.0, 66.0, 88.0)
     ]
 
     serialized = json.dumps(payload)
@@ -1882,7 +1903,7 @@ def test_unified_five_hour_handles_one_series_and_missing_or_invalid_primary_dat
     )["unified_five_hour"]
 
     assert [row["label"] for row in result["series"]] == ["OpenCode Go"]
-    assert result["series"][0]["values"] == [25.0]
+    assert result["series"][0]["values"] == _in_bucket(25.0, 1)
     assert result["no_data_providers"] == [
         {
             "provider": "openai-codex",
@@ -2012,12 +2033,14 @@ def test_extreme_quota_timestamps_fail_safely_in_parser_and_api(tmp_path):
 
 
 def test_subscription_quota_chart_ticks_are_responsive():
+    """The quota chart's x ticks come from the shared viewport-aware
+    limit, not a fixed count — 15-minute buckets put 672 points on the
+    weekly chart, so the tick budget must follow the viewport."""
     chart = frontend_surfaces.source("lib/chart.ts")
+    assert "export function xTickLimit(viewportWidth: number): number" in chart
+    assert "maxTicksLimit: xTickLimit(viewportWidth)" in chart
     options_at = chart.index("export function subscriptionQuotaChartOptions")
-    assert (
-        'maxTicksLimit: window.matchMedia("(max-width: 520px)").matches ? 3 : 9,'
-        in chart[options_at:]
-    )
+    assert "ticks: xScaleTicks(SERIES, viewportWidth)" in chart[options_at:]
 
 
 def test_unified_subscription_provider_palette_is_stable_contrasting_and_scoped():
@@ -2144,11 +2167,13 @@ def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_ex
         r"\.subscription-unified-history-grid\s*\{(?P<body>[^}]*)\}", css
     )
     assert responsive_grid_rule is not None
+    # The weekly and five-hour charts stack full-width (keeper-ruled
+    # 2026-09-02); the auto-fit two-up grid is retired.
     assert re.search(
-        r"grid-template-columns:\s*repeat\(auto-fit,\s*"
-        r"minmax\(min\(100%,\s*520px\),\s*1fr\)\)\s*;",
+        r"grid-template-columns:\s*minmax\(0,\s*1fr\)\s*;",
         responsive_grid_rule.group("body"),
     )
+    assert "auto-fit" not in responsive_grid_rule.group("body")
     viewport = '<meta name="viewport" content="width=device-width, initial-scale=1.0" />'
     assert viewport in frontend_surfaces.entry_html()
     assert viewport in frontend_surfaces.built_html()
@@ -2435,11 +2460,19 @@ def test_page_and_apis_are_never_browser_cached(tmp_path):
 
 
 class _FrozenNoon(datetime):
-    """2026-07-14T12:34:56Z, so an hours window ends at 12:00Z."""
+    """2026-07-14T12:34:56Z; an hours window ends on the 12:30Z boundary."""
 
     @classmethod
     def now(cls, tz=None):
         return cls(2026, 7, 14, 12, 34, 56, tzinfo=tz)
+
+
+class _FrozenJustPastNoon(datetime):
+    """2026-07-14T12:04:56Z, so an hours window ends at 12:00Z exactly."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 7, 14, 12, 4, 56, tzinfo=tz)
 
 
 def _unified_client(tmp_path, rows):
@@ -2468,11 +2501,163 @@ def _window_fact(source_id, occurred_at, provider, **updates):
     return row
 
 
+def _bucketed_client(tmp_path, usage_rows, quota_rows):
+    """One app over both private ledgers, so the usage and quota charts are
+    generated from the same frozen clock."""
+    usage = tmp_path / "unified.jsonl"
+    usage.write_text("\n".join(canonical_json(row) for row in usage_rows) + "\n", encoding="utf-8")
+    quota = tmp_path / "quota.jsonl"
+    quota.write_text("\n".join(canonical_json(row) for row in quota_rows) + "\n", encoding="utf-8")
+    return create_app(
+        atrium_root=str(tmp_path),
+        ledger=str(tmp_path / "codex.jsonl"),
+        unified_usage_ledger=str(usage),
+        quota_ledger=str(quota),
+    ).test_client()
+
+
+def test_hours_window_ends_on_the_most_recent_complete_fifteen_minute_boundary(
+    tmp_path, monkeypatch
+):
+    """15-minute buckets (keeper-ruled 2026-09-02: "15 minute buckets are
+    better across all of the charts"). At 12:34:56Z an hours= window ends on
+    12:30Z — the last complete quarter hour — not on 12:00Z, and hours=5 is
+    twenty buckets from 07:30Z on both the usage and the quota surfaces."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenNoon)
+    assert dashboard_module._BUCKET_MINUTES == 15
+    assert dashboard_module._BUCKET_SECONDS == 900
+    client = _bucketed_client(tmp_path, [], [])
+
+    usage = client.get("/api/unified-usage?hours=5").get_json()["time_series"]
+    quota = client.get("/api/subscriptions?hours=5&history=0").get_json()["time_series"]
+    for series in (usage, quota):
+        assert series["window_end"] == "2026-07-14T12:30:00Z"
+        assert series["window_start"] == "2026-07-14T07:30:00Z"
+        assert series["bucket_minutes"] == 15
+        assert series["bucket_count"] == 20
+        assert series["bucket_starts"][0] == "2026-07-14T07:30:00Z"
+        assert series["bucket_starts"][-1] == "2026-07-14T12:15:00Z"
+        assert len(series["bucket_starts"]) == 20
+
+
+def test_bucket_count_is_exactly_four_per_hour_for_every_hours_value(tmp_path, monkeypatch):
+    """hours=168 is 672 buckets; every integer hours value yields hours * 4
+    buckets on an unbroken 15-minute grid from window_start."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenNoon)
+    client = _bucketed_client(tmp_path, [], [])
+
+    for hours in (1, 5, 24, 168):
+        for path in (
+            f"/api/unified-usage?hours={hours}",
+            f"/api/subscriptions?hours={hours}&history=0",
+        ):
+            series = client.get(path).get_json()["time_series"]
+            assert series["bucket_count"] == hours * 4, path
+            assert len(series["bucket_starts"]) == hours * 4, path
+            start = datetime(2026, 7, 14, 12, 30, tzinfo=timezone.utc) - timedelta(hours=hours)
+            assert series["window_start"] == start.strftime("%Y-%m-%dT%H:%M:%SZ"), path
+            assert series["bucket_starts"] == [
+                (start + timedelta(minutes=15 * index)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                for index in range(hours * 4)
+            ], path
+
+    week = client.get("/api/unified-usage?hours=168").get_json()["time_series"]
+    assert week["bucket_count"] == 672
+    assert week["bucket_starts"][0] == "2026-07-07T12:30:00Z"
+    assert week["bucket_starts"][-1] == "2026-07-14T12:15:00Z"
+
+
+def test_rows_land_in_the_quarter_hour_bucket_that_contains_them(tmp_path, monkeypatch):
+    """A row at HH:07 belongs to the HH:00 bucket and a row at HH:22 to the
+    HH:15 bucket — on the model series, the token composition, the status
+    strip and the quota series alike."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenJustPastNoon)
+    client = _bucketed_client(
+        tmp_path,
+        [
+            _window_fact("at-07", "2026-07-14T11:07:00Z", "anthropic", input_tokens=7,
+                         model_requested="claude", request_status="error", error_class="boom"),
+            _window_fact("at-22", "2026-07-14T11:22:00Z", "anthropic", input_tokens=22,
+                         model_requested="claude"),
+        ],
+        [
+            _quota_observation("q-07", "week", observed_at="2026-07-14T11:07:00Z",
+                               used_value="7", remaining_value="93", limit_value="100"),
+            _quota_observation("q-22", "week", observed_at="2026-07-14T11:22:00Z",
+                               used_value="22", remaining_value="78", limit_value="100"),
+        ],
+    )
+
+    usage = client.get("/api/unified-usage?hours=1").get_json()["time_series"]
+    assert usage["bucket_starts"] == [
+        "2026-07-14T11:00:00Z", "2026-07-14T11:15:00Z",
+        "2026-07-14T11:30:00Z", "2026-07-14T11:45:00Z",
+    ]
+    assert usage["model_series"][0]["values"] == [7, 22, 0, 0]
+    assert usage["bucket_series"]["input_tokens"] == [7, 22, 0, 0]
+    status = usage["provider_status_series"][0]
+    assert status["provider"] == "anthropic"
+    assert status["events"] == [1, 1, 0, 0]
+    assert status["errors"] == [1, 0, 0, 0]
+    assert status["top_error_classes"] == ["boom", None, None, None]
+    assert status["input_tokens"] == [7, 22, 0, 0]
+
+    quota = client.get("/api/subscriptions?hours=1&history=0").get_json()["time_series"]
+    assert quota["bucket_starts"] == usage["bucket_starts"]
+    week = quota["providers"][0]["series"][0]
+    assert week["quota_name"] == "week"
+    assert week["values"] == [7.0, 22.0, None, None]
+    assert week["sample_count"] == 2
+
+
+def test_provider_status_and_subscription_series_share_one_bucket_grid(tmp_path, monkeypatch):
+    """The status strip, the usage charts and the quota charts are drawn side
+    by side: same window, same bucket starts, and one instant lands at the
+    same index on every series."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenNoon)
+    client = _bucketed_client(
+        tmp_path,
+        [
+            _window_fact("usage", "2026-07-14T11:50:00Z", "anthropic", input_tokens=5,
+                         model_requested="claude"),
+        ],
+        [
+            _quota_observation("quota", "seven_day", observed_at="2026-07-14T11:50:00Z",
+                               provider="anthropic", used_value="50", remaining_value="50",
+                               limit_value="100"),
+        ],
+    )
+
+    usage = client.get("/api/unified-usage?hours=3").get_json()["time_series"]
+    quota = client.get("/api/subscriptions?hours=3&history=0").get_json()["time_series"]
+
+    assert usage["bucket_starts"] == quota["bucket_starts"]
+    assert usage["window_start"] == quota["window_start"] == "2026-07-14T09:30:00Z"
+    assert usage["window_end"] == quota["window_end"] == "2026-07-14T12:30:00Z"
+    assert usage["bucket_minutes"] == quota["bucket_minutes"] == 15
+    assert usage["bucket_count"] == quota["bucket_count"] == 12
+
+    # 11:50Z is the 11:45Z bucket: index 9 from a 09:30Z window start.
+    assert usage["bucket_starts"][9] == "2026-07-14T11:45:00Z"
+    status = {row["provider"]: row for row in usage["provider_status_series"]}
+    assert status["anthropic"]["events"] == [0] * 9 + [1, 0, 0]
+    assert usage["model_series"][0]["values"] == [0] * 9 + [5, 0, 0]
+    assert all(
+        len(row["events"]) == quota["bucket_count"]
+        for row in usage["provider_status_series"]
+    )
+    providers = {row["provider"]: row for row in quota["providers"]}
+    claude_week = providers["anthropic"]["series"][0]
+    assert claude_week["values"] == _in_bucket(50.0, 9, count=12)
+    unified_week = [row for row in quota["unified_weekly"]["series"] if row["provider"] == "anthropic"]
+    assert [row["values"] for row in unified_week] == [_in_bucket(50.0, 9, count=12)]
+
+
 def test_unified_usage_groups_providers_by_canonical_id_and_keeps_raw_ids(tmp_path, monkeypatch):
     """"openai" and "openai-codex" are one subscription: one donut arc, one
     status-strip row. The ledger view (by_provider_model) keeps the raw key
     but names the canonical one so the two tables can join."""
-    monkeypatch.setattr(dashboard_module, "datetime", _FrozenNoon)
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenJustPastNoon)
     client = _unified_client(
         tmp_path,
         [
@@ -2515,12 +2700,14 @@ def test_unified_usage_groups_providers_by_canonical_id_and_keeps_raw_ids(tmp_pa
     assert set(status) == {"openai-codex", "z-ai-glm", "anthropic", "kimi-k3-coding"}
     assert status["openai-codex"]["provider_canonical"] == "openai-codex"
     assert status["openai-codex"]["provider_raw_ids"] == ["openai", "openai-codex"]
-    assert status["openai-codex"]["events"] == [1, 1, 0]
-    assert status["openai-codex"]["errors"] == [0, 1, 0]
-    assert status["openai-codex"]["input_tokens"] == [10, 20, 0]
-    assert status["openai-codex"]["cache_read_tokens"] == [4, 0, 0]
+    # Twelve 15-minute buckets from 09:00Z: 09:10 -> 0, 10:10 -> 4,
+    # 10:20 -> 5, 11:20 -> 9.
+    assert status["openai-codex"]["events"] == [1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]
+    assert status["openai-codex"]["errors"] == [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]
+    assert status["openai-codex"]["input_tokens"] == [10, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0]
+    assert status["openai-codex"]["cache_read_tokens"] == [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     assert status["openai-codex"]["dominant_error_class"] == "rate_limit"
-    assert status["z-ai-glm"]["events"] == [0, 1, 1]
+    assert status["z-ai-glm"]["events"] == [0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0]
     assert status["z-ai-glm"]["provider_raw_ids"] == ["z-ai", "zai"]
 
 
@@ -2558,7 +2745,7 @@ def test_list_price_daily_buckets_by_utc_calendar_day_and_flags_partial_days(tmp
     days: hours=168 ending 12:00Z spans eight UTC dates, the first and last
     only partly covered. Traffic at 13:00Z on 07-13 lands on 07-13, not on a
     12:00Z-anchored slice that straddles two dates."""
-    monkeypatch.setattr(dashboard_module, "datetime", _FrozenNoon)
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenJustPastNoon)
     client = _unified_client(
         tmp_path,
         [

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Palette } from "../lib/palette";
-import { subscriptionQuotaChartOptions, type ChartConfig } from "../lib/chart";
+import { LINE_SMOOTHING, subscriptionQuotaChartOptions, type ChartConfig } from "../lib/chart";
 import { formatTimestamp } from "../lib/format";
 import {
   PROVIDER_DISPLAY_NAMES,
@@ -17,8 +17,9 @@ import {
   subscriptionUnifiedQuotaDash,
   type NormalizedQuotaSeries,
 } from "../lib/quota";
-import { formatUtcHour, percent } from "../lib/format";
+import { bucketMinutesOf, bucketWording, formatBucketLabel, percent } from "../lib/format";
 import type { SubsPanelState } from "../hooks/useDashboardData";
+import { useViewportWidth } from "../hooks/useViewportWidth";
 import { ChartCanvas } from "./ChartCanvas";
 import { DirectLabels } from "./DirectLabels";
 import { Fold, tableFoldSummary } from "./Fold";
@@ -41,7 +42,9 @@ function subscriptionQuotaDatasets(palette: Palette, series: NormalizedQuotaSeri
       pointHoverRadius: 3,
       fill: false,
       spanGaps: false,
-      tension: 0,
+      // Slight monotone smoothing (keeper-ruled 2026-09-02); monotone keeps
+      // a 0–100% line from overshooting its samples.
+      ...LINE_SMOOTHING,
     };
   });
 }
@@ -55,10 +58,16 @@ interface HistoryCardProps {
   prefix: string;
   period: "weekly" | "five-hour";
   seriesDescription: string;
+  // Chart window in HOURS; converted to buckets at the series' bucket width
+  // (48 hours = 192 fifteen-minute buckets, 48 hourly ones).
   chartBucketLimit?: number;
   projection: any;
   bucketStarts: string[];
+  bucketMinutes: number;
+  // Compact tick labels for the axis; the full form rides the tooltip title.
   labels: string[];
+  tooltipTitles: string[];
+  viewportWidth: number;
   // Non-null = charts are ruled unavailable (stale/empty/malformed history);
   // the message replaces the summary and the canvas hides.
   unavailableMessage: string | null;
@@ -74,11 +83,12 @@ interface HistoryCardProps {
 }
 
 function SubscriptionHistoryCard({
-  palette, prefix, period, seriesDescription, chartBucketLimit, projection, bucketStarts, labels,
-  unavailableMessage, title, caption, loadingText, loaded, foldKey, foldLabel, tableCaption,
-  canvasAriaLabel, labelsAriaLabel,
+  palette, prefix, period, seriesDescription, chartBucketLimit, projection, bucketStarts, bucketMinutes,
+  labels, tooltipTitles, viewportWidth, unavailableMessage, title, caption, loadingText, loaded, foldKey,
+  foldLabel, tableCaption, canvasAriaLabel, labelsAriaLabel,
 }: HistoryCardProps) {
   const [chartOk, setChartOk] = useState(true);
+  const wording = bucketWording(bucketMinutes);
 
   const rows = useMemo(() => (
     unavailableMessage
@@ -91,23 +101,26 @@ function SubscriptionHistoryCard({
   const missingMessage = unavailableMessage ? "" : missingQuotaMessage(projection.no_data_providers, period);
 
   // Chart-window cap (polish round item 11): the five-hour sawtooth is
-  // unreadable across 168 buckets, so its CANVAS plots only the trailing
-  // slice; the fold table renders from the unsliced rows and keeps the full
+  // unreadable across a full week, so its CANVAS plots only the trailing
+  // slice — chartBucketLimit hours' worth of buckets at the series' bucket
+  // width; the fold table renders from the unsliced rows and keeps the full
   // window.
-  const limit = Number(chartBucketLimit);
+  const chartHours = Number(chartBucketLimit);
+  const limit = Math.round((chartHours * 60) / bucketMinutes);
   const bounded = Number.isFinite(limit) && limit > 0 && limit < labels.length;
   const config: ChartConfig | null = useMemo(() => {
     if (unavailableMessage || !rows.length) return null;
     const chartLabels = bounded ? labels.slice(-limit) : labels;
+    const chartTitles = bounded ? tooltipTitles.slice(-limit) : tooltipTitles;
     const chartRows = bounded
       ? rows.map((row) => ({ ...row, values: row.values.slice(-limit) }))
       : rows;
     return {
       type: "line",
       data: { labels: chartLabels, datasets: subscriptionQuotaDatasets(palette, chartRows) },
-      options: subscriptionQuotaChartOptions(palette),
+      options: subscriptionQuotaChartOptions(palette, { viewportWidth, tooltipTitles: chartTitles }),
     };
-  }, [unavailableMessage, rows, bounded, labels, limit, palette]);
+  }, [unavailableMessage, rows, bounded, labels, tooltipTitles, limit, palette, viewportWidth]);
 
   let summary: string;
   if (!loaded) {
@@ -118,7 +131,7 @@ function SubscriptionHistoryCard({
     summary = missingMessage
       || `No comparable ${seriesDescription}: no mapped provider series was returned (status unavailable).`;
   } else {
-    const windowNote = bounded ? ` Chart shows the last ${limit} hours; the table keeps the full window.` : "";
+    const windowNote = bounded ? ` Chart shows the last ${chartHours} hours; the table keeps the full window.` : "";
     summary = `${rows.length} comparable ${seriesDescription}.${windowNote} ${missingMessage}`.trim();
     if (!chartOk) {
       summary = `${summary} Chart drawing is unavailable; the accessible data table remains current.`;
@@ -169,7 +182,7 @@ function SubscriptionHistoryCard({
         headingLevel={4}
         summary={tableFoldSummary({
           rows: rows.length ? bucketStarts.length : 0,
-          singular: "hour",
+          singular: wording.singular,
           columns: rows.length,
           colNoun: "series",
         })}
@@ -179,6 +192,7 @@ function SubscriptionHistoryCard({
           bodyId={`${prefix}TableBody`}
           caption={tableCaption}
           bucketStarts={rows.length ? bucketStarts : []}
+          bucketMinutes={bucketMinutes}
           rows={rows}
           formatCell={quotaTableCell}
           headLabel={(row) => `${row.label} (${quotaConfidenceLabel((row as NormalizedQuotaSeries).confidence_status)} confidence)`}
@@ -458,6 +472,7 @@ function PlaceholderProviderCard({ providerId, displayName }: { providerId: stri
 
 export function SubscriptionsCard({ palette, subs }: { palette: Palette; subs: SubsPanelState }) {
   const data = subs.data;
+  const viewportWidth = useViewportWidth();
   const rows: any[] = data && Array.isArray(data.latest) ? data.latest : [];
   const freshness = (data && data.freshness) || {};
 
@@ -480,10 +495,24 @@ export function SubscriptionsCard({ palette, subs }: { palette: Palette; subs: S
     unavailableMessage = "No bounded subscription quota history is available for this 168-hour window.";
   }
 
-  const bucketStarts: string[] = unavailableMessage
-    ? []
-    : (timeSeries.bucket_starts as unknown[]).map((value) => String(value));
-  const labels = bucketStarts.map((value) => formatUtcHour(value, true));
+  // Memoised on the series: rebuilding these with .map() every render
+  // handed the history cards fresh arrays and defeated their rows/config
+  // memos (audit finding 2026-09-02).
+  const bucketMinutes = bucketMinutesOf(timeSeries);
+  const bucketStarts: string[] = useMemo(() => (
+    unavailableMessage
+      ? []
+      : (timeSeries.bucket_starts as unknown[]).map((value) => String(value))
+  ), [timeSeries, unavailableMessage]);
+  const labels = useMemo(
+    () => bucketStarts.map((value) => formatBucketLabel(value, bucketMinutes, true)),
+    [bucketStarts, bucketMinutes],
+  );
+  const tooltipTitles = useMemo(
+    () => bucketStarts.map((value) => formatBucketLabel(value, bucketMinutes, false)),
+    [bucketStarts, bucketMinutes],
+  );
+  const wording = bucketWording(bucketMinutes);
   const weekly = !unavailableMessage && timeSeries.unified_weekly && typeof timeSeries.unified_weekly === "object"
     ? timeSeries.unified_weekly
     : {};
@@ -554,15 +583,18 @@ export function SubscriptionsCard({ palette, subs }: { palette: Palette; subs: S
               seriesDescription="primary weekly-equivalent provider series"
               projection={weekly}
               bucketStarts={bucketStarts}
+              bucketMinutes={bucketMinutes}
               labels={labels}
+              tooltipTitles={tooltipTitles}
+              viewportWidth={viewportWidth}
               unavailableMessage={unavailableMessage}
               title="Unified weekly subscription utilization"
               caption="Each provider’s explicitly mapped primary weekly-equivalent quota on a normalized 0–100% scale."
               loadingText="Loading weekly subscription quota history…"
               loaded={!subs.loading}
               foldKey="subscriptionWeeklySeries"
-              foldLabel="Hourly unified weekly quota data"
-              tableCaption="Primary weekly-equivalent provider quota utilization per complete UTC hour"
+              foldLabel={`${wording.adjective} unified weekly quota data`}
+              tableCaption={`Primary weekly-equivalent provider quota utilization ${wording.per}`}
               canvasAriaLabel="Unified weekly subscription quota utilization from 0 to 100 percent"
               labelsAriaLabel="Unified weekly subscription series and confidence statuses"
             />
@@ -574,15 +606,18 @@ export function SubscriptionsCard({ palette, subs }: { palette: Palette; subs: S
               chartBucketLimit={48}
               projection={fiveHour}
               bucketStarts={bucketStarts}
+              bucketMinutes={bucketMinutes}
               labels={labels}
+              tooltipTitles={tooltipTitles}
+              viewportWidth={viewportWidth}
               unavailableMessage={unavailableMessage}
               title="Unified five-hour subscription utilization"
-              caption="Each provider’s explicitly mapped comparable five-hour quota over the last 48 hours on a normalized 0–100% scale (the folded hourly table keeps the full week)."
+              caption={`Each provider’s explicitly mapped comparable five-hour quota over the last 48 hours on a normalized 0–100% scale (the folded ${wording.adjective.toLowerCase()} table keeps the full week).`}
               loadingText="Loading five-hour subscription quota history…"
               loaded={!subs.loading}
               foldKey="subscriptionFiveHourSeries"
-              foldLabel="Hourly unified five-hour quota data"
-              tableCaption="Comparable five-hour provider quota utilization per complete UTC hour"
+              foldLabel={`${wording.adjective} unified five-hour quota data`}
+              tableCaption={`Comparable five-hour provider quota utilization ${wording.per}`}
               canvasAriaLabel="Unified five-hour subscription quota utilization from 0 to 100 percent"
               labelsAriaLabel="Unified five-hour subscription series and confidence statuses"
             />

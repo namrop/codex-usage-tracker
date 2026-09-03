@@ -2,7 +2,7 @@
 // loaded as a classic script from the entry HTML exactly as before the React
 // conversion — never bundled, so the app chunk stays free of third-party
 // color literals and the vendored asset keeps its own cache policy.
-import { REDUCED_MOTION, type Palette } from "./palette";
+import { REDUCED_MOTION, withAlpha, type Palette } from "./palette";
 import { compactIntFormat, intFormat, percent } from "./format";
 
 export interface ChartInstance {
@@ -33,6 +33,14 @@ export interface ChartConfig {
   options: Record<string, unknown>;
 }
 
+// Keeper-ruled 2026-09-02: "I want the charts to be very slightly
+// smoothed." Monotone interpolation keeps a smoothed 0–100% quota line
+// from overshooting its own samples. Bars stay as they are.
+export const LINE_SMOOTHING: Readonly<Record<string, unknown>> = Object.freeze({
+  tension: 0.2,
+  cubicInterpolationMode: "monotone",
+});
+
 export function lineDataset(
   label: string,
   data: unknown[],
@@ -44,7 +52,7 @@ export function lineDataset(
     data,
     borderColor: color,
     backgroundColor: color,
-    tension: 0.24,
+    ...LINE_SMOOTHING,
     fill: false,
     spanGaps: true,
     ...extra,
@@ -61,9 +69,10 @@ export function barDataset(
     label,
     data,
     type: "bar",
-    // `${color}A8` appends an alpha byte to the resolved token value — the
-    // documented withAlpha-family exception; no literal color lives here.
-    backgroundColor: `${color}A8`,
+    // getColor() normalises the token to rgb(); the alpha rides withAlpha
+    // (the documented exception) — a hex alpha byte appended to rgb() was
+    // an unparseable colour and the fill silently fell back.
+    backgroundColor: withAlpha(color, 0.66),
     borderColor: color,
     borderWidth: 1,
     borderRadius: 4,
@@ -71,11 +80,58 @@ export function barDataset(
   };
 }
 
+// Per-chart inputs that are not palette: the viewport width (from the
+// useViewportWidth hook — sampling window.innerWidth inside a memo froze
+// the breakpoint at first render) and the full-form bucket labels the
+// tooltip title shows while the axis ticks wear the compact form.
+export interface ChartAxisContext {
+  viewportWidth: number;
+  tooltipTitles?: readonly string[];
+}
+
+// Six ticks under 1100px, eight above: the compact "Aug 27 · 14:15" label
+// runs into its neighbour past that on the 1036px live page.
+export function xTickLimit(viewportWidth: number): number {
+  return viewportWidth < 1100 ? 6 : 8;
+}
+
+function xScaleTicks(SERIES: Palette["series"], viewportWidth: number, extra: Record<string, unknown> = {}) {
+  return {
+    color: SERIES.muted,
+    autoSkip: true,
+    maxRotation: 0,
+    minRotation: 0,
+    maxTicksLimit: xTickLimit(viewportWidth),
+    ...extra,
+  };
+}
+
+function tooltipBase(SERIES: Palette["series"], tooltipTitles: readonly string[] | undefined) {
+  const callbacks: Record<string, unknown> = {};
+  if (tooltipTitles) {
+    callbacks.title = (items: { dataIndex: number }[]) => (
+      items.length ? tooltipTitles[items[0].dataIndex] ?? "" : ""
+    );
+  }
+  return {
+    backgroundColor: SERIES.tooltipBg,
+    // Resolved text tokens: the johannah light theme was white-on-cream
+    // under Chart.js's default tooltip text colours.
+    titleColor: SERIES.text,
+    bodyColor: SERIES.muted,
+    borderColor: SERIES.line,
+    borderWidth: 1,
+    padding: 10,
+    callbacks,
+  };
+}
+
 export function unifiedTokenChartOptions(
   palette: Palette,
-  { stacked = false }: { stacked?: boolean } = {},
+  { stacked = false, viewportWidth, tooltipTitles }: { stacked?: boolean } & ChartAxisContext,
 ): Record<string, unknown> {
   const SERIES = palette.series;
+  const tooltip = tooltipBase(SERIES, tooltipTitles);
   return {
     maintainAspectRatio: false,
     responsive: true,
@@ -93,14 +149,7 @@ export function unifiedTokenChartOptions(
       x: {
         stacked,
         border: { color: SERIES.line },
-        ticks: {
-          color: SERIES.muted,
-          autoSkip: true,
-          maxRotation: 0,
-          minRotation: 0,
-          align: "inner",
-          maxTicksLimit: window.innerWidth <= 640 ? 4 : 7,
-        },
+        ticks: xScaleTicks(SERIES, viewportWidth, { align: "inner" }),
         grid: { display: false },
       },
     },
@@ -108,11 +157,9 @@ export function unifiedTokenChartOptions(
       legend: { display: false },
       tooltip: {
         displayColors: false,
-        backgroundColor: SERIES.tooltipBg,
-        borderColor: SERIES.line,
-        borderWidth: 1,
-        padding: 10,
+        ...tooltip,
         callbacks: {
+          ...tooltip.callbacks,
           label: (context: { dataset: { label: string }; parsed: { y: unknown } }) =>
             `${context.dataset.label}: ${intFormat(context.parsed.y)} tokens`,
         },
@@ -121,8 +168,12 @@ export function unifiedTokenChartOptions(
   };
 }
 
-export function cacheHitRateChartOptions(palette: Palette): Record<string, unknown> {
+export function cacheHitRateChartOptions(
+  palette: Palette,
+  { viewportWidth, tooltipTitles }: ChartAxisContext,
+): Record<string, unknown> {
   const SERIES = palette.series;
+  const tooltip = tooltipBase(SERIES, tooltipTitles);
   return {
     maintainAspectRatio: false,
     responsive: true,
@@ -139,14 +190,7 @@ export function cacheHitRateChartOptions(palette: Palette): Record<string, unkno
       },
       x: {
         border: { color: SERIES.line },
-        ticks: {
-          color: SERIES.muted,
-          autoSkip: true,
-          maxRotation: 0,
-          minRotation: 0,
-          align: "inner",
-          maxTicksLimit: window.innerWidth <= 640 ? 4 : 7,
-        },
+        ticks: xScaleTicks(SERIES, viewportWidth, { align: "inner" }),
         grid: { display: false },
       },
     },
@@ -154,11 +198,9 @@ export function cacheHitRateChartOptions(palette: Palette): Record<string, unkno
       legend: { display: false },
       tooltip: {
         displayColors: false,
-        backgroundColor: SERIES.tooltipBg,
-        borderColor: SERIES.line,
-        borderWidth: 1,
-        padding: 10,
+        ...tooltip,
         callbacks: {
+          ...tooltip.callbacks,
           label: (context: { dataset: { label: string }; parsed: { y: unknown } }) =>
             `${context.dataset.label}: ${percent(context.parsed.y)}`,
         },
@@ -167,8 +209,12 @@ export function cacheHitRateChartOptions(palette: Palette): Record<string, unkno
   };
 }
 
-export function subscriptionQuotaChartOptions(palette: Palette): Record<string, unknown> {
+export function subscriptionQuotaChartOptions(
+  palette: Palette,
+  { viewportWidth, tooltipTitles }: ChartAxisContext,
+): Record<string, unknown> {
   const SERIES = palette.series;
+  const tooltip = tooltipBase(SERIES, tooltipTitles);
   return {
     maintainAspectRatio: false,
     responsive: true,
@@ -185,13 +231,7 @@ export function subscriptionQuotaChartOptions(palette: Palette): Record<string, 
       },
       x: {
         border: { color: SERIES.line },
-        ticks: {
-          color: SERIES.muted,
-          autoSkip: true,
-          maxRotation: 0,
-          minRotation: 0,
-          maxTicksLimit: window.matchMedia("(max-width: 520px)").matches ? 3 : 9,
-        },
+        ticks: xScaleTicks(SERIES, viewportWidth),
         grid: { display: false },
       },
     },
@@ -199,11 +239,9 @@ export function subscriptionQuotaChartOptions(palette: Palette): Record<string, 
       legend: { display: false },
       tooltip: {
         displayColors: true,
-        backgroundColor: SERIES.tooltipBg,
-        borderColor: SERIES.line,
-        borderWidth: 1,
-        padding: 10,
+        ...tooltip,
         callbacks: {
+          ...tooltip.callbacks,
           label: (context: { dataset: { label: string }; parsed: { y: unknown } }) =>
             `${context.dataset.label}: ${percent(context.parsed.y)}`,
         },

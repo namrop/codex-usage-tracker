@@ -184,7 +184,7 @@ def test_two_claude_usage_roots_keep_namespaces_and_pool_public_aggregates(tmp_p
             "model": "claude-sonnet-5",
             "label": "claude-sonnet-5 · anthropic",
             "total_tokens": 52,
-            "values": [52, 0],
+            "values": [0, 52, 0, 0, 0, 0, 0, 0],
         }
     ]
     serialized = json.dumps({"projection": projection, "time_series": time_series})
@@ -589,7 +589,7 @@ def test_unified_weekly_keeps_two_anonymized_anthropic_accounts_independent(
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 8, 5, 12, 30, tzinfo=tz)
+            return cls(2026, 8, 5, 12, 5, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
     rows = [
@@ -610,7 +610,7 @@ def test_unified_weekly_keeps_two_anonymized_anthropic_accounts_independent(
         "Anthropic / Claude · account 1",
         "Anthropic / Claude · account 2",
     ]
-    assert [row["values"] for row in anthropic] == [[20.0], [80.0]]
+    assert [row["values"] for row in anthropic] == [[None, 20.0, None, None], [None, 80.0, None, None]]
     assert [row["provider_account_index"] for row in anthropic] == [1, 2]
     assert all(row["provider_account_count"] == 2 for row in anthropic)
     assert not any(
@@ -636,7 +636,7 @@ def test_two_anthropic_accounts_have_stable_safe_metadata_across_every_quota_win
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 8, 5, 12, 30, tzinfo=tz)
+            return cls(2026, 8, 5, 12, 5, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
     rows = [
@@ -687,14 +687,14 @@ def test_two_anthropic_accounts_have_stable_safe_metadata_across_every_quota_win
         for row in provider["series"] + provider["unavailable_series"]
     )
     assert {row["quota_name"]: row["values"] for row in by_account[1]} == {
-        "five_hour": [11.0],
-        "seven_day": [22.0],
-        "seven_day_fable": [33.0],
+        "five_hour": [None, 11.0, None, None],
+        "seven_day": [None, 22.0, None, None],
+        "seven_day_fable": [None, 33.0, None, None],
     }
     assert {row["quota_name"]: row["values"] for row in by_account[2]} == {
-        "five_hour": [61.0],
-        "seven_day": [72.0],
-        "seven_day_fable": [83.0],
+        "five_hour": [None, 61.0, None, None],
+        "seven_day": [None, 72.0, None, None],
+        "seven_day_fable": [None, 83.0, None, None],
     }
 
     anthropic_weekly = [
@@ -706,10 +706,10 @@ def test_two_anthropic_accounts_have_stable_safe_metadata_across_every_quota_win
         "Anthropic / Claude · account 1",
         "Anthropic / Claude · account 2",
     ]
-    assert [row["values"] for row in anthropic_weekly] == [[22.0], [72.0]]
+    assert [row["values"] for row in anthropic_weekly] == [[None, 22.0, None, None], [None, 72.0, None, None]]
     assert [row["provider_account_index"] for row in anthropic_weekly] == [1, 2]
     assert all(row["provider_account_count"] == 2 for row in anthropic_weekly)
-    assert [22.0 + 72.0] not in [row["values"] for row in anthropic_weekly]
+    assert [None, 22.0 + 72.0, None, None] not in [row["values"] for row in anthropic_weekly]
 
     anthropic_five_hour = [
         row
@@ -720,10 +720,10 @@ def test_two_anthropic_accounts_have_stable_safe_metadata_across_every_quota_win
         "Anthropic / Claude · account 1",
         "Anthropic / Claude · account 2",
     ]
-    assert [row["values"] for row in anthropic_five_hour] == [[11.0], [61.0]]
+    assert [row["values"] for row in anthropic_five_hour] == [[None, 11.0, None, None], [None, 61.0, None, None]]
     assert [row["provider_account_index"] for row in anthropic_five_hour] == [1, 2]
     assert all(row["provider_account_count"] == 2 for row in anthropic_five_hour)
-    assert [11.0 + 61.0] not in [row["values"] for row in anthropic_five_hour]
+    assert [None, 11.0 + 61.0, None, None] not in [row["values"] for row in anthropic_five_hour]
 
     serialized = json.dumps(payload)
     for private_value in (
@@ -744,7 +744,7 @@ def test_single_anthropic_account_preserves_labels_and_card_metadata(
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 8, 5, 12, 30, tzinfo=tz)
+            return cls(2026, 8, 5, 12, 5, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
     ledger = tmp_path / "quota.jsonl"

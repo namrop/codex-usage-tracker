@@ -1,13 +1,15 @@
 import type { Palette } from "../lib/palette";
-import { formatUtcHour, intFormat } from "../lib/format";
+import { bucketMinutesOf, formatUtcHour, intFormat } from "../lib/format";
 import { subscriptionUnifiedProviderColor } from "../lib/providers";
 import { quotaRowProviderKey } from "../lib/quota";
 
 // Provider API status strip · 48 hours: provider status-feed badges over
 // observed per-UTC-hour call health, where a dim cell means no traffic
-// rather than a clean hour. Noise fold (polish round item 4b): providers
-// named "unknown" and providers with under 10 events in the shown window
-// collapse into one dim line; aria still names each with its call count.
+// rather than a clean hour. The strip stays hourly (48 cells) over a
+// 15-minute time_series by summing each hour's sub-buckets. Noise fold
+// (polish round item 4b): providers named "unknown" and providers with
+// under 10 events in the shown window collapse into one dim line; aria
+// still names each with its call count.
 
 const STATUS_INDICATOR_ROLE: Record<string, [string, string]> = {
   none: ["role-stability", "operational"],
@@ -31,6 +33,64 @@ function ProviderStatusBadge({ feedEntry }: { feedEntry: any }) {
   return <span className={`status-badge ${role}`} title={feedEntry.description || ""}>{text}</span>;
 }
 
+interface HourlyRow {
+  events: number[];
+  errors: number[];
+  top_error_classes: unknown[];
+}
+
+function utcHourFloor(value: unknown): string {
+  const dt = new Date(value as string);
+  if (!Number.isFinite(dt.getTime())) return String(value);
+  dt.setUTCMinutes(0, 0, 0);
+  return dt.toISOString();
+}
+
+// Fold sub-hour buckets into hourly cells: events and errors sum, and the
+// hour's error class is the worst sub-bucket's. Hourly input passes through
+// untouched.
+function hourlyCells(
+  bucketStarts: unknown[],
+  bucketMinutes: number,
+  rows: any[],
+): { hourStarts: unknown[]; hourly: HourlyRow[] } {
+  if (bucketMinutes >= 60) {
+    return {
+      hourStarts: bucketStarts,
+      hourly: rows.map((row) => ({
+        events: row.events,
+        errors: row.errors,
+        top_error_classes: Array.isArray(row.top_error_classes) ? row.top_error_classes : [],
+      })),
+    };
+  }
+  const hourStarts: string[] = [];
+  const hourOf: number[] = [];
+  bucketStarts.forEach((start) => {
+    const hour = utcHourFloor(start);
+    if (hourStarts[hourStarts.length - 1] !== hour) hourStarts.push(hour);
+    hourOf.push(hourStarts.length - 1);
+  });
+  const hourly = rows.map((row) => {
+    const events = new Array<number>(hourStarts.length).fill(0);
+    const errors = new Array<number>(hourStarts.length).fill(0);
+    const worst = new Array<number>(hourStarts.length).fill(0);
+    const top = new Array<unknown>(hourStarts.length).fill(null);
+    const classes = Array.isArray(row.top_error_classes) ? row.top_error_classes : [];
+    hourOf.forEach((hour, index) => {
+      const bad = Number(row.errors[index] || 0);
+      events[hour] += Number(row.events[index] || 0);
+      errors[hour] += bad;
+      if (bad > worst[hour]) {
+        worst[hour] = bad;
+        top[hour] = classes[index] ?? null;
+      }
+    });
+    return { events, errors, top_error_classes: top };
+  });
+  return { hourStarts, hourly };
+}
+
 export function ProviderStatus({ timeSeries, feeds, palette, loading }: {
   timeSeries: any;
   feeds: Record<string, any> | null;
@@ -46,19 +106,25 @@ export function ProviderStatus({ timeSeries, feeds, palette, loading }: {
     );
   }
   const feedMap = feeds || {};
-  const buckets: unknown[] = Array.isArray(timeSeries.bucket_starts) ? timeSeries.bucket_starts : [];
+  const bucketStarts: unknown[] = Array.isArray(timeSeries.bucket_starts) ? timeSeries.bucket_starts : [];
+  const sourceRows = (timeSeries.provider_status_series as any[]).filter((row) => Number(row.total_events) > 0);
+  const { hourStarts: buckets, hourly } = hourlyCells(bucketStarts, bucketMinutesOf(timeSeries), sourceRows);
   const CELLS = 48;
   const offset = Math.max(0, buckets.length - CELLS);
-  const ranked = ([...timeSeries.provider_status_series] as any[])
-    .filter((row) => Number(row.total_events) > 0)
-    .sort((a, b) => Number(b.total_events) - Number(a.total_events))
-    .map((row) => ({
+  const ranked = sourceRows
+    .map((row, index) => ({
       // Rows may arrive raw or canonical; fill provider_canonical once so
-      // the color slot and the feed fallback key on it either way.
-      row: { ...row, provider_canonical: quotaRowProviderKey(row) || String(row.provider || "unknown") },
-      windowEvents: row.events.slice(offset).reduce((sum: number, n: number) => sum + n, 0),
-      windowErrors: row.errors.slice(offset).reduce((sum: number, n: number) => sum + n, 0),
-    }));
+      // the color slot and the feed fallback key on it either way. The
+      // per-cell arrays are the hourly fold, not the raw sub-buckets.
+      row: {
+        ...row,
+        ...hourly[index],
+        provider_canonical: quotaRowProviderKey(row) || String(row.provider || "unknown"),
+      },
+      windowEvents: hourly[index].events.slice(offset).reduce((sum: number, n: number) => sum + n, 0),
+      windowErrors: hourly[index].errors.slice(offset).reduce((sum: number, n: number) => sum + n, 0),
+    }))
+    .sort((a, b) => Number(b.row.total_events) - Number(a.row.total_events));
   const shown = ranked.filter((entry) => entry.row.provider !== "unknown" && entry.windowEvents >= 10);
   const folded = ranked.filter((entry) => entry.row.provider === "unknown" || entry.windowEvents < 10);
   const foldedNames = folded

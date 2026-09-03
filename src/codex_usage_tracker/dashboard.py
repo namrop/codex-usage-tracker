@@ -76,6 +76,13 @@ _MAX_PRIVATE_API_DAYS = 36_500
 # 8-day reconstruction needs; older history is reached with `before` paging.
 _DEFAULT_PRIVATE_API_WINDOW_DAYS = 8
 _MAX_UNIFIED_SERIES_HOURS = 168
+# Chart bucket width for every hours= time series (keeper-ruled 2026-09-02:
+# "15 minute buckets are better across all of the charts"). hours= windows
+# end on the most recent complete 15-minute UTC boundary and always span
+# whole hours, so bucket_count is exactly hours * 4. The public projection
+# module keeps its own hourly grid and does not read this constant.
+_BUCKET_MINUTES = 15
+_BUCKET_SECONDS = _BUCKET_MINUTES * 60
 # /api/data feeds a 24-row table; returning the whole ledger cost ~4MB per refresh.
 _DEFAULT_DATA_ROW_LIMIT = 200
 _LEDGER_CACHE_MAX_ENTRIES = 8
@@ -546,13 +553,42 @@ def _is_substituted_event(row: dict[str, Any]) -> bool:
     return reported != row.get("model_requested")
 
 
+def _floor_to_bucket(moment: datetime) -> datetime:
+    """Floor ``moment`` to the most recent complete ``_BUCKET_MINUTES`` boundary.
+
+    ``hours=`` series end here rather than on the hour, so a request at 12:34
+    charts through 12:30 instead of discarding up to 59 minutes of traffic.
+    """
+    return moment.replace(
+        minute=(moment.minute // _BUCKET_MINUTES) * _BUCKET_MINUTES,
+        second=0,
+        microsecond=0,
+    )
+
+
+def _bucket_index(moment: datetime, window_start: datetime) -> int:
+    """Index of the ``_BUCKET_MINUTES`` bucket holding ``moment``; negative before the window."""
+    return int((moment - window_start).total_seconds() // _BUCKET_SECONDS)
+
+
+def _bucket_grid(window_start: datetime, window_end: datetime) -> tuple[int, list[datetime]]:
+    """The shared ``(bucket_count, bucket_starts)`` grid every hours= series draws on."""
+    bucket_count = int((window_end - window_start).total_seconds() // _BUCKET_SECONDS)
+    bucket_starts = [
+        window_start + timedelta(minutes=_BUCKET_MINUTES * index)
+        for index in range(bucket_count)
+    ]
+    return bucket_count, bucket_starts
+
+
 def _build_provider_status_series(
     rows: list[dict[str, Any]],
     *,
     window_start: datetime,
     bucket_count: int,
 ) -> list[dict[str, Any]]:
-    """Per provider per complete UTC hour: traffic, failures, dominant class.
+    """Per provider per complete UTC bucket (``_BUCKET_MINUTES``): traffic,
+    failures, dominant class.
 
     ``request_status`` and ``error_class`` ride every canonical usage event, so
     an uptime read needs no new collection — only this projection. Only the
@@ -574,7 +610,7 @@ def _build_provider_status_series(
 
     for row in rows:
         occurred_at = _fact_datetime(row.get("occurred_at"))
-        bucket_index = int((occurred_at - window_start).total_seconds() // 3600)
+        bucket_index = _bucket_index(occurred_at, window_start)
         if bucket_index < 0 or bucket_index >= bucket_count:
             continue
         # One row per canonical provider: "openai" and "openai-codex" are the
@@ -641,14 +677,13 @@ def _build_unified_time_series(
     window_end: datetime,
     generated_at: datetime,
 ) -> dict[str, Any]:
-    bucket_count = int((window_end - window_start).total_seconds() // 3600)
-    bucket_starts = [window_start + timedelta(hours=index) for index in range(bucket_count)]
+    bucket_count, bucket_starts = _bucket_grid(window_start, window_end)
     model_buckets: dict[tuple[str, str], list[int]] = {}
     bucket_series = {field: [0] * bucket_count for field in _LIST_PRICE_TOKEN_FIELDS}
 
     for row in rows:
         occurred_at = _fact_datetime(row.get("occurred_at"))
-        bucket_index = int((occurred_at - window_start).total_seconds() // 3600)
+        bucket_index = _bucket_index(occurred_at, window_start)
         if bucket_index < 0 or bucket_index >= bucket_count:
             continue
         total = _accounted_tokens(row)
@@ -690,7 +725,7 @@ def _build_unified_time_series(
 
     return {
         "generated_at": _iso_z(generated_at),
-        "bucket_minutes": 60,
+        "bucket_minutes": _BUCKET_MINUTES,
         "bucket_count": bucket_count,
         "window_start": _iso_z(window_start),
         "window_end": _iso_z(window_end),
@@ -699,7 +734,7 @@ def _build_unified_time_series(
         "other_model_series": other_model_series,
         # Estate-wide token composition (keeper-ruled 2026-08-30, replacing
         # the codex-only Token bucket mix): the five token buckets summed
-        # across every provider, on the same hourly UTC grid. Reasoning stays
+        # across every provider, on the same 15-minute UTC grid. Reasoning stays
         # its own series here — the chart shows composition, not the
         # accounted total, and the caption owns that distinction.
         "bucket_series": bucket_series,
@@ -1245,9 +1280,13 @@ def _build_subscription_time_series(
     window_end: datetime,
     generated_at: datetime,
 ) -> dict[str, Any]:
-    """Project canonical quota observations into complete UTC hourly buckets."""
-    bucket_count = int((window_end - window_start).total_seconds() // 3600)
-    bucket_starts = [window_start + timedelta(hours=index) for index in range(bucket_count)]
+    """Project canonical quota observations into complete UTC buckets.
+
+    The grid is ``_BUCKET_MINUTES`` wide (keeper-ruled 2026-09-02) and shared
+    with :func:`_build_unified_time_series`, so the status strip, the token
+    charts and the quota charts all align on the same bucket starts.
+    """
+    bucket_count, bucket_starts = _bucket_grid(window_start, window_end)
     grouped: dict[_QuotaSeriesIdentity, list[dict[str, Any]]] = {}
     provider_rows: dict[str, list[dict[str, Any]]] = {}
     provider_raw_ids: dict[str, set[str]] = {}
@@ -1314,9 +1353,9 @@ def _build_subscription_time_series(
         bucket_rows: list[dict[str, Any] | None] = [None] * bucket_count
         for row in sorted(quota_rows, key=_quota_observation_order_key):
             observed_at = _fact_datetime(row.get("observed_at"))
-            bucket_index = int((observed_at - window_start).total_seconds() // 3600)
+            bucket_index = _bucket_index(observed_at, window_start)
             if 0 <= bucket_index < bucket_count:
-                # The greatest deterministic key is the last observation in a tied hour.
+                # The greatest deterministic key is the last observation in a tied bucket.
                 bucket_rows[bucket_index] = row
         values = [
             _quota_utilization_pct(row) if row is not None else None
@@ -1465,7 +1504,7 @@ def _build_subscription_time_series(
     }
     return {
         "generated_at": _iso_z(generated_at),
-        "bucket_minutes": 60,
+        "bucket_minutes": _BUCKET_MINUTES,
         "bucket_count": bucket_count,
         "window_start": _iso_z(window_start),
         "window_end": _iso_z(window_end),
@@ -1760,7 +1799,7 @@ def create_app(
         query_before = None
         window_meta: dict[str, Any] = {}
         if hours is not None:
-            series_end = generated_at.replace(minute=0, second=0, microsecond=0)
+            series_end = _floor_to_bucket(generated_at)
             series_start = series_end - timedelta(hours=hours)
             cutoff = series_start
             query_before = series_end
@@ -1978,7 +2017,7 @@ def create_app(
         query_before = None
         window_meta: dict[str, Any] = {}
         if hours is not None:
-            series_end = generated_at.replace(minute=0, second=0, microsecond=0)
+            series_end = _floor_to_bucket(generated_at)
             series_start = series_end - timedelta(hours=hours)
             cutoff = series_start
             try:

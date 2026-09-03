@@ -95,7 +95,7 @@ async function loadUnifiedUsage(set: Set): Promise<void> {
         freshness,
         unified: {
           ...prev.unified,
-          message: "No unified usage events in the last 168 complete hours.",
+          message: "No unified usage events in the last 168 hours.",
           contentVisible: false,
         },
       }));

@@ -1259,7 +1259,7 @@ def _chart_fact(source_id, occurred_at, *, harness, provider, model_requested, m
     return row
 
 
-def test_unified_usage_hourly_charts_split_providers_without_double_counting_reasoning(
+def test_unified_usage_charts_split_providers_without_double_counting_reasoning(
     tmp_path, monkeypatch
 ):
     """The Codex-vs-Claude two-series comparison was retired with its card
@@ -1270,7 +1270,7 @@ def test_unified_usage_hourly_charts_split_providers_without_double_counting_rea
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 7, 14, 12, 34, 56, tzinfo=tz)
+            return cls(2026, 7, 14, 12, 4, 56, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
     rows = [
@@ -1311,16 +1311,19 @@ def test_unified_usage_hourly_charts_split_providers_without_double_counting_rea
     data = response.get_json()
     series = data["time_series"]
     assert series["bucket_starts"] == [
-        "2026-07-14T09:00:00Z", "2026-07-14T10:00:00Z", "2026-07-14T11:00:00Z",
+        f"2026-07-14T{hour:02d}:{minute:02d}:00Z"
+        for hour in (9, 10, 11)
+        for minute in (0, 15, 30, 45)
     ]
     assert series["window_start"] == "2026-07-14T09:00:00Z"
     assert series["window_end"] == "2026-07-14T12:00:00Z"
-    assert series["bucket_minutes"] == 60 and series["bucket_count"] == 3
+    assert series["bucket_minutes"] == 15 and series["bucket_count"] == 12
     assert data["totals"]["total_tokens"] == 39
     assert data["totals"]["reasoning_tokens"] == 2
     models = {(row["provider"], row["model"]): row for row in series["model_series"]}
-    assert models[("openai-codex", "reported-codex")]["values"] == [20, 0, 0]
-    assert models[("anthropic", "claude-sonnet")]["values"] == [0, 11, 0]
+    # 09:00 -> bucket 0; 10:30 -> bucket 6 on the 15-minute grid.
+    assert models[("openai-codex", "reported-codex")]["values"] == [20] + [0] * 11
+    assert models[("anthropic", "claude-sonnet")]["values"] == [0] * 6 + [11] + [0] * 5
     aggregate_models = {(row["provider"], row["model"]): row for row in data["by_provider_model"]}
     assert aggregate_models[("openai-codex", "reported-codex")]["total_tokens"] == 20
     assert ("openai-codex", "requested-codex") not in aggregate_models
@@ -1428,7 +1431,7 @@ def test_bucket_series_sums_the_five_token_buckets_across_all_providers(
     tmp_path, monkeypatch
 ):
     """Estate-wide token composition (keeper-ruled 2026-08-30, replacing the
-    codex-only Token bucket mix): per hourly bucket, the five canonical token
+    codex-only Token bucket mix): per 15-minute bucket, the five canonical token
     sums across every provider, on the same UTC grid as model_series and
     provider_status_series. Reasoning stays a separate series here — the
     chart shows composition, and the accounted total still never counts it."""
@@ -1436,7 +1439,7 @@ def test_bucket_series_sums_the_five_token_buckets_across_all_providers(
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 7, 14, 12, 34, 56, tzinfo=tz)
+            return cls(2026, 7, 14, 12, 4, 56, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
     rows = [
@@ -1476,13 +1479,14 @@ def test_bucket_series_sums_the_five_token_buckets_across_all_providers(
     series = response.get_json()["time_series"]
     bucket_series = series["bucket_series"]
 
-    # The five buckets, summed across providers per complete UTC hour.
+    # The five buckets, summed across providers per complete 15-minute UTC
+    # bucket: 09:00 -> 0, 10:30 -> 6, 11:00 -> 8, 11:30 -> 10.
     assert bucket_series == {
-        "input_tokens": [10, 7, 7],
-        "cache_read_tokens": [5, 0, 0],
-        "cache_write_tokens": [2, 0, 0],
-        "output_tokens": [3, 4, 1],
-        "reasoning_tokens": [2, 0, 0],
+        "input_tokens": [10, 0, 0, 0, 0, 0, 7, 0, 2, 0, 5, 0],
+        "cache_read_tokens": [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        "cache_write_tokens": [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        "output_tokens": [3, 0, 0, 0, 0, 0, 4, 0, 1, 0, 0, 0],
+        "reasoning_tokens": [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     }
     # Same bucket grid as every other series in the payload.
     assert all(
@@ -1561,26 +1565,28 @@ def test_provider_status_series_buckets_traffic_errors_and_dominant_class(
     # browser (2026-09-02).
     assert [row["provider"] for row in series["provider_status_series"]] == ["z-ai-glm", "anthropic"]
 
+    # Twelve 15-minute buckets from 09:00Z: 09:10/09:20 -> 0/1, the 10:05-10:07
+    # cluster -> 4, 10:40 -> 6, 11:01/11:02 -> 8, 11:30 -> 10.
     zai = status["z-ai-glm"]
-    assert zai["events"] == [2, 4, 2]
-    assert zai["errors"] == [0, 3, 1]
-    assert zai["top_error_classes"] == [None, "APITimeoutError", None]
+    assert zai["events"] == [1, 1, 0, 0, 3, 0, 1, 0, 2, 0, 0, 0]
+    assert zai["errors"] == [0, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0]
+    assert zai["top_error_classes"] == [None] * 4 + ["APITimeoutError"] + [None] * 7
     assert zai["total_events"] == 8 and zai["total_errors"] == 4
     assert zai["dominant_error_class"] == "APITimeoutError"
     assert zai["provider_canonical"] == "z-ai-glm"
     # Per-bucket prompt-side token sums for the estate-wide cache-hit chart
     # (keeper-ruled 2026-08-30): input and cache read ride the same series,
     # and every row's tokens count regardless of its request_status.
-    assert zai["input_tokens"] == [8, 1, 0]
-    assert zai["cache_read_tokens"] == [0, 6, 0]
+    assert zai["input_tokens"] == [4, 4, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
+    assert zai["cache_read_tokens"] == [0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0]
 
     anthropic = status["anthropic"]
-    assert anthropic["events"] == [0, 0, 1]
-    assert anthropic["errors"] == [0, 0, 0]
-    assert anthropic["top_error_classes"] == [None, None, None]
+    assert anthropic["events"] == [0] * 10 + [1, 0]
+    assert anthropic["errors"] == [0] * 12
+    assert anthropic["top_error_classes"] == [None] * 12
     assert anthropic["dominant_error_class"] is None
-    assert anthropic["input_tokens"] == [0, 0, 2]
-    assert anthropic["cache_read_tokens"] == [0, 0, 0]
+    assert anthropic["input_tokens"] == [0] * 10 + [2, 0]
+    assert anthropic["cache_read_tokens"] == [0] * 12
 
     # The out-of-window rows never reach the strip.
     assert "ShouldNotAppear" not in json.dumps(series)
@@ -1638,11 +1644,11 @@ def test_substituted_events_never_counts_a_null_reported_model(tmp_path, monkeyp
     }
 
 
-def test_unified_usage_hourly_chart_collapses_models_deterministically(tmp_path, monkeypatch):
+def test_unified_usage_chart_collapses_models_deterministically(tmp_path, monkeypatch):
     class FrozenDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            return cls(2026, 7, 14, 12, 15, 0, tzinfo=tz)
+            return cls(2026, 7, 14, 12, 5, 0, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
     rows = [
@@ -1662,7 +1668,8 @@ def test_unified_usage_hourly_chart_collapses_models_deterministically(tmp_path,
         ("p0", "m0"), ("p1", "m1"), ("p2", "m2"), ("p3", "m3"), ("p4", "m4"),
     ]
     assert data["other_model_series"] == {
-        "label": "Other models", "member_count": 2, "total_tokens": 9, "values": [9]
+        "label": "Other models", "member_count": 2, "total_tokens": 9,
+        "values": [9, 0, 0, 0],
     }
 
 

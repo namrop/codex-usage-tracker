@@ -7,7 +7,18 @@ import {
   unifiedTokenChartOptions,
   type ChartConfig,
 } from "../lib/chart";
-import { compactIntFormat, formatApiModes, formatTimestamp, formatUtcHour, intFormat, percent } from "../lib/format";
+import {
+  bucketMinutesOf,
+  bucketWording,
+  compactIntFormat,
+  formatApiModes,
+  formatBucketLabel,
+  formatTimestamp,
+  intFormat,
+  percent,
+  type BucketWording,
+} from "../lib/format";
+import { useViewportWidth } from "../hooks/useViewportWidth";
 import { cededLanes, type Freshness } from "../lib/freshness";
 import { subscriptionUnifiedProviderColor } from "../lib/providers";
 import { QUOTA_FIVE_HOUR_NAMES, QUOTA_WEEKLY_NAMES, type QuotaRow } from "../lib/quota";
@@ -21,9 +32,10 @@ import { SeriesTable, type SeriesTableRow } from "./SeriesTable";
 
 // Estate-wide token composition (keeper-ruled 2026-08-30, replacing the
 // codex-only Token bucket mix): the five canonical token buckets summed
-// across every provider, stacked per complete UTC hour. Bucket colors are
-// the established SERIES entries; reasoning stays its own series because
-// this chart shows composition, not the accounted total.
+// across every provider, stacked per complete UTC bucket (15-minute,
+// keeper-ruled 2026-09-02). Bucket colors are the established SERIES
+// entries; reasoning stays its own series because this chart shows
+// composition, not the accounted total.
 const TOKEN_COMPOSITION_BUCKETS: readonly [string, string, keyof Palette["series"]][] = Object.freeze([
   ["input_tokens", "Input", "input"],
   ["cache_read_tokens", "Cache read", "cacheRead"],
@@ -40,11 +52,36 @@ interface SeriesChartModel {
   summary: string;
 }
 
-function modelTokenModel(timeSeries: any, palette: Palette): SeriesChartModel | null {
+// The per-chart axis inputs every model shares: compact tick labels on the
+// axis, full labels as tooltip titles, wording from the bucket width, and
+// the live viewport width for the tick limit.
+interface ChartFrame {
+  bucketMinutes: number;
+  wording: BucketWording;
+  labels: string[];
+  tooltipTitles: string[];
+  viewportWidth: number;
+}
+
+function chartFrame(timeSeries: any, viewportWidth: number): ChartFrame {
+  const bucketMinutes = bucketMinutesOf(timeSeries);
+  const starts: unknown[] = Array.isArray(timeSeries.bucket_starts) ? timeSeries.bucket_starts : [];
+  return {
+    bucketMinutes,
+    wording: bucketWording(bucketMinutes),
+    labels: starts.map((value) => formatBucketLabel(value, bucketMinutes, true)),
+    tooltipTitles: starts.map((value) => formatBucketLabel(value, bucketMinutes, false)),
+    viewportWidth,
+  };
+}
+
+function modelTokenModel(timeSeries: any, palette: Palette, frame: ChartFrame): SeriesChartModel | null {
   if (!timeSeries || !Array.isArray(timeSeries.bucket_starts)) return null;
-  const labels = timeSeries.bucket_starts.map((value: unknown) => formatUtcHour(value, window.innerWidth <= 640));
+  const { labels, tooltipTitles, viewportWidth, wording } = frame;
   const models: any[] = Array.isArray(timeSeries.model_series) ? [...timeSeries.model_series] : [];
   if (timeSeries.other_model_series) models.push(timeSeries.other_model_series);
+  // modelColors is already the hue-spread walk of the rank set (palette),
+  // so the two largest series never share a near-identical neighbour hue.
   const modelColors = models.map((_row, index) => palette.modelColors[index % palette.modelColors.length]);
   const datasets = models.map((row, index) => barDataset(
     row.label,
@@ -57,7 +94,7 @@ function modelTokenModel(timeSeries: any, palette: Palette): SeriesChartModel | 
     config: {
       type: "bar",
       data: { labels, datasets },
-      options: unifiedTokenChartOptions(palette, { stacked: true }),
+      options: unifiedTokenChartOptions(palette, { stacked: true, viewportWidth, tooltipTitles }),
     },
     labelRows: models.map((row, index) => ({
       label: String(row.label),
@@ -66,15 +103,15 @@ function modelTokenModel(timeSeries: any, palette: Palette): SeriesChartModel | 
     })),
     tableRows: models.map((row) => ({ label: String(row.label), values: row.values })),
     bucketStarts: timeSeries.bucket_starts,
-    summary: `${compactIntFormat(modelTotal)} accounted tokens across ${models.length} displayed series in complete UTC hours.`,
+    summary: `${compactIntFormat(modelTotal)} accounted tokens across ${models.length} displayed series in ${wording.completePlural}.`,
   };
 }
 
-function tokenCompositionModel(timeSeries: any, palette: Palette): SeriesChartModel | null {
+function tokenCompositionModel(timeSeries: any, palette: Palette, frame: ChartFrame): SeriesChartModel | null {
   if (!timeSeries || !Array.isArray(timeSeries.bucket_starts)) return null;
   const bucketSeries = timeSeries.bucket_series;
   if (!bucketSeries || typeof bucketSeries !== "object") return null;
-  const labels = timeSeries.bucket_starts.map((value: unknown) => formatUtcHour(value, window.innerWidth <= 640));
+  const { labels, tooltipTitles, viewportWidth, wording } = frame;
   const rows = TOKEN_COMPOSITION_BUCKETS.map(([field, label]) => {
     const values: unknown[] = Array.isArray(bucketSeries[field])
       ? bucketSeries[field]
@@ -97,7 +134,7 @@ function tokenCompositionModel(timeSeries: any, palette: Palette): SeriesChartMo
     config: {
       type: "bar",
       data: { labels, datasets },
-      options: unifiedTokenChartOptions(palette, { stacked: true }),
+      options: unifiedTokenChartOptions(palette, { stacked: true, viewportWidth, tooltipTitles }),
     },
     labelRows: rows.map((row, index) => ({
       label: row.label,
@@ -106,19 +143,19 @@ function tokenCompositionModel(timeSeries: any, palette: Palette): SeriesChartMo
     })),
     tableRows: rows.map((row) => ({ label: row.label, values: row.values })),
     bucketStarts: timeSeries.bucket_starts,
-    summary: `${compactIntFormat(compositionTotal)} tokens across five buckets and every provider in complete UTC hours.`,
+    summary: `${compactIntFormat(compositionTotal)} tokens across five buckets and every provider in ${wording.completePlural}.`,
   };
 }
 
 // Estate-wide cache hit rate (keeper-ruled 2026-08-30, replacing the
-// codex-only chart): per provider per hour, cache reads over prompt tokens
-// (input + cache read). An hour with no prompt tokens is null — the line
-// gaps instead of lying at zero.
-function cacheHitRateModel(timeSeries: any, palette: Palette): SeriesChartModel | null {
+// codex-only chart): per provider per bucket, cache reads over prompt
+// tokens (input + cache read). A bucket with no prompt tokens is null — the
+// line gaps instead of lying at zero.
+function cacheHitRateModel(timeSeries: any, palette: Palette, frame: ChartFrame): SeriesChartModel | null {
   if (!timeSeries || !Array.isArray(timeSeries.bucket_starts) || !Array.isArray(timeSeries.provider_status_series)) {
     return null;
   }
-  const labels = timeSeries.bucket_starts.map((value: unknown) => formatUtcHour(value, window.innerWidth <= 640));
+  const { labels, tooltipTitles, viewportWidth, wording } = frame;
   const all = (timeSeries.provider_status_series as any[]).filter((row) => (
     Array.isArray(row.input_tokens) && Array.isArray(row.cache_read_tokens)
   ));
@@ -148,7 +185,7 @@ function cacheHitRateModel(timeSeries: any, palette: Palette): SeriesChartModel 
   const datasets = rows.map((row) => lineDataset(row.label, row.values, row.color, { spanGaps: false }));
   const summaryParts = [
     rows.length
-      ? `${rows.length} provider${rows.length === 1 ? "" : "s"} charted over complete UTC hours; gaps mean no prompt tokens that hour.`
+      ? `${rows.length} provider${rows.length === 1 ? "" : "s"} charted over ${wording.completePlural}; gaps mean no prompt tokens ${wording.that}.`
       : "No provider met the traffic bar for the cache chart in this window.",
   ];
   if (folded.length) {
@@ -161,7 +198,7 @@ function cacheHitRateModel(timeSeries: any, palette: Palette): SeriesChartModel 
     config: {
       type: "line",
       data: { labels, datasets },
-      options: cacheHitRateChartOptions(palette),
+      options: cacheHitRateChartOptions(palette, { viewportWidth, tooltipTitles }),
     },
     labelRows: rows.map((row) => ({
       label: row.provider,
@@ -227,7 +264,7 @@ function SpendSparkline({ days }: { days: any[] }) {
   );
 }
 
-function ChartSection({ sectionId, titleId, title, caption, canvasId, canvasAriaLabel, labelsId, labelsAriaLabel, summaryId, model, fallbackSummary, loadingSummary, foldKey, foldLabel, tableCaption, tableHeadId, tableBodyId, formatCell, loaded }: {
+function ChartSection({ sectionId, titleId, title, caption, canvasId, canvasAriaLabel, labelsId, labelsAriaLabel, summaryId, model, fallbackSummary, loadingSummary, foldKey, foldLabel, tableCaption, tableHeadId, tableBodyId, formatCell, loaded, wording }: {
   sectionId?: string;
   titleId: string;
   title: string;
@@ -247,6 +284,7 @@ function ChartSection({ sectionId, titleId, title, caption, canvasId, canvasAria
   tableBodyId: string;
   formatCell?: (value: unknown) => string;
   loaded: boolean;
+  wording: BucketWording;
 }) {
   const [chartOk, setChartOk] = useState(true);
   const summary = !loaded
@@ -256,7 +294,7 @@ function ChartSection({ sectionId, titleId, title, caption, canvasId, canvasAria
       : fallbackSummary;
   const foldSummary = tableFoldSummary({
     rows: model ? model.bucketStarts.length : 0,
-    singular: "hour",
+    singular: wording.singular,
     columns: model ? model.tableRows.length : 0,
     colNoun: "series",
   });
@@ -282,6 +320,7 @@ function ChartSection({ sectionId, titleId, title, caption, canvasId, canvasAria
           bodyId={tableBodyId}
           caption={tableCaption}
           bucketStarts={model ? model.bucketStarts : []}
+          bucketMinutes={wording.minutes}
           rows={model ? model.tableRows : []}
           formatCell={formatCell}
         />
@@ -290,7 +329,7 @@ function ChartSection({ sectionId, titleId, title, caption, canvasId, canvasAria
   );
 }
 
-export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listPriceDay, quotaLatest, resetChips, subsLoading, providerStatusFeeds, refreshing, onRefresh }: {
+export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listPriceDay, quotaLatest, resetChips, subsLoading, subsUnavailable = false, providerStatusFeeds, refreshing, onRefresh }: {
   palette: Palette;
   unified: { data: any | null; message: string | null; contentVisible: boolean };
   freshness: Freshness | null;
@@ -299,15 +338,21 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
   quotaLatest: QuotaRow[] | undefined;
   resetChips: ResetChipModel[];
   subsLoading: boolean;
+  subsUnavailable?: boolean;
   providerStatusFeeds: Record<string, any> | null;
   refreshing: boolean;
   onRefresh: () => void;
 }) {
   const data = unified.data;
   const timeSeries = data ? data.time_series : null;
-  const modelToken = useMemo(() => (timeSeries ? modelTokenModel(timeSeries, palette) : null), [timeSeries, palette]);
-  const composition = useMemo(() => (timeSeries ? tokenCompositionModel(timeSeries, palette) : null), [timeSeries, palette]);
-  const cacheHitRate = useMemo(() => (timeSeries ? cacheHitRateModel(timeSeries, palette) : null), [timeSeries, palette]);
+  const viewportWidth = useViewportWidth();
+  const frame = useMemo(() => (timeSeries ? chartFrame(timeSeries, viewportWidth) : null), [timeSeries, viewportWidth]);
+  const modelToken = useMemo(() => (timeSeries && frame ? modelTokenModel(timeSeries, palette, frame) : null), [timeSeries, palette, frame]);
+  const composition = useMemo(() => (timeSeries && frame ? tokenCompositionModel(timeSeries, palette, frame) : null), [timeSeries, palette, frame]);
+  const cacheHitRate = useMemo(() => (timeSeries && frame ? cacheHitRateModel(timeSeries, palette, frame) : null), [timeSeries, palette, frame]);
+  // Wording follows the loaded series' bucket width; before data lands the
+  // captions describe the 15-minute buckets the backend cuts.
+  const wording = frame ? frame.wording : bucketWording(15);
 
   // Ceded-lane rendering (the one behavior addition of the kintsugi render,
   // keeper-ratified): a lane the collector gave up on this run is a
@@ -370,7 +415,7 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
         <div className="card-title">
           <h2 id="unifiedUsageTitle">Unified usage · 7 days</h2>
           <p className="caption">Canonical token totals and request estimates; reasoning is diagnostic and never counted twice.</p>
-          <p className="caption">Bucketed surfaces use complete UTC hours (countdowns run in wall-clock time), and legend quota percentages are each provider’s own cap — never shares of one pool, never drawn as slices.</p>
+          <p className="caption">{`Bucketed surfaces use ${wording.completePlural} (countdowns run in wall-clock time), and legend quota percentages are each provider’s own cap — never shares of one pool, never drawn as slices.`}</p>
         </div>
         <div className="toolbar" aria-label="Refresh controls">
           <button className="refresh-btn" id="refreshUsage" disabled={refreshing} onClick={onRefresh}>
@@ -430,7 +475,7 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
         <div className="window-pair">
           <section className="window-card" aria-labelledby="fiveHourDonutTitle">
             <h3 id="fiveHourDonutTitle">Five-hour throughput by provider</h3>
-            <p className="caption">Accounted tokens over the last five complete UTC hours, split by provider.</p>
+            <p className="caption">Accounted tokens over the last five hours to the most recent complete quarter hour, split by provider.</p>
             <Donut
               svgId="fiveHourDonut"
               legendId="fiveHourDonutLegend"
@@ -447,7 +492,7 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
           <section className="window-card" aria-labelledby="resetRailTitle">
             <h3 id="resetRailTitle">Reset countdowns</h3>
             <p className="caption">Every provider quota window that reports an exact reset time, soonest first.</p>
-            <ResetRail chips={resetChips} loading={subsLoading} />
+            <ResetRail chips={resetChips} loading={subsLoading} unavailable={subsUnavailable} />
           </section>
         </div>
 
@@ -489,9 +534,9 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
         <ChartSection
           titleId="modelTokenTitle"
           title="Tokens across provider models"
-          caption="Hourly accounted tokens by model, with the five largest series visible and the rest rolled into Other."
+          caption={`${wording.adjective} accounted tokens by model, with the five largest series visible and the rest rolled into Other.`}
           canvasId="modelTokenChart"
-          canvasAriaLabel="Stacked hourly token usage across provider and model pairs"
+          canvasAriaLabel={`Stacked ${wording.adjective.toLowerCase()} token usage across provider and model pairs`}
           labelsId="modelTokenLabels"
           labelsAriaLabel="Model series totals"
           summaryId="modelTokenSummary"
@@ -499,18 +544,19 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
           fallbackSummary="Model chart unavailable; aggregate tables remain current."
           loadingSummary="Loading model token series…"
           foldKey="modelTokenSeries"
-          foldLabel="Hourly model data"
-          tableCaption="Accounted tokens per complete UTC hour by provider and model"
+          foldLabel={`${wording.adjective} model data`}
+          tableCaption={`Accounted tokens ${wording.per} by provider and model`}
           tableHeadId="modelTokenTableHead"
           tableBodyId="modelTokenTableBody"
           loaded={Boolean(data)}
+          wording={wording}
         />
         <ChartSection
           titleId="tokenCompositionTitle"
           title="Token composition"
-          caption="Hourly input, cache read, cache write, output, and reasoning tokens summed across every provider."
+          caption={`${wording.adjective} input, cache read, cache write, output, and reasoning tokens summed across every provider.`}
           canvasId="tokenCompositionChart"
-          canvasAriaLabel="Stacked hourly token composition across all providers"
+          canvasAriaLabel={`Stacked ${wording.adjective.toLowerCase()} token composition across all providers`}
           labelsId="tokenCompositionLabels"
           labelsAriaLabel="Token bucket totals"
           summaryId="tokenCompositionSummary"
@@ -518,16 +564,17 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
           fallbackSummary="Token composition chart unavailable; aggregate tables remain current."
           loadingSummary="Loading token composition…"
           foldKey="tokenCompositionSeries"
-          foldLabel="Hourly composition data"
-          tableCaption="Token buckets per complete UTC hour across all providers"
+          foldLabel={`${wording.adjective} composition data`}
+          tableCaption={`Token buckets ${wording.per} across all providers`}
           tableHeadId="tokenCompositionTableHead"
           tableBodyId="tokenCompositionTableBody"
           loaded={Boolean(data)}
+          wording={wording}
         />
         <ChartSection
           titleId="cacheHitRateTitle"
           title="Cache hit rate"
-          caption="Cache-read share of each provider’s prompt tokens per hour, with gaps where a provider sent no prompt tokens."
+          caption={`Cache-read share of each provider’s prompt tokens ${wording.per.replace("per complete ", "per ")}, with gaps where a provider sent no prompt tokens.`}
           canvasId="cacheHitRateChart"
           canvasAriaLabel="Cache hit rate per provider from 0 to 100 percent"
           labelsId="cacheHitRateLabels"
@@ -537,12 +584,13 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
           fallbackSummary="Cache hit rate chart unavailable; the provider status strip remains current."
           loadingSummary="Loading cache hit rate…"
           foldKey="cacheHitRateSeries"
-          foldLabel="Hourly cache data"
-          tableCaption="Cache hit rate per complete UTC hour by provider"
+          foldLabel={`${wording.adjective} cache data`}
+          tableCaption={`Cache hit rate ${wording.per} by provider`}
           tableHeadId="cacheHitRateTableHead"
           tableBodyId="cacheHitRateTableBody"
           formatCell={(value) => (value === null || value === undefined ? "—" : percent(value))}
           loaded={Boolean(data)}
+          wording={wording}
         />
 
         <Fold foldKey="harnessUsage" label="By harness" summary={harnessSummary} colsToggle>

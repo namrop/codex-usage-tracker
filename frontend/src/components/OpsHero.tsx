@@ -6,10 +6,13 @@ import { ResetChip, type ResetChipModel } from "./ResetRail";
 // reset, week list-price, substitution watch) — the digest derives from the
 // same state the panels render from; it never fetches.
 
-export function OpsHero({ freshness, soonestChip, subsLoaded, unifiedData }: {
+export function OpsHero({ freshness, soonestChip, subsLoaded, subsUnavailable = false, unifiedData }: {
   freshness: Freshness | null;
   soonestChip: ResetChipModel | undefined;
   subsLoaded: boolean;
+  // The subscriptions fetch failed with nothing to fall back on: say so
+  // rather than "waiting" forever.
+  subsUnavailable?: boolean;
   unifiedData: any | null;
 }) {
   const status = freshness ? String(freshness.status || "unknown") : null;
@@ -64,15 +67,17 @@ export function OpsHero({ freshness, soonestChip, subsLoaded, unifiedData }: {
         </div>
         <div className="digest-item">
           <div className="micro-label">Soonest reset</div>
-          {soonestChip
-            ? <ResetChip chip={soonestChip} id="digestReset" />
-            : <a className="reset-chip role-stability" id="digestReset" hidden />}
+          {/* No placeholder anchor: `.reset-chip { display: flex }` beat the
+              UA's [hidden] rule and the empty chip drew as a blank pill. */}
+          {soonestChip ? <ResetChip chip={soonestChip} id="digestReset" /> : null}
           <span className="digest-note" id="digestResetNote">
             {soonestChip
               ? "soonest quota window · links to its card"
-              : subsLoaded
-                ? "no exact resets reported"
-                : "waiting for subscription windows"}
+              : subsUnavailable
+                ? "subscription windows unavailable"
+                : subsLoaded
+                  ? "no exact resets reported"
+                  : "waiting for subscription windows"}
           </span>
         </div>
         <div className="digest-item">

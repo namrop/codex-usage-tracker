@@ -1,8 +1,13 @@
 // Subscription quota helpers — ported verbatim from the pre-React inline
 // dashboard script.
 
-export const QUOTA_WEEKLY_NAMES: ReadonlySet<string> = new Set(["week", "seven_day", "spark_week"]);
-export const QUOTA_FIVE_HOUR_NAMES: ReadonlySet<string> = new Set(["five_hour", "spark_five_hour"]);
+// Window-name sets the donut legends and the reset rail read. seven_day_fable
+// is Claude's Fable-week cap: it counts toward the weekly worst value and its
+// countdown formats as weekly like its sibling seven_day chip. The spark_*
+// names are OUT (2026-09-02): the utilization chart says Codex reports no
+// comparable five-hour quota, and the legend must not claim one.
+export const QUOTA_WEEKLY_NAMES: ReadonlySet<string> = new Set(["week", "seven_day", "seven_day_fable"]);
+export const QUOTA_FIVE_HOUR_NAMES: ReadonlySet<string> = new Set(["five_hour"]);
 
 export interface QuotaRow {
   provider?: unknown;
@@ -52,7 +57,13 @@ export function quotaPercentFor(
     const pct = (Number(row.used_value) / Number(row.limit_value)) * 100;
     if (Number.isFinite(pct) && (worst === null || pct > worst)) worst = pct;
   });
-  return worst === null ? null : { pct: worst, accounts: rows.length };
+  // "worst account" is about ACCOUNTS, not rows: one Codex account reports
+  // several matching windows (week + seven_day) and must not read as many.
+  const accounts = new Set(rows.map((row) => {
+    const index = Number(row.provider_account_index);
+    return Number.isSafeInteger(index) && index >= 1 ? index : 1;
+  })).size;
+  return worst === null ? null : { pct: worst, accounts };
 }
 
 export function quotaConfidenceLabel(status: unknown): string {

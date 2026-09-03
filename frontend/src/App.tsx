@@ -58,6 +58,7 @@ export default function App() {
         freshness={state.freshness}
         soonestChip={resetChips[0]}
         subsLoaded={!state.subs.loading && !state.subs.placeholder}
+        subsUnavailable={!state.subs.loading && state.subs.placeholder}
         unifiedData={state.unified.data}
       />
       <UnifiedUsageCard
@@ -68,7 +69,8 @@ export default function App() {
         listPriceDay={state.listPriceDay}
         quotaLatest={quotaLatest}
         resetChips={resetChips}
-        subsLoading={state.subs.loading || state.subs.placeholder}
+        subsLoading={state.subs.loading}
+        subsUnavailable={!state.subs.loading && state.subs.placeholder}
         providerStatusFeeds={state.providerStatusFeeds}
         refreshing={state.refreshing}
         onRefresh={refresh}
