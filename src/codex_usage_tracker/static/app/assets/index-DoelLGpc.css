@@ -975,10 +975,12 @@ tbody tr:hover {
   margin-top: 0;
 }
 
+/* The weekly and five-hour utilization charts stack full-width (keeper-ruled
+ * 2026-09-02): each one spreads across the card instead of sharing a row. */
 .subscription-unified-history-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
   min-width: 0;
 }
 
