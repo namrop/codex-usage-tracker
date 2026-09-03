@@ -26,7 +26,17 @@ import { Fold, tableFoldSummary } from "./Fold";
 import { SeriesTable } from "./SeriesTable";
 import { TextRow } from "./UnifiedUsageCard";
 
-function subscriptionQuotaDatasets(palette: Palette, series: NormalizedQuotaSeries[]): Record<string, unknown>[] {
+// Quota observations are point-in-time states sampled on the collector's
+// cadence, so a line may bridge empty buckets up to the ledger's three-hour
+// freshness threshold; a longer gap (a dead lane) still breaks the line.
+const QUOTA_SPAN_GAP_MINUTES = 180;
+
+function subscriptionQuotaDatasets(
+  palette: Palette,
+  series: NormalizedQuotaSeries[],
+  bucketMinutes: number,
+): Record<string, unknown>[] {
+  const spanGapBuckets = Math.max(1, Math.round(QUOTA_SPAN_GAP_MINUTES / Math.max(1, bucketMinutes)));
   return series.map((row, index) => {
     const color = subscriptionUnifiedProviderColor(palette, row, index);
     const status = row.confidence_status;
@@ -41,7 +51,7 @@ function subscriptionQuotaDatasets(palette: Palette, series: NormalizedQuotaSeri
       pointHitRadius: 10,
       pointHoverRadius: 3,
       fill: false,
-      spanGaps: false,
+      spanGaps: spanGapBuckets,
       // Slight monotone smoothing (keeper-ruled 2026-09-02); monotone keeps
       // a 0–100% line from overshooting its samples.
       ...LINE_SMOOTHING,
@@ -117,7 +127,7 @@ function SubscriptionHistoryCard({
       : rows;
     return {
       type: "line",
-      data: { labels: chartLabels, datasets: subscriptionQuotaDatasets(palette, chartRows) },
+      data: { labels: chartLabels, datasets: subscriptionQuotaDatasets(palette, chartRows, bucketMinutes) },
       options: subscriptionQuotaChartOptions(palette, { viewportWidth, tooltipTitles: chartTitles }),
     };
   }, [unavailableMessage, rows, bounded, labels, tooltipTitles, limit, palette, viewportWidth]);
