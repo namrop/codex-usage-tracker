@@ -2154,7 +2154,7 @@ def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_ex
     assert "OpenAI / Codex reports no comparable five-hour quota" in quota_src
     assert "quotaConfidenceDash" in quota_src
     assert 'status === "exact" ? [] : [7, 5]' in quota_src
-    assert "spanGaps: spanGapBuckets" in card
+    assert "spanGaps: false" in card
     assert "confidence_status" in card
     assert ".destroy()" in canvas
     assert "animation: REDUCED_MOTION ? false" in chart

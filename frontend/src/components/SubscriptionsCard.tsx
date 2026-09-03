@@ -27,22 +27,43 @@ import { SeriesTable } from "./SeriesTable";
 import { TextRow } from "./UnifiedUsageCard";
 
 // Quota observations are point-in-time states sampled on the collector's
-// cadence, so a line may bridge empty buckets up to the ledger's three-hour
-// freshness threshold; a longer gap (a dead lane) still breaks the line.
-const QUOTA_SPAN_GAP_MINUTES = 180;
+// cadence, so the chart holds the last observed level across empty buckets
+// up to the ledger's three-hour freshness threshold (a quota reading stays
+// true until the next sample); a longer gap (a dead lane) still breaks the
+// line. Only the chart data is filled: the folded table keeps raw samples.
+// (Chart.js bridges nulls only with spanGaps: true, which would also bridge
+// dead-lane gaps, so the hold is done here instead.)
+const QUOTA_HOLD_MINUTES = 180;
+
+export function holdLastValue(values: (number | null)[], maxHoldBuckets: number): (number | null)[] {
+  const out: (number | null)[] = [];
+  let last: number | null = null;
+  let since = 0;
+  values.forEach((value) => {
+    if (value !== null && value !== undefined) {
+      last = value;
+      since = 0;
+      out.push(value);
+      return;
+    }
+    since += 1;
+    out.push(last !== null && since <= maxHoldBuckets ? last : null);
+  });
+  return out;
+}
 
 function subscriptionQuotaDatasets(
   palette: Palette,
   series: NormalizedQuotaSeries[],
   bucketMinutes: number,
 ): Record<string, unknown>[] {
-  const spanGapBuckets = Math.max(1, Math.round(QUOTA_SPAN_GAP_MINUTES / Math.max(1, bucketMinutes)));
+  const holdBuckets = Math.max(1, Math.round(QUOTA_HOLD_MINUTES / Math.max(1, bucketMinutes)));
   return series.map((row, index) => {
     const color = subscriptionUnifiedProviderColor(palette, row, index);
     const status = row.confidence_status;
     return {
       label: `${subscriptionSeriesDisplayLabel(row)} — ${quotaConfidenceLabel(status)} confidence`,
-      data: row.values,
+      data: holdLastValue(row.values, holdBuckets),
       borderColor: color,
       backgroundColor: color,
       borderDash: subscriptionUnifiedQuotaDash(row),
@@ -51,7 +72,7 @@ function subscriptionQuotaDatasets(
       pointHitRadius: 10,
       pointHoverRadius: 3,
       fill: false,
-      spanGaps: spanGapBuckets,
+      spanGaps: false,
       // Slight monotone smoothing (keeper-ruled 2026-09-02); monotone keeps
       // a 0–100% line from overshooting its samples.
       ...LINE_SMOOTHING,
