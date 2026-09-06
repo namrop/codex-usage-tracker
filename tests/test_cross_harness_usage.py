@@ -620,10 +620,10 @@ def test_claude_malformed_interior_line_skips_that_file_only_and_reports_it(tmp_
             break
 
 
-# --- Codex spark windows never emit all-None observations --------------------------
+# --- Codex spark windows are retired outright (keeper ruling 2026-09-06) ------
 
 
-def test_codex_spark_window_without_a_value_emits_no_row(tmp_path):
+def test_codex_spark_windows_emit_no_rows(tmp_path):
     ledger = tmp_path / "codex.jsonl"
     ledger.write_text(json.dumps({
         "id": "snap", "fetched_at": "2026-07-12T12:00:00Z",
@@ -631,8 +631,7 @@ def test_codex_spark_window_without_a_value_emits_no_row(tmp_path):
         "spark_session_used_pct": None, "spark_weekly_used_pct": 5,
     }) + "\n")
     facts = {f["quota_name"]: f for f in codex_quota_observations(ledger, "ns:codex")}
-    assert set(facts) == {"five_hour", "week", "spark_week"}
-    assert facts["spark_week"]["used_value"] == "5"
+    assert set(facts) == {"five_hour", "week"}
 
 
 # --- OpenRouter: an overdrawn account is an observation, not a ceded lane --------------

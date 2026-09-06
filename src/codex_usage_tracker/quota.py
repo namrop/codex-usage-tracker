@@ -144,32 +144,12 @@ def _codex_snapshot_observations(
         # 2026-08-30). Absent window = no row, not an alarming null row.
         if snapshot.get(used_field) is not None
     ]
-    if "spark_session_used_pct" in snapshot or "spark_weekly_used_pct" in snapshot:
-        for name, used_field, reset_field in (
-            ("spark_five_hour", "spark_session_used_pct", "spark_session_reset_at"),
-            ("spark_week", "spark_weekly_used_pct", "spark_weekly_reset_at"),
-        ):
-            # Same rule as the primary windows: a spark window the snapshot
-            # does not report is no row, not an all-None observation.
-            if snapshot.get(used_field) is None:
-                continue
-            rows.append(
-                _quota(
-                    namespace=source_namespace,
-                    observation_id=f"{snapshot_id}:{name}",
-                    harness="codex",
-                    observed_at=observed,
-                    provider="openai",
-                    quota_name=name,
-                    window_kind="rolling",
-                    unit="percent",
-                    limit="100",
-                    used=snapshot.get(used_field),
-                    remaining=_remaining_percent(snapshot.get(used_field)),
-                    resets_at=_reset(snapshot.get(reset_field)),
-                    x_plan_type=snapshot.get("plan_type"),
-                )
-            )
+    # Codex Spark windows are deliberately not emitted (keeper ruling
+    # 2026-09-06): the model is unused and its cards read as noise. The raw
+    # snapshot fields still land in the legacy record (ledger.py unchanged),
+    # but no spark_five_hour/spark_week quota rows are written. The dashboard
+    # additionally drops historical spark rows at the API boundary so the
+    # final emitted row cannot linger as a permanent stale card.
     return rows
 
 

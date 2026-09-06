@@ -1162,6 +1162,21 @@ def _quota_observation_is_informative(row: dict[str, Any]) -> bool:
     )
 
 
+def _drop_retired_spark_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop Codex Spark quota rows at the API boundary (keeper ruling
+    2026-09-06: the model is unused and its cards are noise). Collection
+    stopped emitting spark_* rows the same day, but a source-only cut is not
+    enough — the latest-per-identity rule would keep the final historical
+    row newest forever, the exact stale-card failure mode documented in
+    ``_quota_observation_is_informative``. The ledger keeps its history
+    unpruned; the cards, reset rail, charts, and burn panel do not."""
+    return [
+        row
+        for row in rows
+        if not str(row.get("quota_name") or "").startswith("spark_")
+    ]
+
+
 def _quota_series_identity(row: dict[str, Any]) -> _QuotaSeriesIdentity:
     """Return the complete private identity used to prevent cross-account merging."""
     return (
@@ -2059,6 +2074,7 @@ def create_app(
             return jsonify({"error": "ledger query exceeds private API row limit"}), 413
         except (MalformedLedgerError, ValidationError, IdentityConflictError):
             return jsonify({"error": "configured private ledger is unavailable"}), 503
+        rows = _drop_retired_spark_rows(rows)
         if hours is not None:
             # Backends use a strict successor only to admit the exact request
             # instant; this exact comparison prevents any future fact from
@@ -2206,7 +2222,7 @@ def create_app(
             return jsonify({"error": "configured private ledger is unavailable"}), 503
         return jsonify(
             _build_quota_burn_projection(
-                rows,
+                _drop_retired_spark_rows(rows),
                 generated_at=generated_at,
             )
         )
