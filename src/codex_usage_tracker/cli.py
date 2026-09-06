@@ -325,7 +325,15 @@ def cmd_collect_all(args: argparse.Namespace) -> int:
             print(f"collect-all report: {report_path}", file=sys.stderr)
         return 1
     print(_collect_summary_line(result), file=sys.stderr)
-    _print_compact_json(result)
+    # Journal-friendly stdout (keeper ruling 2026-09-06): the per-identity
+    # `resolutions`/`conflicts` arrays run to ~800KB on churny runs and exist
+    # only for post-hoc diagnosis, which the persisted per-run report already
+    # carries (health/collect-<scope>-last.json, written with the full
+    # payload). Echoing them here only bloated the systemd journal. Counts
+    # stay; detail lives in the report.
+    _print_compact_json(
+        {k: v for k, v in result.items() if k not in ("resolutions", "conflicts")}
+    )
     return 0
 
 
