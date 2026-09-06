@@ -1797,7 +1797,8 @@ def test_subscription_api_unifies_five_hour_quotas_without_substitution_or_accou
         encoding="utf-8",
     )
 
-    response = create_app(quota_ledger=str(ledger)).test_client().get(
+    client = create_app(quota_ledger=str(ledger)).test_client()
+    response = client.get(
         "/api/subscriptions?hours=1&history=0"
     )
 
@@ -1860,6 +1861,16 @@ def test_subscription_api_unifies_five_hour_quotas_without_substitution_or_accou
         "provider_payload_ref",
     ):
         assert private_value not in serialized
+
+    # Spark windows are retired from every dashboard surface (keeper ruling
+    # 2026-09-06): the fixture's historical spark_week row stays in the
+    # ledger but must never reach latest, history, the charts, or the burn
+    # panel — a source-only cut would leave the last row newest forever.
+    assert "spark_week" not in serialized
+    assert "spark_five_hour" not in serialized
+    burn = client.get("/api/quota-burn?hours=1")
+    assert burn.status_code == 200
+    assert "spark" not in json.dumps(burn.get_json())
 
 
 def test_unified_five_hour_handles_one_series_and_missing_or_invalid_primary_data():
