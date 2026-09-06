@@ -56,8 +56,13 @@ def test_unknown_provider_is_coverage_not_a_guess():
 
 
 def test_provider_default_covers_unlisted_models():
-    result = estimate_list_price([_bucket("openai-codex", "gpt-9.9-experimental", input_tokens=1_000_000)])
-    assert result["estimate_usd"] == "5.00"
+    """Documented provider defaults still cover unlisted models on the
+    providers that keep one. (The OpenAI/Codex defaults were removed on
+    2026-09-06 — see
+    test_unknown_openai_and_codex_models_are_unpriced_coverage_not_zero.)"""
+    result = estimate_list_price([_bucket("anthropic", "claude-99-experimental", input_tokens=1_000_000)])
+    assert result["estimate_usd"] == "10.00"
+    assert result["unpriced_providers"] == []
 
 
 def test_local_inference_is_zero_not_unpriced():
@@ -71,6 +76,14 @@ def test_every_seeded_rate_parses_as_decimal():
         tables = list(entry["models"].values())
         if entry.get("default"):
             tables.append(entry["default"])
+        # Nested long-context meters — applied ("long") or recorded pending a
+        # verified threshold — are held to the same four-rate shape.
+        tables.extend([
+            nested
+            for rates in list(tables)
+            for key in ("long", "long_unapplied_pending_threshold")
+            if (nested := rates.get(key))
+        ])
         for rates in tables:
             for key in ("input", "output", "cache_read", "cache_write"):
                 Decimal(rates[key])
@@ -111,3 +124,162 @@ def test_opencode_go_prices_glm_but_leaves_qwen_unpriced():
     assert mixed["estimate_usd"] == "1.40"
     assert mixed["priced_token_share"] == 0.5
     assert mixed["unpriced_providers"] == ["opencode-go"]
+
+
+# ── 2026-09-06 Astra / promotional-sol pricing round ─────────────────────
+# Rates read from developers.openai.com/api/docs/models/gpt-6-astra and
+# /api/docs/pricing by the parent AGENT on 2026-09-06. Agent-sourced, not
+# keeper-confirmed: these tests pin what the table claims, not that the
+# vendor still charges it.
+
+
+def test_gpt_6_astra_standard_rates_on_both_openai_meters():
+    expected = {
+        "input": "10", "output": "50", "cache_read": "1.00", "cache_write": "12.50",
+        "long": {"input": "20", "output": "75", "cache_read": "2.00", "cache_write": "25"},
+    }
+    assert LIST_PRICES["openai"]["models"]["gpt-6-astra"] == expected
+    assert LIST_PRICES["openai-codex"]["models"]["gpt-6-astra"] == expected
+
+    result = estimate_list_price([_bucket(
+        "openai-codex", "gpt-6-astra",
+        input_tokens=1_000_000, output_tokens=100_000,
+        cache_read_tokens=2_000_000, cache_write_tokens=400_000,
+    )])
+    # 10 + 5 + 2 + 5 = 22.00
+    assert result["estimate_usd"] == "22.00"
+    assert result["priced_token_share"] == 1.0
+    assert result["long_context_tokens"] == 0
+
+
+def test_gpt_6_astra_long_context_bills_the_whole_request_at_the_long_rate():
+    result = estimate_list_price([dict(_bucket(
+        "openai", "gpt-6-astra",
+        input_tokens=1_000_000, output_tokens=100_000,
+        cache_read_tokens=2_000_000, cache_write_tokens=400_000,
+    ), context_basis="long")])
+    # 20 + 7.5 + 4 + 10 = 41.50 — output and cache flip too, not just input.
+    assert result["estimate_usd"] == "41.50"
+    assert result["long_context_tokens"] == 3_500_000
+
+
+def test_long_context_threshold_is_the_request_prompt_including_cache():
+    """Canonical input_tokens EXCLUDES cache, so the >272000 test is over
+    input + cache_read + cache_write for one request."""
+    from codex_usage_tracker.list_pricing import (
+        LONG_CONTEXT_PROMPT_TOKENS,
+        request_context_basis,
+    )
+
+    assert LONG_CONTEXT_PROMPT_TOKENS == 272_000
+
+    def attempt(**tokens):
+        row = {"record_kind": "api_attempt", "input_tokens": 0,
+               "cache_read_tokens": 0, "cache_write_tokens": 0, "output_tokens": 0}
+        row.update(tokens)
+        return row
+
+    # Boundary: exactly 272000 is standard, one more is long.
+    assert request_context_basis(attempt(input_tokens=272_000)) == "standard"
+    assert request_context_basis(attempt(input_tokens=272_001)) == "long"
+    # Cache counts toward the prompt even though input_tokens alone is small.
+    assert request_context_basis(
+        attempt(input_tokens=1_000, cache_read_tokens=270_000, cache_write_tokens=1_001)
+    ) == "long"
+    assert request_context_basis(
+        attempt(input_tokens=1_000, cache_read_tokens=270_000, cache_write_tokens=1_000)
+    ) == "standard"
+    # Output never counts toward the prompt.
+    assert request_context_basis(attempt(input_tokens=10, output_tokens=500_000)) == "standard"
+    # A historical aggregate bundles many calls: its summed prompt says
+    # nothing about any single request, so it prices at standard and says so.
+    assert request_context_basis(
+        {"record_kind": "historical_aggregate", "input_tokens": 900_000}
+    ) == "aggregate"
+
+
+def test_aggregate_rows_price_standard_and_are_reported_as_such():
+    result = estimate_list_price([dict(_bucket(
+        "openai-codex", "gpt-6-astra", input_tokens=1_000_000,
+    ), context_basis="aggregate")])
+    assert result["estimate_usd"] == "10.00"
+    assert result["long_context_tokens"] == 0
+    assert result["aggregate_context_tokens"] == 1_000_000
+
+
+def test_estimate_declares_its_standard_service_tier_basis():
+    """Batch/Flex (0.5x) and Fast/Priority (2x) are not modeled; the estimate
+    must say which tier it assumed rather than imply actual-rate correctness."""
+    from codex_usage_tracker.list_pricing import RATE_BASIS
+
+    assert RATE_BASIS == "standard"
+    result = estimate_list_price([_bucket("openai", "gpt-6-astra", input_tokens=1)])
+    assert result["rate_basis"] == "standard"
+
+
+def test_gpt_5_6_sol_carries_the_current_promotional_rates():
+    expected = {
+        "input": "4", "output": "20", "cache_read": "0.40", "cache_write": "5",
+        # Sol's model page independently confirms the 272,000 threshold.
+        "long": {
+            "input": "8", "output": "30", "cache_read": "0.80", "cache_write": "10",
+        },
+    }
+    assert LIST_PRICES["openai"]["models"]["gpt-5.6-sol"] == expected
+    assert LIST_PRICES["openai-codex"]["models"]["gpt-5.6-sol"] == expected
+    short = estimate_list_price([_bucket(
+        "openai-codex", "gpt-5.6-sol", input_tokens=1_000_000, output_tokens=1_000_000,
+    )])
+    assert short["estimate_usd"] == "24.00"
+
+
+def test_sol_long_context_meter_uses_its_independently_verified_threshold():
+    from codex_usage_tracker.list_pricing import LONG_CONTEXT_UNVERIFIED
+
+    assert ("openai-codex", "gpt-5.6-sol") not in LONG_CONTEXT_UNVERIFIED
+    assert ("openai-codex", "gpt-6-astra") not in LONG_CONTEXT_UNVERIFIED
+
+    long_basis = estimate_list_price([dict(_bucket(
+        "openai-codex", "gpt-5.6-sol", input_tokens=1_000_000, output_tokens=1_000_000,
+    ), context_basis="long")])
+    assert long_basis["estimate_usd"] == "38.00"
+    assert long_basis["long_context_tokens"] == 2_000_000
+    assert long_basis["long_context_unverified_tokens"] == 0
+
+    # Both independently sourced meters apply without an unverified flag.
+    astra = estimate_list_price([dict(_bucket(
+        "openai-codex", "gpt-6-astra", input_tokens=1_000_000,
+    ), context_basis="long")])
+    assert astra["estimate_usd"] == "20.00"
+    assert astra["long_context_unverified_tokens"] == 0
+
+
+def test_unknown_openai_and_codex_models_are_unpriced_coverage_not_zero():
+    """Contract change 2026-09-06: a new OpenAI/Codex model ID must surface as
+    unpriced coverage, never be silently priced off a stale provider default
+    (and never read as $0 actual)."""
+    assert LIST_PRICES["openai"]["default"] is None
+    assert LIST_PRICES["openai-codex"]["default"] is None
+    for provider in ("openai", "openai-codex"):
+        result = estimate_list_price([_bucket(provider, "gpt-9.9-experimental", input_tokens=1_000_000)])
+        assert result["estimate_usd"] == "0.00"
+        assert result["priced_token_share"] == 0.0
+        assert result["unpriced_providers"] == [provider]
+
+
+def test_reasoning_is_not_double_billed_on_astra_long_context():
+    with_reasoning = estimate_list_price([dict(_bucket(
+        "openai-codex", "gpt-6-astra", output_tokens=1_000_000, reasoning_tokens=900_000,
+    ), context_basis="long")])
+    output_only = estimate_list_price([dict(_bucket(
+        "openai-codex", "gpt-6-astra", output_tokens=1_000_000,
+    ), context_basis="long")])
+    assert with_reasoning["estimate_usd"] == output_only["estimate_usd"] == "75.00"
+
+
+def test_glm_flash_is_not_given_an_invented_rate():
+    """glm-5.3-flash has no published rate; it must fall to the documented,
+    conservative-high zai default rather than a made-up flash price."""
+    zai = LIST_PRICES["zai"]
+    assert "glm-5.3-flash" not in zai["models"]
+    assert zai["default"] == zai["models"]["glm-5.3"]

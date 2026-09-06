@@ -399,6 +399,39 @@ summary {
   border-color: var(--muted);
 }
 
+/* Chart scope control (2026-09-06): the Top-models / All-models switch above
+ * the model chart. Token-pure like every other control here — the pressed
+ * option reads through the same panel/line/text tokens the refresh button
+ * uses, so it inherits every theme without a per-theme rule. */
+.chart-controls {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 6px;
+}
+
+.chart-scope-btn {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  color: var(--muted);
+  padding: 5px 12px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.chart-scope-btn:hover {
+  border-color: var(--muted);
+  color: var(--text);
+}
+
+.chart-scope-btn[aria-pressed="true"] {
+  border-color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  color: var(--text);
+}
+
 .chart-wrap {
   position: relative;
   min-height: 278px;

@@ -3141,3 +3141,199 @@ def test_quota_burn_requires_configuration_and_hours_bounds(tmp_path, monkeypatc
     monkeypatch.delenv("QUOTA_LEDGER_PATH", raising=False)
     unconfigured = create_app().test_client()
     assert unconfigured.get("/api/quota-burn").status_code == 404
+
+
+# ── 2026-09-06 model attribution / Astra pricing round ───────────────────
+
+
+def test_model_series_carries_every_model_with_a_bounded_default_visible_count(
+    tmp_path, monkeypatch
+):
+    """The private chart used to truncate at five series in the API, so a new
+    or low-volume model could not be seen at all. The API now carries every
+    model up to a bounded cap and names how many the chart shows by default;
+    the browser owns the Top-models / All-models expansion."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenJustPastNoon)
+    models = [
+        ("anthropic", "claude-opus-5", 900),
+        ("zai", "glm-5.3", 800),
+        ("anthropic", "claude-fable-5-1", 700),
+        ("openai-codex", "gpt-5.6-sol", 600),
+        ("kimi-coding", "k3", 500),
+        ("zai", "glm-5.3-flash", 400),
+        ("openai-codex", "gpt-6-astra", 300),
+        ("anthropic", "claude-sonnet-5", 200),
+    ]
+    client = _unified_client(
+        tmp_path,
+        [
+            _window_fact(f"m-{index}", "2026-07-14T11:30:00Z", provider,
+                         model_requested=model, model_reported=model, input_tokens=tokens)
+            for index, (provider, model, tokens) in enumerate(models)
+        ],
+    )
+
+    payload = client.get("/api/unified-usage?hours=1").get_json()
+    series = payload["time_series"]
+
+    assert dashboard_module._UNIFIED_MODEL_SERIES_DEFAULT_VISIBLE == 5
+    assert series["model_series_default_visible"] == 5
+    # All eight are individually present — no recognized model is hidden.
+    assert len(series["model_series"]) == 8
+    assert series["other_model_series"] is None
+    assert [row["model"] for row in series["model_series"]] == [model for _p, model, _t in models]
+    # Tokens reconcile exactly against the window totals.
+    assert sum(row["total_tokens"] for row in series["model_series"]) == payload["totals"]["total_tokens"]
+    # The row shape is unchanged (a pinned contract elsewhere in the suite).
+    assert set(series["model_series"][0]) == {"provider", "model", "label", "total_tokens", "values"}
+
+
+def test_model_series_stays_bounded_and_the_tail_reads_as_chart_grouping(
+    tmp_path, monkeypatch
+):
+    """Overflow beyond the bounded series cap is a charting decision, not an
+    unidentified model: the label must say so and carry its member count."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenJustPastNoon)
+    limit = dashboard_module._UNIFIED_MODEL_SERIES_LIMIT
+    assert limit >= 16, "the bounded cap must fit the current model estate"
+    count = limit + 3
+    client = _unified_client(
+        tmp_path,
+        [
+            _window_fact(f"m-{index}", "2026-07-14T11:30:00Z", "zai",
+                         model_requested=f"model-{index:03d}", model_reported=f"model-{index:03d}",
+                         input_tokens=1000 - index)
+            for index in range(count)
+        ],
+    )
+
+    payload = client.get("/api/unified-usage?hours=1").get_json()
+    series = payload["time_series"]
+
+    assert len(series["model_series"]) == limit
+    other = series["other_model_series"]
+    assert other["member_count"] == 3
+    assert "grouping" in other["label"].lower()
+    assert "models" in other["label"].lower()
+    displayed = sum(row["total_tokens"] for row in series["model_series"]) + other["total_tokens"]
+    assert displayed == payload["totals"]["total_tokens"]
+
+
+def test_astra_long_context_requests_price_at_the_long_rate_through_the_api(
+    tmp_path, monkeypatch
+):
+    """The read path keeps per-request rows, so the >272000-prompt test is
+    applied per request rather than to a model aggregate. Two 200k-prompt
+    requests are 400k of standard-rate traffic, not one long-context bill."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenJustPastNoon)
+    client = _unified_client(
+        tmp_path,
+        [
+            _window_fact("short-a", "2026-07-14T11:30:00Z", "openai-codex",
+                         model_requested="gpt-6-astra", model_reported="gpt-6-astra",
+                         input_tokens=200_000),
+            _window_fact("short-b", "2026-07-14T11:31:00Z", "openai-codex",
+                         model_requested="gpt-6-astra", model_reported="gpt-6-astra",
+                         input_tokens=200_000),
+        ],
+    )
+    price = client.get("/api/unified-usage?hours=1").get_json()["totals"]["list_price"]
+    # 400_000 input at the standard $10/Mtok = $4.00, not the long meter.
+    assert price["estimate_usd"] == "4.00"
+    assert price["long_context_tokens"] == 0
+    assert price["rate_basis"] == "standard"
+
+    # One request whose prompt exceeds 272000 once cache is counted flips the
+    # WHOLE request, cache and output included, to the long meter.
+    (tmp_path / "long").mkdir()
+    client = _unified_client(
+        tmp_path / "long",
+        [
+            _window_fact("long-one", "2026-07-14T11:30:00Z", "openai-codex",
+                         model_requested="gpt-6-astra", model_reported="gpt-6-astra",
+                         input_tokens=100_000, cache_read_tokens=172_001,
+                         output_tokens=1_000_000),
+        ],
+    )
+    price = client.get("/api/unified-usage?hours=1").get_json()["totals"]["list_price"]
+    # input 100_000*20 + cache_read 172_001*2 + output 1_000_000*75, per Mtok
+    # = 2.00 + 0.344002 + 75.00 = 77.344002 -> 77.34
+    assert price["estimate_usd"] == "77.34"
+    assert price["long_context_tokens"] == 1_272_001
+
+
+def test_long_context_boundary_is_exclusive_through_the_api(tmp_path, monkeypatch):
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenJustPastNoon)
+    (tmp_path / "at").mkdir()
+    (tmp_path / "past").mkdir()
+    at_boundary = _unified_client(
+        tmp_path / "at",
+        [_window_fact("edge", "2026-07-14T11:30:00Z", "openai-codex",
+                      model_requested="gpt-6-astra", model_reported="gpt-6-astra",
+                      input_tokens=272_000)],
+    ).get("/api/unified-usage?hours=1").get_json()["totals"]["list_price"]
+    assert at_boundary["estimate_usd"] == "2.72"  # 272_000 * $10/Mtok
+    assert at_boundary["long_context_tokens"] == 0
+
+    past_boundary = _unified_client(
+        tmp_path / "past",
+        [_window_fact("edge", "2026-07-14T11:30:00Z", "openai-codex",
+                      model_requested="gpt-6-astra", model_reported="gpt-6-astra",
+                      input_tokens=272_001)],
+    ).get("/api/unified-usage?hours=1").get_json()["totals"]["list_price"]
+    assert past_boundary["estimate_usd"] == "5.44"  # 272_001 * $20/Mtok
+    assert past_boundary["long_context_tokens"] == 272_001
+
+
+def test_subscription_billed_actual_cost_is_untouched_by_the_list_price_round(
+    tmp_path, monkeypatch
+):
+    """List-price estimation is a separate number: the subscription lanes'
+    billed actual stays exactly what the ledger recorded."""
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenJustPastNoon)
+    client = _unified_client(
+        tmp_path,
+        [
+            # Subscription lane: cost is included, so the ledger records no
+            # cost at all — the estimate must never leak into it.
+            _window_fact("billed", "2026-07-14T11:30:00Z", "openai-codex",
+                         model_requested="gpt-6-astra", model_reported="gpt-6-astra",
+                         input_tokens=500_000, cost_status="included"),
+            _window_fact("metered", "2026-07-14T11:31:00Z", "openai",
+                         model_requested="gpt-6-astra", model_reported="gpt-6-astra",
+                         input_tokens=10, actual_cost_usd="0.0000125", cost_status="actual"),
+        ],
+    )
+    totals = client.get("/api/unified-usage?hours=1").get_json()["totals"]
+    assert totals["actual_cost_usd"] == "0.0000125"
+    # And the estimate is a strictly separate field that does not feed it.
+    assert totals["list_price"]["estimate_usd"] != totals["actual_cost_usd"]
+
+
+def test_unknown_openai_model_reads_as_unpriced_coverage_in_the_api(tmp_path, monkeypatch):
+    monkeypatch.setattr(dashboard_module, "datetime", _FrozenJustPastNoon)
+    client = _unified_client(
+        tmp_path,
+        [_window_fact("new-model", "2026-07-14T11:30:00Z", "openai-codex",
+                      model_requested="gpt-7-nova", model_reported="gpt-7-nova",
+                      input_tokens=1_000_000)],
+    )
+    price = client.get("/api/unified-usage?hours=1").get_json()["totals"]["list_price"]
+    assert price["estimate_usd"] == "0.00"
+    assert price["priced_token_share"] == 0.0
+    assert price["unpriced_providers"] == ["openai-codex"]
+
+
+def test_model_chart_expansion_ships_in_the_served_frontend_bundle():
+    """Not JSX-only: the accessible Top-models / All-models control must exist
+    in the committed build the Flask routes actually serve."""
+    source = frontend_surfaces.source("components/UnifiedUsageCard.tsx")
+    built = frontend_surfaces.built_app_js()
+    for surface in (source, built):
+        assert "aria-pressed" in surface or "ariaPressed" in surface
+        assert "All models" in surface
+        assert "Top models" in surface
+    # No model is special-cased in the chart code.
+    assert "astra" not in source.lower()
+    assert "model_series_default_visible" in source
+    assert "model_series_default_visible" in built

@@ -282,6 +282,144 @@ def cmd_audit_ledger(args: argparse.Namespace) -> int:
     return 0
 
 
+_MAX_UNMAPPED_SCAN_HOURS = 8760
+# The canonical query is itself bounded (see canonical_ledger._SQLITE_QUERY_LIMIT);
+# stay inside it and report when the scan hit the ceiling rather than
+# presenting a truncated inventory as complete.
+_MAX_UNMAPPED_SCAN_EVENTS = 100_000
+
+
+def _bounded_scan_hours(value: str) -> int:
+    hours = int(value)
+    if not 1 <= hours <= _MAX_UNMAPPED_SCAN_HOURS:
+        raise argparse.ArgumentTypeError(
+            f"hours must be an integer from 1 through {_MAX_UNMAPPED_SCAN_HOURS}"
+        )
+    return hours
+
+
+def cmd_unmapped_models(args: argparse.Namespace) -> int:
+    """Private, read-only inventory of provider/model IDs no allowlist covers.
+
+    Two independent allowlists decide whether a model is visible: the public
+    projection's reviewed label map and the list-price rate tables. A model
+    switch upstream silently lands in "Other" and/or in a provider default
+    until somebody traces it by hand — this command is that trace, on demand.
+
+    It is VISIBILITY, not automation. It reads one ledger, prints raw private
+    IDs to the operator's own terminal, and writes nothing anywhere. Seeing an
+    ID here does not make it publishable: adding it to the public map stays a
+    deliberate, reviewed edit.
+    """
+    from .canonical_ledger import query_sqlite_facts
+    from .list_pricing import _rates_for
+    from .unified_public_projection import _public_model_label, _public_provider_label
+
+    try:
+        facts = query_sqlite_facts(
+            args.sqlite,
+            fact_type="usage_event_v1",
+            order="desc",
+            limit=1,
+        )
+    except Exception as exc:
+        print(f"unmapped-models failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+
+    def occurred(fact: dict[str, Any]) -> str:
+        return str(fact.get("occurred_at") or fact.get("recorded_at") or "")
+
+    timestamps = [occurred(fact) for fact in facts if occurred(fact)]
+    latest = max(timestamps) if timestamps else None
+    window: dict[str, Any] = {"hours": args.hours, "start": None, "end": latest}
+    start_at = None
+    if latest is not None:
+        # The window is anchored on the newest fact rather than on wall clock:
+        # a stalled collector should still produce a report instead of an
+        # empty one that reads like "nothing unmapped".
+        end_at = datetime.fromisoformat(latest.replace("Z", "+00:00"))
+        start_at = end_at - timedelta(hours=args.hours)
+        window["start"] = start_at.isoformat().replace("+00:00", "Z")
+
+        # Apply the time window in SQLite before decoding facts. Like the
+        # dashboard, use the online integrity reader (hash, identity and
+        # typed columns remain checked), not a full per-event schema audit.
+        try:
+            facts = query_sqlite_facts(
+                args.sqlite,
+                fact_type="usage_event_v1",
+                occurred_or_observed_at_gte=window["start"],
+                order="desc",
+                limit=_MAX_UNMAPPED_SCAN_EVENTS,
+                contract_validation=False,
+            )
+        except Exception as exc:
+            print(f"unmapped-models failed: {type(exc).__name__}", file=sys.stderr)
+            return 1
+
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for fact in facts:
+        stamp = occurred(fact)
+        if start_at is not None and stamp:
+            if datetime.fromisoformat(stamp.replace("Z", "+00:00")) < start_at:
+                continue
+        provider = str(fact.get("provider") or "unknown")
+        # The read path prefers model_reported (what actually served) over
+        # model_requested, so the inventory must classify the same identity.
+        model = str(fact.get("model_reported") or fact.get("model_requested") or "unknown")
+        group = groups.setdefault(
+            (provider, model),
+            {
+                "provider": provider,
+                "model": model,
+                "events": 0,
+                "total_tokens": 0,
+                "first_seen": stamp or None,
+                "last_seen": stamp or None,
+            },
+        )
+        group["events"] += 1
+        group["total_tokens"] += sum(
+            int(fact.get(field) or 0)
+            for field in ("input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens")
+        )
+        if stamp:
+            group["first_seen"] = min(group["first_seen"] or stamp, stamp)
+            group["last_seen"] = max(group["last_seen"] or stamp, stamp)
+
+    unmapped: list[dict[str, Any]] = []
+    for (provider, model), group in groups.items():
+        public_label = _public_model_label(model)
+        provider_label = _public_provider_label(provider)
+        rates = _rates_for(provider, model)
+        publishable = public_label is not None and provider_label != "Other"
+        if publishable and rates is not None:
+            continue
+        unmapped.append({
+            **group,
+            "public_provider_label": provider_label,
+            "public_label": public_label,
+            "list_priced": rates is not None,
+        })
+    unmapped.sort(key=lambda row: (-row["total_tokens"], -row["events"], row["provider"], row["model"]))
+
+    _print_compact_json({
+        "window": window,
+        "counts": {
+            "scanned_events": len(facts),
+            "scanned_pairs": len(groups),
+            "unmapped_pairs": len(unmapped),
+        },
+        # True when the bounded scan hit its ceiling: the newest
+        # _MAX_UNMAPPED_SCAN_EVENTS rows were read, so older pairs may be
+        # missing. Never present a truncated inventory as complete.
+        "scan_truncated": len(facts) >= _MAX_UNMAPPED_SCAN_EVENTS,
+        "paths": {"sqlite": str(Path(args.sqlite).expanduser())},
+        "unmapped": unmapped,
+    })
+    return 0
+
+
 def cmd_collect_all(args: argparse.Namespace) -> int:
     from .collector import collect_all
 
@@ -551,6 +689,29 @@ def main() -> int:
     audit_parser.add_argument("--sqlite", required=True, help="Canonical SQLite ledger path")
     audit_parser.add_argument("--fact-type", required=True, choices=CANONICAL_FACT_TYPES)
     audit_parser.set_defaults(func=cmd_audit_ledger)
+
+    unmapped_parser = subparsers.add_parser(
+        "unmapped-models",
+        help=(
+            "Read-only private inventory of provider/model IDs with no reviewed "
+            "public label and/or no list price, with counts"
+        ),
+    )
+    unmapped_parser.add_argument(
+        "--sqlite",
+        default=os.environ.get("UNIFIED_USAGE_LEDGER_PATH") or DEFAULT_UNIFIED_USAGE_LEDGER,
+        help="Type-bound usage_event_v1 SQLite ledger to read",
+    )
+    unmapped_parser.add_argument(
+        "--hours",
+        type=_bounded_scan_hours,
+        default=168,
+        help=(
+            f"Hours back from the newest fact in the ledger "
+            f"(1-{_MAX_UNMAPPED_SCAN_HOURS}; default: 168)"
+        ),
+    )
+    unmapped_parser.set_defaults(func=cmd_unmapped_models)
 
     collect_parser = subparsers.add_parser(
         "collect-all",

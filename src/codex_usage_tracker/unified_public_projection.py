@@ -71,6 +71,11 @@ _PUBLIC_PROVIDER_MAP = {
     "llmgateway": "LLM Gateway",
     "kimi-coding": "Kimi Coding",
     "zai": "Z.AI",
+    # The local Gemma backend (reviewed 2026-09-06). It is a locally hosted
+    # model runner, so it joins the existing Local models label rather than
+    # naming the backend. A null or unrecognized provider stays Other — the
+    # provider is never inferred from the model name.
+    "custom:gemma-4-moe-it": "Local models",
 }
 _PUBLIC_HARNESS_MAP = {
     "hermes": "Hermes",
@@ -79,6 +84,7 @@ _PUBLIC_HARNESS_MAP = {
 _PUBLIC_HARNESS_LABELS = frozenset({*_PUBLIC_HARNESS_MAP.values(), "Other"})
 _PUBLIC_MODEL_MAP = {
     # OpenAI / Codex
+    "gpt-6-astra": "GPT-6 Astra",
     "gpt-5.6": "GPT-5.6",
     "gpt-5.5": "GPT-5.5",
     "gpt-5.5-fast": "GPT-5.5 Fast",
@@ -87,12 +93,17 @@ _PUBLIC_MODEL_MAP = {
     # Anthropic
     "claude-sonnet-5": "Claude Sonnet 5",
     "claude-fable-5": "Claude Fable 5",
+    "claude-fable-5-1": "Claude Fable 5.1",
+    "claude-fable-5.1": "Claude Fable 5.1",
     "claude-opus-5": "Claude Opus 5",
     "claude-opus-4-8": "Claude Opus 4.8",
     "claude-opus-4.8": "Claude Opus 4.8",
     "claude-opus-4-7": "Claude Opus 4.7",
     "claude-opus-4.7": "Claude Opus 4.7",
     "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
+    # The OpenRouter route names the same model without the release date.
+    "claude-haiku-4.5": "Claude Haiku 4.5",
+    "claude-haiku-4-5": "Claude Haiku 4.5",
     "claude-sonnet-4": "Claude Sonnet 4",
     # Hosted public model families currently represented in the ledger.
     "deepseek-v4-pro": "DeepSeek V4 Pro",
@@ -100,12 +111,17 @@ _PUBLIC_MODEL_MAP = {
     "deepseek-chat": "DeepSeek Chat",
     "deepseek-reasoner": "DeepSeek Reasoner",
     "deepseek-v3.2": "DeepSeek V3.2",
+    "glm-5.3": "GLM 5.3",
+    "glm-5.3-flash": "GLM 5.3 Flash",
     "glm-5.2": "GLM 5.2",
     "glm-5.1": "GLM 5.1",
     "glm-5": "GLM 5",
     "glm-4.7": "GLM 4.7",
     "glm-4.6": "GLM 4.6",
+    # Two source IDs, one model: the Kimi lane reports both "k3" and the
+    # vendor-qualified "kimi-k3", so they coalesce onto one public row.
     "k3": "Kimi K3 Coding",
+    "kimi-k3": "Kimi K3 Coding",
     "qwen3.7-plus": "Qwen 3.7 Plus",
     "qwen3.7-max": "Qwen 3.7 Max",
     "qwen3.6-plus": "Qwen 3.6 Plus",
@@ -127,6 +143,20 @@ _PUBLIC_MODEL_MAP = {
     "aion-1.0": "Aion 1.0",
     "aion-1.0-mini": "Aion 1.0 Mini",
 }
+# Comparison-row caps. The model cap was 12 until 2026-09-06, when the
+# reviewed mapping round made the live estate 14 recognized (provider, model)
+# pairs plus a genuine Other bucket — three recognized models were being
+# dumped into Other purely by the cap. 16 fits today's 15 rows with one slot
+# of headroom and keeps the artifact far under the 1 MiB bound.
+#
+# CONSUMER COORDINATION: Namrop's route validator, the fleet publish-time
+# guard, and the fleet watchdog all validate this cap. Raising it here emits
+# up to 16 model rows; an old <=12 check will reject the projection or report
+# a false alarm. Deploy these three consumers before the producer changes.
+# Provider and harness caps are unchanged.
+_MAX_PUBLIC_PROVIDER_ROWS = 8
+_MAX_PUBLIC_MODEL_ROWS = 16
+_MAX_PUBLIC_HARNESS_ROWS = 4
 _PUBLIC_MODEL_LABELS = frozenset(_PUBLIC_MODEL_MAP.values())
 _PUBLIC_MODEL_LABEL_MAP = {label.casefold(): label for label in _PUBLIC_MODEL_LABELS}
 def _utc_text(value: datetime) -> str:
@@ -320,7 +350,7 @@ def _build_provider_rows(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for fact in facts:
         label = _public_provider_label(fact.get("provider"))
         _add_comparison_fact(groups.setdefault(label, _empty_comparison_group()), fact)
-    bounded = _bounded_groups(groups, other_key="Other", maximum=8)
+    bounded = _bounded_groups(groups, other_key="Other", maximum=_MAX_PUBLIC_PROVIDER_ROWS)
     ranking_total = sum(group["total_tokens"] for _label, group in bounded)
     return [
         {
@@ -342,7 +372,7 @@ def _build_model_rows(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
         model = _public_model_label(fact.get("model_reported") or fact.get("model_requested"))
         key = (provider, model) if provider != "Other" and model is not None else other_key
         _add_comparison_fact(groups.setdefault(key, _empty_comparison_group()), fact)
-    bounded = _bounded_groups(groups, other_key=other_key, maximum=12)
+    bounded = _bounded_groups(groups, other_key=other_key, maximum=_MAX_PUBLIC_MODEL_ROWS)
     ranking_total = sum(group["total_tokens"] for _key, group in bounded)
     return [
         {
@@ -362,7 +392,7 @@ def _build_harness_rows(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for fact in facts:
         label = _public_harness_label(fact.get("harness"))
         _add_comparison_fact(groups.setdefault(label, _empty_comparison_group()), fact)
-    bounded = _bounded_groups(groups, other_key="Other", maximum=4)
+    bounded = _bounded_groups(groups, other_key="Other", maximum=_MAX_PUBLIC_HARNESS_ROWS)
     ranking_total = sum(group["total_tokens"] for _label, group in bounded)
     return [
         {
@@ -578,8 +608,10 @@ def validate_unified_public_projection(payload: Any) -> None:
         raise ValueError("projection rows must end at the latest complete UTC hour")
 
     provider_rows = top["provider_rows"]
-    if not isinstance(provider_rows, list) or len(provider_rows) > 8:
-        raise ValueError("provider_rows must be an array of at most 8 rows")
+    if not isinstance(provider_rows, list) or len(provider_rows) > _MAX_PUBLIC_PROVIDER_ROWS:
+        raise ValueError(
+            f"provider_rows must be an array of at most {_MAX_PUBLIC_PROVIDER_ROWS} rows"
+        )
     for index, candidate in enumerate(provider_rows):
         row = _require_exact_keys(candidate, _PROVIDER_ROW_KEYS, f"provider_rows[{index}]")
         if not isinstance(row["label"], str) or row["label"] not in _PUBLIC_PROVIDER_LABELS:
@@ -602,8 +634,10 @@ def validate_unified_public_projection(payload: Any) -> None:
         raise ValueError("provider_rows must be sorted descending")
 
     model_rows = top["model_rows"]
-    if not isinstance(model_rows, list) or len(model_rows) > 12:
-        raise ValueError("model_rows must be an array of at most 12 rows")
+    if not isinstance(model_rows, list) or len(model_rows) > _MAX_PUBLIC_MODEL_ROWS:
+        raise ValueError(
+            f"model_rows must be an array of at most {_MAX_PUBLIC_MODEL_ROWS} rows"
+        )
     for index, candidate in enumerate(model_rows):
         row = _require_exact_keys(candidate, _MODEL_ROW_KEYS, f"model_rows[{index}]")
         if (
@@ -639,8 +673,10 @@ def validate_unified_public_projection(payload: Any) -> None:
         raise ValueError("model_rows must be sorted descending")
 
     harness_rows = top["harness_rows"]
-    if not isinstance(harness_rows, list) or len(harness_rows) > 4:
-        raise ValueError("harness_rows must be an array of at most 4 rows")
+    if not isinstance(harness_rows, list) or len(harness_rows) > _MAX_PUBLIC_HARNESS_ROWS:
+        raise ValueError(
+            f"harness_rows must be an array of at most {_MAX_PUBLIC_HARNESS_ROWS} rows"
+        )
     for index, candidate in enumerate(harness_rows):
         row = _require_exact_keys(candidate, _HARNESS_ROW_KEYS, f"harness_rows[{index}]")
         if not isinstance(row["label"], str) or row["label"] not in _PUBLIC_HARNESS_LABELS:

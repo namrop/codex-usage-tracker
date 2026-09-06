@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, TypeAlias
 from flask import Flask, jsonify, request
 
 from .capability_matrix import get_capability_matrix
-from .list_pricing import estimate_list_price
+from .list_pricing import estimate_list_price, request_context_basis
 from .codex_call_accounting import build_codex_accounting_rows
 from .jsonl_store import newest_first, read_jsonl
 from .ledger import reconcile_snapshot_windows
@@ -88,7 +88,14 @@ _DEFAULT_DATA_ROW_LIMIT = 200
 _LEDGER_CACHE_MAX_ENTRIES = 8
 _LEDGER_CACHE_LOCK = threading.Lock()
 _LEDGER_CACHE: Dict[str, tuple[tuple[int, int], List[Dict[str, Any]]]] = {}
-_UNIFIED_MODEL_SERIES_LIMIT = 5
+# The model chart used to truncate at five series in the API itself, so a new
+# or low-volume model (gpt-6-astra, glm-5.3-flash) could not be seen at all —
+# it was folded into "Other models" before the browser ever saw it. The API
+# now carries every model up to a bounded cap and tells the frontend how many
+# to draw by default; the Top-models / All-models control owns the rest. This
+# is the PRIVATE dashboard: the cap is a payload bound, not a disclosure rule.
+_UNIFIED_MODEL_SERIES_LIMIT = 24
+_UNIFIED_MODEL_SERIES_DEFAULT_VISIBLE = 5
 # The status strip is one row per provider; provider cardinality is small and
 # bounded by the ledger, but the payload stays bounded on principle.
 _UNIFIED_STATUS_PROVIDER_LIMIT = 12
@@ -717,7 +724,10 @@ def _build_unified_time_series(
             for index in range(bucket_count)
         ]
         other_model_series = {
-            "label": "Other models",
+            # Say what this bar IS: a charting decision to bound the payload,
+            # not a bucket of models the tracker failed to identify. Every
+            # member is a known (provider, model) pair.
+            "label": f"Other models (chart grouping, {len(remaining_models)})",
             "member_count": len(remaining_models),
             "total_tokens": sum(other_values),
             "values": other_values,
@@ -732,6 +742,9 @@ def _build_unified_time_series(
         "bucket_starts": [_iso_z(value) for value in bucket_starts],
         "model_series": model_series,
         "other_model_series": other_model_series,
+        # How many series the chart draws before the reader expands it. The
+        # rest are present above and are one click away, never dropped.
+        "model_series_default_visible": _UNIFIED_MODEL_SERIES_DEFAULT_VISIBLE,
         # Estate-wide token composition (keeper-ruled 2026-08-30, replacing
         # the codex-only Token bucket mix): the five token buckets summed
         # across every provider, on the same 15-minute UTC grid. Reasoning stays
@@ -754,6 +767,50 @@ _LIST_PRICE_TOKEN_FIELDS = (
     "output_tokens",
     "reasoning_tokens",
 )
+
+
+def _accumulate_price_bucket(
+    buckets: dict[tuple[str, str, str], dict[str, Any]], row: dict[str, Any]
+) -> None:
+    """Fold one canonical row into its (provider, model, context basis) bucket.
+
+    The long-context meter is a PER-REQUEST test (see
+    ``list_pricing.request_context_basis``): canonical ``input_tokens``
+    excludes cache, so the threshold is input + cache_read + cache_write on a
+    single request. Classifying here — while the individual rows are still in
+    hand — is why the basis is part of the grouping key rather than something
+    re-derived from a model's aggregate, which would be wrong in both
+    directions (many short requests summing past the threshold, or one long
+    request diluted by short ones).
+    """
+    key = (
+        str(row.get("provider") or "unknown"),
+        str(row.get("model_reported") or row.get("model_requested") or "unknown"),
+        request_context_basis(row),
+    )
+    bucket = buckets.setdefault(
+        key,
+        {
+            "provider": key[0],
+            "model": key[1],
+            "context_basis": key[2],
+            **{field: 0 for field in _LIST_PRICE_TOKEN_FIELDS},
+        },
+    )
+    for field in _LIST_PRICE_TOKEN_FIELDS:
+        bucket[field] += int(row.get(field) or 0)
+
+
+def _finalize_price_buckets(buckets: dict[tuple[str, str, str], dict[str, Any]]) -> list[dict[str, Any]]:
+    for bucket in buckets.values():
+        # Reasoning is diagnostic and already inside output — never a second
+        # time in the accounted total.
+        bucket["total_tokens"] = sum(
+            bucket[field]
+            for field in _LIST_PRICE_TOKEN_FIELDS
+            if field != "reasoning_tokens"
+        )
+    return list(buckets.values())
 
 
 def _build_list_price_daily(
@@ -785,7 +842,7 @@ def _build_list_price_daily(
         # A window ending exactly at midnight covers nothing of that day.
         last_day -= timedelta(days=1)
     day_count = (last_day - first_day).days + 1
-    daily_grouped: list[dict[tuple[str, str], dict[str, Any]]] = [
+    daily_grouped: list[dict[tuple[str, str, str], dict[str, Any]]] = [
         {} for _ in range(day_count)
     ]
     for row in rows:
@@ -795,27 +852,7 @@ def _build_list_price_daily(
         day_index = (occurred_at - first_day).days
         if day_index < 0 or day_index >= day_count:
             continue
-        key = (
-            str(row.get("provider") or "unknown"),
-            str(row.get("model_reported") or row.get("model_requested") or "unknown"),
-        )
-        bucket = daily_grouped[day_index].setdefault(
-            key,
-            {
-                "provider": key[0],
-                "model": key[1],
-                **{field: 0 for field in _LIST_PRICE_TOKEN_FIELDS},
-            },
-        )
-        for field in _LIST_PRICE_TOKEN_FIELDS:
-            bucket[field] += int(row.get(field) or 0)
-    for day in daily_grouped:
-        for bucket in day.values():
-            bucket["total_tokens"] = sum(
-                bucket[field]
-                for field in _LIST_PRICE_TOKEN_FIELDS
-                if field != "reasoning_tokens"
-            )
+        _accumulate_price_bucket(daily_grouped[day_index], row)
     entries: list[dict[str, Any]] = []
     for index in range(day_count):
         day_start = first_day + timedelta(days=index)
@@ -824,7 +861,7 @@ def _build_list_price_daily(
             {
                 "day_start": _iso_z(day_start),
                 "partial": window_start > day_start or window_end < day_end,
-                **estimate_list_price(daily_grouped[index].values()),
+                **estimate_list_price(_finalize_price_buckets(daily_grouped[index])),
             }
         )
     return entries
@@ -1855,9 +1892,15 @@ def create_app(
         # that the served model matched, so it never counts here.
         totals["substituted_events"] = sum(1 for row in rows if _is_substituted_event(row))
         grouped: Dict[tuple[str, str], Dict[str, Any]] = {}
+        # Pricing groups the SAME rows a third way, keyed additionally by each
+        # request's long-context basis, because the >272k-prompt test is
+        # per request and cannot be recovered from the (provider, model)
+        # aggregate the ledger view reports.
+        priced_grouped: Dict[tuple[str, str, str], Dict[str, Any]] = {}
         by_harness: Dict[str, Dict[str, Any]] = {}
         by_provider: Dict[str, Dict[str, Any]] = {}
         for row in rows:
+            _accumulate_price_bucket(priced_grouped, row)
             key = (
                 str(row.get("provider") or "unknown"),
                 str(row.get("model_reported") or row.get("model_requested") or "unknown"),
@@ -1937,7 +1980,7 @@ def create_app(
             bucket["total_tokens"] = sum(bucket[field] for field in token_fields if field != "reasoning_tokens")
             for field in cost_fields:
                 bucket[field] = _decimal_text(bucket[field])
-        totals["list_price"] = estimate_list_price(grouped.values())
+        totals["list_price"] = estimate_list_price(_finalize_price_buckets(priced_grouped))
         coverage = {
             "exact_events": sum(row.get("measurement_confidence") == "exact" for row in rows),
             "reconstructed_events": sum(row.get("measurement_confidence") == "reconstructed" for row in rows),

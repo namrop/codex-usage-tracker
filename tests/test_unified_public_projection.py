@@ -470,7 +470,11 @@ def test_model_rows_prefer_reported_sanitize_public_families_and_merge_bounded_o
     rows = build_unified_public_projection(ledger, hours=1, now=NOW)["model_rows"]
     serialized = json.dumps(rows)
 
-    assert len(rows) == 12
+    # 15 recognized (provider, model) pairs plus the merged Other bucket. The
+    # cap rose from 12 to 16 on 2026-09-06 so recognized models stop falling
+    # into Other purely by row budget; overflow past 16 is covered by
+    # test_model_rows_merge_named_overflow_beyond_the_cap_into_other.
+    assert len(rows) == 16
     assert sum(row["total_tokens"] for row in rows) == sum(
         fact["input_tokens"] for fact in facts
     )
@@ -858,3 +862,183 @@ def test_size_guard_measures_pretty_serialization_actually_written(tmp_path, mon
 
     with pytest.raises(ValueError, match="smaller than 1 MiB"):
         validate_unified_public_projection(payload)
+
+
+# ── 2026-09-06 model-attribution round ───────────────────────────────────
+# The reviewed public mappings for the models the ledger actually carries as
+# of 2026-09-06 (gpt-6-astra, claude-fable-5-1, glm-5.3, glm-5.3-flash, the
+# kimi-k3 alias and the OpenRouter-namespaced claude-haiku-4.5), plus the
+# row cap those mappings need in order not to dump a recognized model into
+# Other. Every ID below is a public vendor model name; none is private.
+
+_CURRENT_LEDGER_INVENTORY = [
+    # (provider, model, expected provider label, expected model label)
+    ("anthropic", "claude-opus-5", "Anthropic", "Claude Opus 5"),
+    ("zai", "glm-5.3", "Z.AI", "GLM 5.3"),
+    ("anthropic", "claude-fable-5-1", "Anthropic", "Claude Fable 5.1"),
+    ("anthropic", "claude-fable-5", "Anthropic", "Claude Fable 5"),
+    ("openai-codex", "gpt-5.6-sol", "Codex", "GPT-5.6"),
+    ("kimi-coding", "k3", "Kimi Coding", "Kimi K3 Coding"),
+    ("zai", "glm-5.3-flash", "Z.AI", "GLM 5.3 Flash"),
+    ("openai-codex", "gpt-6-astra", "Codex", "GPT-6 Astra"),
+    ("anthropic", "claude-sonnet-5", "Anthropic", "Claude Sonnet 5"),
+    ("opencode-go", "glm-5.3", "OpenCode Go", "GLM 5.3"),
+    ("custom:gemma-4-moe-it", "gemma-4-26b-a4b-it-mxfp4", "Local models", "Gemma 4 26B A4B IT"),
+    ("openai-codex", "gpt-5.5", "Codex", "GPT-5.5"),
+    ("kimi-coding", "kimi-k3", "Kimi Coding", "Kimi K3 Coding"),
+    ("anthropic", "claude-opus-4-8", "Anthropic", "Claude Opus 4.8"),
+    ("openrouter", "anthropic/claude-haiku-4.5", "OpenRouter", "Claude Haiku 4.5"),
+]
+
+
+def test_new_reviewed_model_mappings_are_allowlisted():
+    """Every 2026-09-06 addition resolves to its reviewed public label, and the
+    kimi-k3 alias coalesces onto the same label as the k3 basename."""
+    label = projection_module._public_model_label
+    assert label("gpt-6-astra") == "GPT-6 Astra"
+    assert label("claude-fable-5-1") == "Claude Fable 5.1"
+    assert label("glm-5.3") == "GLM 5.3"
+    assert label("glm-5.3-flash") == "GLM 5.3 Flash"
+    assert label("kimi-k3") == label("k3") == "Kimi K3 Coding"
+    assert label("claude-haiku-4.5") == "Claude Haiku 4.5"
+    # A provider namespace is stripped before the allowlist lookup.
+    assert label("anthropic/claude-haiku-4.5") == "Claude Haiku 4.5"
+    assert label("openai/gpt-6-astra") == "GPT-6 Astra"
+    # Historical labels are preserved, including the -sol normalization the
+    # 2026-09-06 round deliberately leaves alone.
+    assert label("gpt-5.6-sol") == "GPT-5.6"
+    assert label("claude-haiku-4-5-20251001") == "Claude Haiku 4.5"
+    assert label("gemma-4-26b-a4b-it-mxfp4") == "Gemma 4 26B A4B IT"
+
+
+def test_local_gemma_backend_provider_maps_but_unknown_providers_stay_other():
+    """custom:gemma-4-moe-it is the local Gemma backend; a null or unrecognized
+    provider stays Other and is never inferred from a recognized model name."""
+    provider_label = projection_module._public_provider_label
+    assert provider_label("custom:gemma-4-moe-it") == "Local models"
+    assert provider_label(None) == "Other"
+    assert provider_label("some-new-lab") == "Other"
+
+
+def test_unknown_and_sensitive_model_ids_are_refused_not_passed_through():
+    label = projection_module._public_model_label
+    for candidate in (
+        "gpt-6-astra-internal-eval",
+        "gpt-6-astra-sol-private",
+        "sol:claude-code",
+        "private.host/gpt-5-8675309",
+        "acct_9931/glm-5.3-flash-preview",
+        "glm-5.4",
+        None,
+        "",
+    ):
+        assert label(candidate) is None, candidate
+
+
+def test_current_ledger_model_set_fits_the_public_row_cap_without_other(tmp_path):
+    """The verified 2026-09-06 inventory is 15 recognized (provider, model)
+    pairs once kimi-k3 coalesces onto k3 plus one genuine Other bucket for
+    the null-provider rows. None of the recognized pairs may be pushed into
+    Other by the row cap, and the rows must still reconcile exactly."""
+    facts = []
+    for index, (provider, model, _plabel, _mlabel) in enumerate(_CURRENT_LEDGER_INVENTORY):
+        facts.append(_usage(
+            f"row-{index}", "2026-07-13T03:10:00Z", provider=provider,
+            model_requested=model,
+            # Descending volumes so ranking is deterministic and every row is
+            # positive; the smallest recognized pair must still survive.
+            input_tokens=1000 - (index * 10), output_tokens=5,
+        ))
+    # Null-provider rows: recognized model name, unknown provider — these are
+    # the only rows allowed to become Other.
+    facts.append(_usage(
+        "null-provider", "2026-07-13T03:11:00Z", provider=None,
+        model_requested="k3", input_tokens=7,
+    ))
+
+    payload = build_unified_public_projection(ledger_for(tmp_path, facts), hours=1, now=NOW)
+
+    rows = payload["model_rows"]
+    identities = {(row["provider_label"], row["model_label"]) for row in rows}
+    expected = {(plabel, mlabel) for _p, _m, plabel, mlabel in _CURRENT_LEDGER_INVENTORY}
+    assert expected <= identities, sorted(expected - identities)
+    assert ("Other", "Other") in identities
+    # kimi-k3 and k3 are one public row, not two.
+    assert len([row for row in rows if row["model_label"] == "Kimi K3 Coding"]) == 1
+    assert len(rows) == len(expected) + 1 == 15
+    # Exact reconciliation: every token and every request attempt lands.
+    assert sum(row["total_tokens"] for row in rows) == payload["summary"]["total_tokens"]
+    assert sum(row["request_attempts"] for row in rows) == payload["summary"]["request_attempts"]
+    assert sum(row["total_tokens"] for row in payload["provider_rows"]) == payload["summary"]["total_tokens"]
+    validate_unified_public_projection(payload)
+
+
+def test_kimi_k3_alias_rows_sum_into_one_public_row(tmp_path):
+    facts = [
+        _usage("k3-basename", "2026-07-13T03:10:00Z", provider="kimi-coding",
+               model_requested="k3", input_tokens=100, output_tokens=10),
+        _usage("k3-alias", "2026-07-13T03:11:00Z", provider="kimi-coding",
+               model_requested="kimi-k3", input_tokens=40, output_tokens=4),
+    ]
+    payload = build_unified_public_projection(ledger_for(tmp_path, facts), hours=1, now=NOW)
+    assert payload["model_rows"] == [{
+        "provider_label": "Kimi Coding",
+        "model_label": "Kimi K3 Coding",
+        "total_tokens": 154,
+        "request_attempts": 2,
+        "share_pct": 100.0,
+        "measurement_confidence": "exact",
+    }]
+
+
+def test_public_projection_never_serializes_a_raw_unmapped_model_id(tmp_path):
+    facts = [
+        _usage("unknown-model", "2026-07-13T03:10:00Z", provider="openai-codex",
+               model_requested="gpt-6-astra-internal-eval", input_tokens=90),
+        _usage("known", "2026-07-13T03:11:00Z", provider="openai-codex",
+               model_requested="gpt-6-astra", input_tokens=10),
+    ]
+    payload = build_unified_public_projection(ledger_for(tmp_path, facts), hours=1, now=NOW)
+    serialized = json.dumps(payload)
+    assert "internal-eval" not in serialized
+    assert "gpt-6-astra" not in serialized  # only the reviewed label may appear
+    assert "GPT-6 Astra" in serialized
+    identities = {(row["provider_label"], row["model_label"]) for row in payload["model_rows"]}
+    assert identities == {("Codex", "GPT-6 Astra"), ("Other", "Other")}
+
+
+def ledger_for(tmp_path, facts):
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, facts, fact_type="usage_event_v1")
+    return ledger
+
+
+def test_model_rows_merge_named_overflow_beyond_the_cap_into_other(tmp_path):
+    """The cap stays bounded: recognized models past _MAX_PUBLIC_MODEL_ROWS
+    still merge into the single Other bucket, and the merged tokens and
+    request attempts are conserved exactly."""
+    limit = projection_module._MAX_PUBLIC_MODEL_ROWS
+    models = [
+        "gpt-6-astra", "gpt-5.6", "gpt-5.5", "gpt-5.5-fast", "gpt-5.3-codex",
+        "gpt-5.2-codex", "claude-sonnet-5", "claude-fable-5", "claude-fable-5-1",
+        "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7",
+        "claude-haiku-4-5-20251001", "claude-sonnet-4", "deepseek-v4-pro",
+        "deepseek-chat", "glm-5.3", "glm-5.3-flash", "glm-5.2", "qwen3.6-plus",
+    ]
+    assert len(models) > limit
+    facts = [
+        _usage(f"m-{index}", "2026-07-13T03:10:00Z", provider="openai",
+               model_requested=model, input_tokens=1000 - index)
+        for index, model in enumerate(models)
+    ]
+    payload = build_unified_public_projection(ledger_for(tmp_path, facts), hours=1, now=NOW)
+
+    rows = payload["model_rows"]
+    assert len(rows) == limit
+    other = [row for row in rows if row["model_label"] == "Other"]
+    assert len(other) == 1
+    assert other[0]["provider_label"] == "Other"
+    # Exactly the tail beyond the 15 kept named rows was merged.
+    assert other[0]["request_attempts"] == len(models) - (limit - 1)
+    assert sum(row["total_tokens"] for row in rows) == payload["summary"]["total_tokens"]
+    validate_unified_public_projection(payload)

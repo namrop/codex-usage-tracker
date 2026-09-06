@@ -1651,6 +1651,9 @@ def test_unified_usage_chart_collapses_models_deterministically(tmp_path, monkey
             return cls(2026, 7, 14, 12, 5, 0, tzinfo=tz)
 
     monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    # Seven models no longer collapse: since 2026-09-06 the API carries every
+    # model up to _UNIFIED_MODEL_SERIES_LIMIT and the browser chooses how many
+    # to draw, so a low-volume model is reachable instead of pre-merged away.
     rows = [
         _chart_fact(
             f"m{index}", "2026-07-14T11:00:00Z", harness="opencode", provider=f"p{index}",
@@ -1665,11 +1668,36 @@ def test_unified_usage_chart_collapses_models_deterministically(tmp_path, monkey
     ).get_json()["time_series"]
 
     assert [(row["provider"], row["model"]) for row in data["model_series"]] == [
-        ("p0", "m0"), ("p1", "m1"), ("p2", "m2"), ("p3", "m3"), ("p4", "m4"),
+        (f"p{index}", f"m{index}") for index in range(7)
+    ]
+    assert data["other_model_series"] is None
+    assert data["model_series_default_visible"] == 5
+
+    # Past the bounded cap the collapse is still deterministic: strictly the
+    # lowest-volume tail, in rank order, merged into one grouping bar.
+    limit = dashboard_module._UNIFIED_MODEL_SERIES_LIMIT
+    overflow = [
+        _chart_fact(
+            f"n{index}", "2026-07-14T11:00:00Z", harness="opencode", provider=f"q{index:03d}",
+            model_requested=f"n{index:03d}", input_tokens=1000 - index,
+        )
+        for index in range(limit + 2)
+    ]
+    big_ledger = tmp_path / "overflow.sqlite3"
+    append_sqlite_facts(big_ledger, overflow, fact_type="usage_event_v1")
+    data = create_app(unified_usage_ledger=str(big_ledger)).test_client().get(
+        "/api/unified-usage?hours=1"
+    ).get_json()["time_series"]
+
+    assert [row["model"] for row in data["model_series"]] == [
+        f"n{index:03d}" for index in range(limit)
     ]
     assert data["other_model_series"] == {
-        "label": "Other models", "member_count": 2, "total_tokens": 9,
-        "values": [9, 0, 0, 0],
+        "label": "Other models (chart grouping, 2)",
+        "member_count": 2,
+        # The two smallest: 1000-limit and 999-limit.
+        "total_tokens": (1000 - limit) + (999 - limit),
+        "values": [(1000 - limit) + (999 - limit), 0, 0, 0],
     }
 
 

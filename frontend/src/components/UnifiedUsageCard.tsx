@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { Palette } from "../lib/palette";
 import {
   barDataset,
@@ -75,11 +75,51 @@ function chartFrame(timeSeries: any, viewportWidth: number): ChartFrame {
   };
 }
 
-function modelTokenModel(timeSeries: any, palette: Palette, frame: ChartFrame): SeriesChartModel | null {
+// Sum one bucket position across a set of series, so a client-side grouping
+// bar carries exactly the tokens its members do — the chart never invents or
+// loses a token when the reader collapses the view.
+function sumSeriesValues(rows: any[], bucketCount: number): number[] {
+  return Array.from({ length: bucketCount }, (_value, index) =>
+    rows.reduce((sum, row) => sum + Number((row.values || [])[index] || 0), 0));
+}
+
+// The model chart shows the largest few series by default and expands to all
+// of them on request (2026-09-06). The API now sends every model, so a new or
+// low-volume model — the case that motivated this — is one click away instead
+// of pre-merged into Other. No model is special-cased: the split is purely by
+// rank, and the fold table below the chart always lists every series.
+function modelTokenModel(
+  timeSeries: any, palette: Palette, frame: ChartFrame, showAll: boolean,
+): SeriesChartModel | null {
   if (!timeSeries || !Array.isArray(timeSeries.bucket_starts)) return null;
   const { labels, tooltipTitles, viewportWidth, wording } = frame;
-  const models: any[] = Array.isArray(timeSeries.model_series) ? [...timeSeries.model_series] : [];
-  if (timeSeries.other_model_series) models.push(timeSeries.other_model_series);
+  const bucketCount = timeSeries.bucket_starts.length;
+  const allModels: any[] = Array.isArray(timeSeries.model_series) ? [...timeSeries.model_series] : [];
+  // Series the API itself had to group to stay bounded; it rides along at the
+  // end of both views and already names itself as a grouping.
+  const apiOther = timeSeries.other_model_series || null;
+  const defaultVisible = Number(timeSeries.model_series_default_visible) || 5;
+
+  let models: any[];
+  if (showAll) {
+    models = apiOther ? [...allModels, apiOther] : allModels;
+  } else {
+    const shown = allModels.slice(0, defaultVisible);
+    const hidden = allModels.slice(defaultVisible);
+    const groupedMembers = hidden.length + (apiOther ? Number(apiOther.member_count) || 0 : 0);
+    const groupedRows = apiOther ? [...hidden, apiOther] : hidden;
+    models = groupedRows.length
+      ? [...shown, {
+          // Say what the bar is: a charting decision, not a model the
+          // tracker could not identify. Every member is listed in the table.
+          label: `Other models (chart grouping, ${groupedMembers})`,
+          member_count: groupedMembers,
+          total_tokens: groupedRows.reduce((sum, row) => sum + Number(row.total_tokens || 0), 0),
+          values: sumSeriesValues(groupedRows, bucketCount),
+        }]
+      : shown;
+  }
+
   // modelColors is already the hue-spread walk of the rank set (palette),
   // so the two largest series never share a near-identical neighbour hue.
   const modelColors = models.map((_row, index) => palette.modelColors[index % palette.modelColors.length]);
@@ -90,6 +130,8 @@ function modelTokenModel(timeSeries: any, palette: Palette, frame: ChartFrame): 
     { stack: "models", borderRadius: 1 },
   ));
   const modelTotal = models.reduce((sum, row) => sum + Number(row.total_tokens || 0), 0);
+  // The table is the complete record regardless of what the chart draws.
+  const tableSeries = apiOther ? [...allModels, apiOther] : allModels;
   return {
     config: {
       type: "bar",
@@ -101,9 +143,9 @@ function modelTokenModel(timeSeries: any, palette: Palette, frame: ChartFrame): 
       detail: compactIntFormat(row.total_tokens),
       color: modelColors[index],
     })),
-    tableRows: models.map((row) => ({ label: String(row.label), values: row.values })),
+    tableRows: tableSeries.map((row) => ({ label: String(row.label), values: row.values })),
     bucketStarts: timeSeries.bucket_starts,
-    summary: `${compactIntFormat(modelTotal)} accounted tokens across ${models.length} displayed series in ${wording.completePlural}.`,
+    summary: `${compactIntFormat(modelTotal)} accounted tokens across ${models.length} displayed series in ${wording.completePlural}, of ${tableSeries.length} in the table.`,
   };
 }
 
@@ -264,11 +306,38 @@ function SpendSparkline({ days }: { days: any[] }) {
   );
 }
 
-function ChartSection({ sectionId, titleId, title, caption, canvasId, canvasAriaLabel, labelsId, labelsAriaLabel, summaryId, model, fallbackSummary, loadingSummary, foldKey, foldLabel, tableCaption, tableHeadId, tableBodyId, formatCell, loaded, wording }: {
+// An accessible two-button group: exactly one option is pressed, both stay
+// reachable by keyboard as ordinary buttons, and the group is labelled so a
+// screen reader announces what is being switched.
+function SeriesScopeToggle({ label, options, value, onChange }: {
+  label: string;
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <div className="chart-controls" role="group" aria-label={label}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className="chart-scope-btn"
+          aria-pressed={value === option.value}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ChartSection({ sectionId, titleId, title, caption, controls, canvasId, canvasAriaLabel, labelsId, labelsAriaLabel, summaryId, model, fallbackSummary, loadingSummary, foldKey, foldLabel, tableCaption, tableHeadId, tableBodyId, formatCell, loaded, wording }: {
   sectionId?: string;
   titleId: string;
   title: string;
   caption: string;
+  controls?: ReactNode;
   canvasId: string;
   canvasAriaLabel: string;
   labelsId: string;
@@ -302,6 +371,7 @@ function ChartSection({ sectionId, titleId, title, caption, canvasId, canvasAria
     <section className="usage-chart" aria-labelledby={titleId} id={sectionId}>
       <h3 id={titleId}>{title}</h3>
       <p className="caption">{caption}</p>
+      {controls}
       <p id={summaryId} className="chart-summary" aria-live="polite">{summary}</p>
       <div className="usage-chart-layout">
         <div className="chart-wrap unified">
@@ -347,12 +417,22 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
   const timeSeries = data ? data.time_series : null;
   const viewportWidth = useViewportWidth();
   const frame = useMemo(() => (timeSeries ? chartFrame(timeSeries, viewportWidth) : null), [timeSeries, viewportWidth]);
-  const modelToken = useMemo(() => (timeSeries && frame ? modelTokenModel(timeSeries, palette, frame) : null), [timeSeries, palette, frame]);
+  // Chart scope only: the default keeps the established top-N view, and
+  // expanding never changes the totals or the fold table beneath it.
+  const [showAllModels, setShowAllModels] = useState(false);
+  const modelToken = useMemo(
+    () => (timeSeries && frame ? modelTokenModel(timeSeries, palette, frame, showAllModels) : null),
+    [timeSeries, palette, frame, showAllModels],
+  );
   const composition = useMemo(() => (timeSeries && frame ? tokenCompositionModel(timeSeries, palette, frame) : null), [timeSeries, palette, frame]);
   const cacheHitRate = useMemo(() => (timeSeries && frame ? cacheHitRateModel(timeSeries, palette, frame) : null), [timeSeries, palette, frame]);
   // Wording follows the loaded series' bucket width; before data lands the
   // captions describe the 15-minute buckets the backend cuts.
   const wording = frame ? frame.wording : bucketWording(15);
+  const modelDefaultVisible = Number(timeSeries?.model_series_default_visible) || 5;
+  const modelSeriesCount =
+    (Array.isArray(timeSeries?.model_series) ? timeSeries.model_series.length : 0)
+    + (timeSeries?.other_model_series ? Number(timeSeries.other_model_series.member_count) || 0 : 0);
 
   // Ceded-lane rendering (the one behavior addition of the kintsugi render,
   // keeper-ratified): a lane the collector gave up on this run is a
@@ -534,7 +614,18 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
         <ChartSection
           titleId="modelTokenTitle"
           title="Tokens across provider models"
-          caption={`${wording.adjective} accounted tokens by model, with the five largest series visible and the rest rolled into Other.`}
+          caption={`${wording.adjective} accounted tokens by model. The chart draws the largest ${modelDefaultVisible} series by default and groups the rest; every model stays listed in the data table below, and grouping is a charting choice, not an unidentified model.`}
+          controls={
+            <SeriesScopeToggle
+              label="Model chart scope"
+              value={showAllModels ? "all" : "top"}
+              onChange={(next) => setShowAllModels(next === "all")}
+              options={[
+                { value: "top", label: `Top models (${modelDefaultVisible})` },
+                { value: "all", label: `All models (${modelSeriesCount})` },
+              ]}
+            />
+          }
           canvasId="modelTokenChart"
           canvasAriaLabel={`Stacked ${wording.adjective.toLowerCase()} token usage across provider and model pairs`}
           labelsId="modelTokenLabels"
