@@ -247,8 +247,17 @@ async function loadRulings(set: Set): Promise<void> {
   // dashboard configured without one still gets the counts from /api/rulings
   // rather than an empty panel, because the numerator is a fact on its own.
   try {
-    let response = await fetch("/api/rulings-per-dollar?weeks=8", { signal: AbortSignal.timeout(30000) });
-    if (response.status === 404) {
+    // The priced join loads every canonical usage row in the window, and the
+    // private API refuses more than 100k rows with a 413 (seen live
+    // 2026-09-11: eight weeks was past the limit the day the endpoint went
+    // into service, and the panel read "unavailable" over a working ledger).
+    // Step down to the widest window that fits before giving up the dollars.
+    let response: Response | null = null;
+    for (const weeks of [8, 4, 2]) {
+      response = await fetch(`/api/rulings-per-dollar?weeks=${weeks}`, { signal: AbortSignal.timeout(30000) });
+      if (response.status !== 413) break;
+    }
+    if (!response || response.status === 404 || response.status === 413) {
       response = await fetch("/api/rulings?weeks=8", { signal: AbortSignal.timeout(30000) });
     }
     if (!response.ok) throw new Error("unavailable");
