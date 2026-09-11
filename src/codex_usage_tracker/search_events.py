@@ -31,6 +31,7 @@ from .canonical_ledger import (
 
 AUDIT_SCHEMA = "search_event.v1"
 DEFAULT_SEARCH_AUDIT_RELATIVE_PATH = "logs/search_audit.jsonl"
+DEFAULT_HERMES_HOME = "/var/lib/hermes/primary"
 DEFAULT_SEARCH_LEDGER = "~/.local/state/codex-usage-tracker/search_events.sqlite3"
 SEARCH_LANE = "hermes_search"
 SEARCH_QUOTA_LANE = "hermes_search_quota"
@@ -44,6 +45,18 @@ _ISO_INSTANT_RE = re.compile(
     re.ASCII,
 )
 _WATERMARK_SCHEMA_VERSION = 1
+
+
+def default_search_audit_path(environ: Mapping[str, str] | None = None) -> Path:
+    """The Hermes search audit feed, honouring ``HERMES_HOME``.
+
+    Both production collect runners export ``HERMES_HOME``; falling back to
+    the Sol path keeps an ad-hoc invocation pointed at the same feed instead
+    of silently reading an empty lane.
+    """
+    env = os.environ if environ is None else environ
+    home = env.get("HERMES_HOME") or DEFAULT_HERMES_HOME
+    return Path(home).expanduser() / DEFAULT_SEARCH_AUDIT_RELATIVE_PATH
 
 
 def _optional_text(value: Any) -> str | None:
@@ -402,11 +415,13 @@ def build_search_summary(
 __all__ = [
     "AUDIT_SCHEMA",
     "DEFAULT_SEARCH_AUDIT_RELATIVE_PATH",
+    "DEFAULT_HERMES_HOME",
     "DEFAULT_SEARCH_LEDGER",
     "SEARCH_LANE",
     "SEARCH_QUOTA_LANE",
     "build_search_summary",
     "collect_hermes_search_events",
+    "default_search_audit_path",
     "derive_search_quota_observations",
     "project_search_event",
     "read_watermark",

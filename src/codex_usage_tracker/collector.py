@@ -53,6 +53,17 @@ from .quota import (
     collect_z_ai_quota,
     derive_opencode_go_quotas,
 )
+from .search_events import (
+    DEFAULT_SEARCH_LEDGER,
+    SEARCH_LANE,
+    SEARCH_QUOTA_LANE,
+    _watermark_path,
+    collect_hermes_search_events,
+    default_search_audit_path,
+    derive_search_quota_observations,
+    read_watermark,
+    write_watermark,
+)
 from .usage_adapters import collect_claude_usage, collect_hermes_usage, collect_opencode_usage
 
 ALLOWED_DOTENV_KEYS = frozenset(
@@ -274,7 +285,8 @@ def _validate_distinct_ledger_paths(bindings: list[tuple[str | Path, str]]) -> N
                     aliases = False
             if aliases:
                 raise ValueError(
-                    f"canonical usage, quota, and billing ledgers must use distinct paths ({fact_type}, {other_type})"
+                    "canonical usage, quota, billing, and search ledgers must use "
+                    f"distinct paths ({fact_type}, {other_type})"
                 )
         resolved.append((canonical, fact_type))
 
@@ -412,6 +424,7 @@ def record_adjudications(
 SCOPE_HEARTBEATS = {
     "usage": "usage-collect.ok",
     "quota": "quota-collect.ok",
+    "searches": "search-collect.ok",
 }
 LANE_HEALTH_SCHEMA_VERSION = 1
 
@@ -973,6 +986,8 @@ def collect_all(
     lane_sleep: Callable[[float], None] | None = None,
     quota_lanes: Iterable[str] | None = None,
     when_active: bool = False,
+    search_ledger: str | Path | None = None,
+    search_audit: str | Path | None = None,
 ) -> dict[str, Any]:
     """Collect independently persistable usage and/or quota source batches.
 
@@ -989,8 +1004,8 @@ def collect_all(
         if configured_claude_instances
         else {"claude_code"}
     )
-    if scope not in {"all", "usage", "quota"}:
-        raise ValueError("scope must be one of: all, usage, quota")
+    if scope not in {"all", "usage", "quota", "searches"}:
+        raise ValueError("scope must be one of: all, usage, quota, searches")
     if codex_quota_history:
         if scope != "quota":
             raise ValueError("Codex quota history requires scope quota")
@@ -1002,6 +1017,15 @@ def collect_all(
         raise ValueError("history-since requires Codex quota history")
     collect_usage_scope = scope in {"all", "usage"}
     collect_quota_scope = scope in {"all", "quota"}
+    collect_search_scope = scope in {"all", "searches"}
+    search_target = Path(
+        DEFAULT_SEARCH_LEDGER if search_ledger is None else search_ledger
+    ).expanduser()
+    audit_target = (
+        Path(search_audit).expanduser()
+        if search_audit is not None
+        else default_search_audit_path(environment)
+    )
 
     # Reject aliasing and wrong pre-existing type bindings before reading any
     # in-scope source or writing any in-scope destination.
@@ -1012,6 +1036,13 @@ def collect_all(
         bindings.append((quota_ledger, "quota_observation_v1"))
     if scope == "all" and billing_ledger is not None:
         bindings.append((billing_ledger, "billing_fact_v1"))
+    if collect_search_scope:
+        bindings.append((search_target, "search_event_v1"))
+        # The search lane derives quota observations from rate-limited events,
+        # so the quota ledger is bound and preflighted even when the quota
+        # scope is not the one running.
+        if not collect_quota_scope:
+            bindings.append((quota_ledger, "quota_observation_v1"))
     _validate_distinct_ledger_paths(bindings)
     for ledger_path, ledger_fact_type in bindings:
         _ledger_backend(ledger_path)
@@ -1246,6 +1277,7 @@ def collect_all(
         "resolutions": resolutions,
     }
     opencode: list[dict[str, Any]] | None = None
+    quota_batches: list[tuple[AppendResult, int]] = []
 
     if collect_usage_scope:
         hermes = collect_source(
@@ -1519,7 +1551,7 @@ def collect_all(
                         )
                     )
 
-        quota_batches = [
+        quota_batches += [
             persist_source(
                 source,
                 quota_ledger,
@@ -1530,6 +1562,78 @@ def collect_all(
         ]
         result["quotas"] = _aggregate_append_results(quota_batches)
         paths["quota_ledger"] = str(Path(quota_ledger).expanduser())
+
+    if collect_search_scope:
+        # Web search/extract accounting (keeper ruling 2026-09-10). The feed is
+        # written by Hermes; until that lane ships, and whenever it is rotated
+        # away, a missing file is an empty lane rather than a failure.
+        watermark_file = _watermark_path(search_target, audit_target)
+        previous_watermark = read_watermark(watermark_file)
+        read_diagnostics: dict[str, Any] = {}
+
+        def _read_search_events():
+            # ``yield from`` keeps the adapter's StopIteration diagnostics —
+            # byte offset, inode, malformed count — which the watermark needs
+            # and which collect_source would otherwise drop on the floor.
+            captured = yield from collect_hermes_search_events(
+                audit_target,
+                f"{source_prefix}:hermes-search",
+                watermark=previous_watermark,
+            )
+            read_diagnostics.clear()
+            read_diagnostics.update(captured)
+            return captured
+
+        search_facts = collect_source(SEARCH_LANE, _read_search_events)
+        search_batches = [
+            persist_source(
+                SEARCH_LANE, search_target, search_facts, fact_type="search_event_v1"
+            )
+        ]
+        # A rate-limited event that names a reset instant is the only thing
+        # this lane can say about a quota it cannot probe; everything else the
+        # rate_limited count in the search ledger already carries.
+        derived = derive_search_quota_observations(
+            search_facts, f"{source_prefix}:hermes-search"
+        )
+        quota_batches.append(
+            persist_source(
+                SEARCH_QUOTA_LANE,
+                quota_ledger,
+                derived,
+                fact_type="quota_observation_v1",
+            )
+        )
+        result["quotas"] = _aggregate_append_results(quota_batches)
+        result["searches"] = {
+            **_aggregate_append_results(search_batches),
+            "derived_quota_observations": len(derived),
+            "malformed_lines": int(read_diagnostics.get("malformed_lines") or 0),
+        }
+        paths["search_ledger"] = str(search_target)
+        paths["quota_ledger"] = str(Path(quota_ledger).expanduser())
+        # Advance the watermark only once both appends committed. A ceded lane
+        # leaves it where it was: the next run re-reads the same bytes, and
+        # canonical identity makes that a replay rather than a duplicate.
+        if (
+            read_diagnostics.get("inode") is not None
+            and not dry_run
+            and not _lane(SEARCH_LANE)["ceded"]
+            and not _lane(SEARCH_QUOTA_LANE)["ceded"]
+        ):
+            try:
+                write_watermark(
+                    watermark_file,
+                    {
+                        key: read_diagnostics.get(key)
+                        for key in ("next_offset", "inode", "size", "last_observed_at")
+                    },
+                )
+                paths["search_watermark"] = str(watermark_file)
+            except OSError:
+                # A read-only state directory must not fail a run whose
+                # canonical appends already landed.
+                pass
 
     if scope == "all" and billing_ledger is not None:
         billing_result = _append_canonical_ledger(
@@ -1559,7 +1663,9 @@ def collect_all(
             Path(report_dir).expanduser()
             if report_dir is not None
             else _default_report_dir(
-                usage_ledger if collect_usage_scope else quota_ledger
+                usage_ledger
+                if collect_usage_scope
+                else quota_ledger if collect_quota_scope else search_target
             )
         )
         generated_at = (

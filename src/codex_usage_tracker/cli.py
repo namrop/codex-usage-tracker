@@ -11,7 +11,7 @@ import threading
 import signal
 import sys
 import time as time_module
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -40,7 +40,15 @@ DEFAULT_CLAUDE_PROBE_DIR = "~/.local/state/codex-usage-tracker/claude-probe"
 DEFAULT_UNIFIED_USAGE_LEDGER = "~/.local/state/codex-usage-tracker/usage_events.sqlite3"
 DEFAULT_QUOTA_LEDGER = "~/.local/state/codex-usage-tracker/quota_observations.sqlite3"
 DEFAULT_BILLING_LEDGER = "~/.local/state/codex-usage-tracker/billing_facts.sqlite3"
-CANONICAL_FACT_TYPES = ("usage_event_v1", "quota_observation_v1", "billing_fact_v1")
+DEFAULT_SEARCH_LEDGER = "~/.local/state/codex-usage-tracker/search_events.sqlite3"
+DEFAULT_SEARCH_AUDIT = f"{DEFAULT_SOL_HERMES_HOME}/logs/search_audit.jsonl"
+# Seven days is the window the Z.ai web search/reader limit resets on, and
+# the one the keeper asked to be able to see coming.
+DEFAULT_SEARCH_SUMMARY_DAYS = 7
+MAX_SEARCH_SUMMARY_DAYS = 92
+CANONICAL_FACT_TYPES = (
+    "usage_event_v1", "quota_observation_v1", "billing_fact_v1", "search_event_v1",
+)
 
 
 class _ClaudeInstanceAction(argparse.Action):
@@ -537,6 +545,92 @@ def cmd_rulings_per_dollar(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_collect_searches(args: argparse.Namespace) -> int:
+    """Ingest the Hermes web search/extract audit feed into its own ledger.
+
+    The searches scope of ``collect-all`` with only the arguments that scope
+    reads, so a timer can run it without naming the usage or Claude lanes it
+    would ignore anyway.
+    """
+    from .collector import collect_all
+
+    try:
+        result = collect_all(
+            state_db=args.state_db,
+            opencode_dbs=[],
+            codex_ledger=args.state_db,
+            usage_ledger=args.usage_ledger,
+            quota_ledger=args.quota_ledger,
+            search_ledger=args.search_ledger,
+            search_audit=args.search_audit,
+            scope="searches",
+            live_quota=False,
+            dry_run=args.dry_run,
+            source_prefix=args.source_prefix,
+        )
+    except Exception as exc:
+        print(f"collect-searches failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    print(_collect_summary_line(result), file=sys.stderr)
+    _print_compact_json(
+        {k: v for k, v in result.items() if k not in ("resolutions", "conflicts")}
+    )
+    return 0
+
+
+def cmd_searches(args: argparse.Namespace) -> int:
+    """Read-only: calls per backend per day, rate limits, and fallbacks.
+
+    Keeper ruling 2026-09-10 ("the ai usage ledger should start tracking
+    searches as well in a new table"): the masthead composer hit an exhausted
+    Z.ai weekly web search limit that nothing was counting down to. This is
+    the surface that counts it. It writes nothing.
+    """
+    from .canonical_ledger import query_sqlite_facts
+    from .search_events import build_search_summary
+
+    target = Path(args.sqlite).expanduser()
+    if not target.exists():
+        # An absent ledger is "nothing collected yet", not a failure: the
+        # Hermes feed and this lane can be enabled in either order.
+        _print_compact_json(
+            {
+                "days": args.days,
+                "totals": {"calls": 0, "rate_limited": 0, "errors": 0, "fallbacks": 0},
+                "backends": [],
+                "daily": [],
+                "paths": {"sqlite": str(target)},
+                "ledger_present": False,
+            }
+        )
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
+    try:
+        facts = query_sqlite_facts(
+            target,
+            fact_type="search_event_v1",
+            occurred_or_observed_at_gte=cutoff.isoformat().replace("+00:00", "Z"),
+            order="asc",
+        )
+        summary = build_search_summary(facts, days=args.days)
+    except Exception as exc:
+        print(f"searches failed: {type(exc).__name__}", file=sys.stderr)
+        return 1
+    _print_compact_json(
+        {**summary, "paths": {"sqlite": str(target)}, "ledger_present": True}
+    )
+    return 0
+
+
+def _bounded_search_days(value: str) -> int:
+    days = int(value)
+    if not 1 <= days <= MAX_SEARCH_SUMMARY_DAYS:
+        raise argparse.ArgumentTypeError(
+            f"days must be an integer from 1 through {MAX_SEARCH_SUMMARY_DAYS}"
+        )
+    return days
+
+
 def cmd_collect_all(args: argparse.Namespace) -> int:
     from .collector import collect_all
 
@@ -567,6 +661,8 @@ def cmd_collect_all(args: argparse.Namespace) -> int:
             strict_sources=args.strict_sources,
             quota_lanes=args.quota_lanes,
             when_active=args.when_active,
+            search_ledger=args.search_ledger,
+            search_audit=args.search_audit,
         )
     except Exception as exc:
         print(f"collect-all failed: {type(exc).__name__}", file=sys.stderr)
@@ -597,16 +693,25 @@ def _collect_summary_line(result: dict[str, Any]) -> str:
     counts = result.get("counts") or {}
     usage = result.get("usage") or {}
     quotas = result.get("quotas") or {}
+    searches = result.get("searches") or {}
     fields = [
         f"scope={result.get('scope', 'all')}",
-        f"appended={int(usage.get('appended', 0)) + int(quotas.get('appended', 0))}",
-        f"replayed={int(usage.get('replayed', 0)) + int(quotas.get('replayed', 0))}",
+        f"appended={int(usage.get('appended', 0)) + int(quotas.get('appended', 0)) + int(searches.get('appended', 0))}",
+        f"replayed={int(usage.get('replayed', 0)) + int(quotas.get('replayed', 0)) + int(searches.get('replayed', 0))}",
         f"quarantined={counts.get('conflicts', 0)}",
         f"corrections={result.get('generated_corrections', 0)}",
         f"regressions={counts.get('resolutions', 0)}",
         f"newly_adjudicated={counts.get('resolutions_recorded', 0)}",
         f"warnings={counts.get('warnings', 0)}",
     ]
+    if searches:
+        # The search lane is the only one whose feed can be silently absent,
+        # so the journal names what it read even when it read nothing.
+        fields.append(f"searches={searches.get('appended', 0)}")
+        if searches.get("derived_quota_observations"):
+            fields.append(f"search_quota={searches['derived_quota_observations']}")
+        if searches.get("malformed_lines"):
+            fields.append(f"search_malformed={searches['malformed_lines']}")
     lanes = result.get("lanes") or {}
     if lanes:
         degraded = sorted(
@@ -949,9 +1054,22 @@ def main() -> int:
     collect_parser.add_argument("--source-prefix", default="sol", help="Stable source namespace prefix")
     collect_parser.add_argument(
         "--scope",
-        choices=("all", "usage", "quota"),
+        choices=("all", "usage", "quota", "searches"),
         default="all",
-        help="Collect both lanes or only the independently scheduled usage/quota lane",
+        help=(
+            "Collect every lane or only the independently scheduled "
+            "usage/quota/searches lane"
+        ),
+    )
+    collect_parser.add_argument(
+        "--search-ledger",
+        default=os.environ.get("SEARCH_LEDGER_PATH") or DEFAULT_SEARCH_LEDGER,
+        help="Canonical private web search/extract ledger (SQLite by default; JSONL compatible)",
+    )
+    collect_parser.add_argument(
+        "--search-audit",
+        default=os.environ.get("SEARCH_AUDIT_PATH") or DEFAULT_SEARCH_AUDIT,
+        help="Hermes search audit feed to ingest incrementally (a missing file is an empty lane)",
     )
     collect_parser.add_argument(
         "--strict-sources",
@@ -996,6 +1114,69 @@ def main() -> int:
         ),
     )
     collect_parser.set_defaults(func=cmd_collect_all)
+
+    collect_searches_parser = subparsers.add_parser(
+        "collect-searches",
+        help="Ingest the Hermes web search/extract audit feed into the search ledger",
+    )
+    collect_searches_parser.add_argument(
+        "--search-ledger",
+        default=os.environ.get("SEARCH_LEDGER_PATH") or DEFAULT_SEARCH_LEDGER,
+        help="Canonical private web search/extract ledger",
+    )
+    collect_searches_parser.add_argument(
+        "--search-audit",
+        default=os.environ.get("SEARCH_AUDIT_PATH") or DEFAULT_SEARCH_AUDIT,
+        help="Hermes search audit feed to ingest incrementally",
+    )
+    collect_searches_parser.add_argument(
+        "--quota-ledger",
+        default=os.environ.get("QUOTA_LEDGER_PATH") or DEFAULT_QUOTA_LEDGER,
+        help=(
+            "Canonical quota ledger receiving the exhaustion observations "
+            "derived from rate-limited search events"
+        ),
+    )
+    collect_searches_parser.add_argument(
+        "--usage-ledger",
+        default=os.environ.get("UNIFIED_USAGE_LEDGER_PATH") or DEFAULT_UNIFIED_USAGE_LEDGER,
+        help="Unused by this scope; accepted so the aliasing preflight sees the same paths",
+    )
+    collect_searches_parser.add_argument(
+        "--state-db",
+        default=os.environ.get("HERMES_STATE_DB_PATH") or f"{DEFAULT_SOL_HERMES_HOME}/state.db",
+        help="Unused by this scope; accepted for symmetry with collect-all",
+    )
+    collect_searches_parser.add_argument(
+        "--source-prefix", default="sol", help="Stable source namespace prefix"
+    )
+    collect_searches_parser.add_argument(
+        "--dry-run", action="store_true", help="Validate and summarize without ledger writes"
+    )
+    collect_searches_parser.set_defaults(func=cmd_collect_searches)
+
+    searches_parser = subparsers.add_parser(
+        "searches",
+        help=(
+            "Read-only summary of web search/extract calls per backend per day, "
+            "with rate-limited and fallback counts"
+        ),
+    )
+    searches_parser.add_argument(
+        "--sqlite",
+        default=os.environ.get("SEARCH_LEDGER_PATH") or DEFAULT_SEARCH_LEDGER,
+        help="Type-bound search_event_v1 SQLite ledger to read",
+    )
+    searches_parser.add_argument(
+        "--days",
+        type=_bounded_search_days,
+        default=DEFAULT_SEARCH_SUMMARY_DAYS,
+        help=(
+            f"Calendar days back from today, UTC "
+            f"(1-{MAX_SEARCH_SUMMARY_DAYS}; default: {DEFAULT_SEARCH_SUMMARY_DAYS})"
+        ),
+    )
+    searches_parser.set_defaults(func=cmd_searches)
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Run the web dashboard")
     dashboard_parser.add_argument("--ledger", dest="ledger", default=None, help="Path to ledger JSONL file")

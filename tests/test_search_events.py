@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -262,3 +263,204 @@ def test_search_ledger_refuses_a_foreign_fact_type(tmp_path):
     append_sqlite_facts(ledger, facts, fact_type="search_event_v1")
     with pytest.raises(ValidationError):
         append_sqlite_facts(ledger, [], fact_type="usage_event_v1")
+
+
+# --- collection lane and CLI -------------------------------------------------
+
+
+def _collect_searches(tmp_path, audit, **overrides):
+    from codex_usage_tracker.collector import collect_all
+
+    return collect_all(
+        state_db=tmp_path / "unused-state.db",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "unused-codex.jsonl",
+        usage_ledger=tmp_path / "usage_events.sqlite3",
+        quota_ledger=tmp_path / "quota_observations.sqlite3",
+        search_ledger=tmp_path / "search_events.sqlite3",
+        search_audit=audit,
+        scope="searches",
+        live_quota=False,
+        **overrides,
+    )
+
+
+def test_search_scope_writes_the_ledger_the_quota_row_and_the_watermark(tmp_path):
+    audit = tmp_path / "search_audit.jsonl"
+    audit.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    result = _collect_searches(tmp_path, audit)
+    assert result["searches"]["appended"] == 5
+    assert result["searches"]["malformed_lines"] == 1
+    assert result["searches"]["derived_quota_observations"] == 1
+    # The derived exhaustion lands in the quota ledger, not the search ledger.
+    assert result["quotas"]["appended"] == 1
+    assert result["lanes"]["hermes_search"]["succeeded"] is True
+    assert result["lanes"]["hermes_search_quota"]["succeeded"] is True
+    assert result["ceded"] == []
+
+    quota_rows = query_sqlite_facts(
+        tmp_path / "quota_observations.sqlite3",
+        fact_type="quota_observation_v1",
+        limit=10,
+    )
+    assert [row["provider"] for row in quota_rows] == ["z-ai"]
+    assert quota_rows[0]["resets_at"] == "2026-09-24T00:00:00Z"
+
+    watermark = Path(result["paths"]["search_watermark"])
+    assert read_watermark(watermark)["next_offset"] == audit.stat().st_size
+    assert Path(result["paths"]["search_ledger"]).exists()
+    # The searches scope owns its own heartbeat, not usage's or quota's.
+    assert [Path(p).name for p in result["paths"]["heartbeats"]] == ["search-collect.ok"]
+
+
+def test_second_run_over_an_unchanged_feed_appends_nothing(tmp_path):
+    audit = tmp_path / "search_audit.jsonl"
+    audit.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    _collect_searches(tmp_path, audit)
+    again = _collect_searches(tmp_path, audit)
+    assert again["searches"]["appended"] == 0
+    assert again["searches"]["discovered"] == 0
+    assert again["quotas"]["appended"] == 0
+
+
+def test_a_feed_that_grows_is_read_from_the_watermark(tmp_path):
+    audit = tmp_path / "search_audit.jsonl"
+    lines = FIXTURE.read_text(encoding="utf-8").splitlines(keepends=True)
+    audit.write_text("".join(lines[:2]), encoding="utf-8")
+    first = _collect_searches(tmp_path, audit)
+    assert first["searches"]["appended"] == 2
+
+    audit.write_text("".join(lines), encoding="utf-8")
+    second = _collect_searches(tmp_path, audit)
+    assert second["searches"]["appended"] == 3
+    assert second["searches"]["derived_quota_observations"] == 1
+
+
+def test_a_missing_feed_is_an_empty_lane_that_still_succeeds(tmp_path):
+    result = _collect_searches(tmp_path, tmp_path / "not_yet_written.jsonl")
+    assert result["searches"]["appended"] == 0
+    assert result["ceded"] == []
+    assert result["lanes"]["hermes_search"]["succeeded"] is True
+    # Nothing was read, so nothing is claimed by a watermark either.
+    assert "search_watermark" not in result["paths"]
+
+
+def test_a_dry_run_writes_no_ledger_and_no_watermark(tmp_path):
+    audit = tmp_path / "search_audit.jsonl"
+    audit.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    result = _collect_searches(tmp_path, audit, dry_run=True)
+    assert result["searches"]["discovered"] == 5
+    assert not (tmp_path / "search_events.sqlite3").exists()
+    assert "search_watermark" not in result["paths"]
+
+
+def test_the_usage_scope_never_touches_the_search_ledger(tmp_path):
+    from codex_usage_tracker.collector import collect_all
+
+    audit = tmp_path / "search_audit.jsonl"
+    audit.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    # claude_root is pinned inside tmp_path on purpose: its default is the
+    # operator's own ~/.claude/projects, and a test must never read that.
+    (tmp_path / "claude" / "projects").mkdir(parents=True)
+    result = collect_all(
+        state_db=tmp_path / "absent-state.db",
+        claude_root=tmp_path / "claude" / "projects",
+        opencode_dbs=[],
+        codex_ledger=tmp_path / "absent-codex.jsonl",
+        usage_ledger=tmp_path / "usage_events.sqlite3",
+        quota_ledger=tmp_path / "quota_observations.sqlite3",
+        search_ledger=tmp_path / "search_events.sqlite3",
+        search_audit=audit,
+        scope="usage",
+        live_quota=False,
+    )
+    assert "searches" not in result
+    assert not (tmp_path / "search_events.sqlite3").exists()
+
+
+def test_an_unknown_scope_is_still_refused(tmp_path):
+    from codex_usage_tracker.collector import collect_all
+
+    with pytest.raises(ValueError, match="all, usage, quota, searches"):
+        collect_all(
+            state_db=tmp_path / "state.db",
+            opencode_dbs=[],
+            codex_ledger=tmp_path / "codex.jsonl",
+            usage_ledger=tmp_path / "usage_events.sqlite3",
+            quota_ledger=tmp_path / "quota_observations.sqlite3",
+            search_ledger=tmp_path / "search_events.sqlite3",
+            search_audit=tmp_path / "feed.jsonl",
+            scope="search",
+            live_quota=False,
+        )
+
+
+def test_search_ledger_may_not_alias_another_canonical_ledger(tmp_path):
+    from codex_usage_tracker.collector import collect_all
+
+    shared = tmp_path / "shared.sqlite3"
+    with pytest.raises(ValueError, match="distinct paths"):
+        collect_all(
+            state_db=tmp_path / "state.db",
+            opencode_dbs=[],
+            codex_ledger=tmp_path / "codex.jsonl",
+            usage_ledger=tmp_path / "usage_events.sqlite3",
+            quota_ledger=shared,
+            search_ledger=shared,
+            search_audit=tmp_path / "feed.jsonl",
+            scope="searches",
+            live_quota=False,
+        )
+
+
+def _run_cli(monkeypatch, *args) -> None:
+    monkeypatch.setattr(sys, "argv", ["codex-usage-tracker", *args])
+
+
+def test_cli_collect_searches_and_searches_round_trip(tmp_path, capsys, monkeypatch):
+    from codex_usage_tracker import cli
+
+    audit = tmp_path / "search_audit.jsonl"
+    audit.write_text(FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    ledger = tmp_path / "search_events.sqlite3"
+    _run_cli(
+        monkeypatch,
+        "collect-searches",
+        "--search-ledger", str(ledger),
+        "--search-audit", str(audit),
+        "--quota-ledger", str(tmp_path / "quota_observations.sqlite3"),
+        "--usage-ledger", str(tmp_path / "usage_events.sqlite3"),
+        "--state-db", str(tmp_path / "state.db"),
+    )
+    assert cli.main() == 0
+    capsys.readouterr()
+
+    _run_cli(monkeypatch, "searches", "--sqlite", str(ledger), "--days", "92")
+    assert cli.main() == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["ledger_present"] is True
+    assert summary["totals"] == {
+        "calls": 5, "rate_limited": 1, "errors": 1, "fallbacks": 2
+    }
+    backends = {entry["backend"]: entry for entry in summary["backends"]}
+    assert backends["zai"]["rate_limited"] == 1
+    assert backends["brave"]["fallback_from"] == {"zai": 1}
+
+
+def test_cli_searches_reports_an_absent_ledger_as_empty_not_failed(
+    tmp_path, capsys, monkeypatch
+):
+    from codex_usage_tracker import cli
+
+    _run_cli(monkeypatch, "searches", "--sqlite", str(tmp_path / "nothing.sqlite3"))
+    assert cli.main() == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["ledger_present"] is False
+    assert summary["totals"]["calls"] == 0
+
+
+def test_generic_ledger_verbs_accept_the_new_fact_type():
+    from codex_usage_tracker.cli import CANONICAL_FACT_TYPES
+
+    assert "search_event_v1" in CANONICAL_FACT_TYPES
