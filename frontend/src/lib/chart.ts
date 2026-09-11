@@ -8,7 +8,7 @@ import { compactIntFormat, intFormat, percent } from "./format";
 export interface ChartInstance {
   data: { labels: unknown[]; datasets: unknown[] };
   options: Record<string, unknown>;
-  update(): void;
+  update(mode?: string): void;
   resize(): void;
   destroy(): void;
 }
@@ -280,5 +280,11 @@ export function replaceChartData(
   });
   existing.length = datasets.length;
   chart.options = options;
-  chart.update();
+  // No tween on a hydrate. Every bucket is a timestamp; when the window
+  // slides one bucket each quarter hour Chart.js would otherwise animate
+  // each point from its old value to its neighbour's, and a stepped quota
+  // line visibly sags and regrows across the whole canvas for 260 ms — the
+  // "collapse" the keeper kept seeing (2026-09-11). The initial render keeps
+  // its animation; refreshes redraw in place.
+  chart.update("none");
 }
