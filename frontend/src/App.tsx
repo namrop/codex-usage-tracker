@@ -5,6 +5,7 @@ import { usePageBackground } from "./hooks/usePageBackground";
 import { usePalette } from "./hooks/usePalette";
 import { BillingCard } from "./components/BillingCard";
 import { BurnRateCard } from "./components/BurnRateCard";
+import { RulingsPerDollarCard } from "./components/RulingsPerDollarCard";
 import { GlassPanels } from "./components/GlassPanels";
 import { OpsHero } from "./components/OpsHero";
 import { deriveResetChips } from "./components/ResetRail";
@@ -78,6 +79,7 @@ export default function App() {
       <SubscriptionsCard palette={palette} subs={state.subs} />
       <BurnRateCard burn={state.burn} />
       <BillingCard billing={state.billing} />
+      <RulingsPerDollarCard rulings={state.rulings} />
       <GlassPanels glass={glass} />
     </main>
   );

@@ -28,6 +28,12 @@ export interface BurnPanelState {
   contentVisible: boolean;
 }
 
+export interface RulingsPanelState {
+  data: any | null;
+  message: string | null;
+  contentVisible: boolean;
+}
+
 export interface BillingPanelState {
   data: any | null;
   message: string | null;
@@ -44,6 +50,7 @@ export interface DashboardState {
   subs: SubsPanelState;
   burn: BurnPanelState;
   billing: BillingPanelState;
+  rulings: RulingsPanelState;
   providerStatusFeeds: Record<string, any> | null;
   refreshing: boolean;
 }
@@ -56,6 +63,7 @@ const INITIAL_STATE: DashboardState = {
   subs: { data: null, notice: null, placeholder: false, loading: true },
   burn: { data: null, message: "Loading window burn rate…", contentVisible: false },
   billing: { data: null, message: "Loading billing facts…", contentVisible: false },
+  rulings: { data: null, message: "Loading rulings per dollar…", contentVisible: false },
   providerStatusFeeds: null,
   refreshing: false,
 };
@@ -234,6 +242,31 @@ async function loadBilling(set: Set): Promise<void> {
   }
 }
 
+async function loadRulings(set: Set): Promise<void> {
+  // Rulings per dollar. The priced join needs a canonical usage ledger; a
+  // dashboard configured without one still gets the counts from /api/rulings
+  // rather than an empty panel, because the numerator is a fact on its own.
+  try {
+    let response = await fetch("/api/rulings-per-dollar?weeks=8", { signal: AbortSignal.timeout(30000) });
+    if (response.status === 404) {
+      response = await fetch("/api/rulings?weeks=8", { signal: AbortSignal.timeout(30000) });
+    }
+    if (!response.ok) throw new Error("unavailable");
+    const data = await response.json();
+    set((prev) => ({ ...prev, rulings: { data, message: null, contentVisible: true } }));
+  } catch (error) {
+    set((prev) => {
+      if (prev.rulings.contentVisible) {
+        return { ...prev, rulings: { ...prev.rulings, message: "Refresh failed — showing last good data." } };
+      }
+      return {
+        ...prev,
+        rulings: { ...prev.rulings, message: "Ruling ledger unavailable.", contentVisible: false },
+      };
+    });
+  }
+}
+
 async function loadProviderStatusFeeds(set: Set): Promise<void> {
   try {
     const response = await fetch("/api/provider-status", { signal: AbortSignal.timeout(15000) });
@@ -260,6 +293,7 @@ export function useDashboardData(): { state: DashboardState; refresh: () => void
         loadSubscriptions(setState),
         loadBurn(setState),
         loadBilling(setState),
+        loadRulings(setState),
         loadProviderStatusFeeds(setState),
       ]);
     } finally {

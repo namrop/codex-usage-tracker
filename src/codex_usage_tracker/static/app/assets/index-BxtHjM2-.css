@@ -1543,6 +1543,22 @@ html[data-gc-shape="slanted"] *::after {
 .burn-projected td:last-child {
   font-variant-numeric: tabular-nums;
 }
+
+/* -- rulings per dollar (2026-09-10): keeper ratifications per ISO week
+ * against the same week's list-price estimate. Structure only — the table
+ * inherits the estate table-wrap and every color comes from the token
+ * layer. -- */
+.rulings-table {
+  min-width: 620px;
+}
+
+.rulings-table th[scope="row"] {
+  white-space: nowrap;
+}
+
+.rulings-table td {
+  font-variant-numeric: tabular-nums;
+}
 /* Type bridge — font APPLICATION only, the one documented exception to
  * the purity scan (mirrors diadem's excluded theme-default.css). The
  * family values live in the GC theme layer; this block merely points
