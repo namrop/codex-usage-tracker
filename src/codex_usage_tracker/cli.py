@@ -21,6 +21,12 @@ from .fetcher import fetch_usage
 from .git_autocommit import commit_ledger
 from .ledger import append_row, reconcile_snapshot_windows
 from .public_projection import write_public_projection
+from .rulings import (
+    DEFAULT_SERVICE_URL,
+    DEFAULT_WEEKS as DEFAULT_RULING_WEEKS,
+    MAX_WEEKS as MAX_RULING_WEEKS,
+    RULING_SOURCES,
+)
 from .unified_public_projection import write_unified_public_projection
 
 LOGGER = logging.getLogger(__name__)
@@ -298,6 +304,15 @@ def _bounded_scan_hours(value: str) -> int:
     return hours
 
 
+def _bounded_weeks(value: str) -> int:
+    weeks = int(value)
+    if not 1 <= weeks <= MAX_RULING_WEEKS:
+        raise argparse.ArgumentTypeError(
+            f"weeks must be an integer from 1 through {MAX_RULING_WEEKS}"
+        )
+    return weeks
+
+
 def cmd_unmapped_models(args: argparse.Namespace) -> int:
     """Private, read-only inventory of provider/model IDs no allowlist covers.
 
@@ -417,6 +432,108 @@ def cmd_unmapped_models(args: argparse.Namespace) -> int:
         "paths": {"sqlite": str(Path(args.sqlite).expanduser())},
         "unmapped": unmapped,
     })
+    return 0
+
+
+def cmd_rulings_per_dollar(args: argparse.Namespace) -> int:
+    """Rulings per ISO week against that week's list-price inference estimate.
+
+    Keeper ruling 2026-09-10 ("we need to make ratification a first class
+    thing"): tokens proxy cost, cost proxies value used, value used proxies
+    value produced — and the keeper's unit of produced value is a
+    ratification. This prints the join rather than leaving it to be mined by
+    hand.
+
+    Read-only and bounded: it scans the Atrium for ``ruling_ledger: v1``
+    files (or asks Atrium Service when ``--rulings-source service``) and
+    reads the canonical usage ledger for the same weeks. It writes nothing.
+    """
+    from .rulings import (
+        RulingsSourceUnavailable,
+        build_rulings_per_dollar,
+        load_rulings,
+        usage_window,
+    )
+
+    try:
+        scan = load_rulings(
+            atrium_root=args.atrium_root,
+            source=args.rulings_source,
+            service_url=args.service_url,
+        )
+    except RulingsSourceUnavailable as exc:
+        print(f"rulings-per-dollar failed: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"rulings-per-dollar failed: {exc}", file=sys.stderr)
+        return 1
+
+    from .rulings import read_usage_rows
+
+    window_start, window_end = usage_window(args.weeks)
+    rows: list[dict[str, Any]] | None
+    ledger_path = Path(args.usage_ledger).expanduser()
+    if not ledger_path.exists():
+        # No usage ledger on this host: print the counts with null prices
+        # rather than a $0 denominator, which would read as free judgment.
+        print(
+            f"no usage ledger at {ledger_path}: printing counts without prices",
+            file=sys.stderr,
+        )
+        rows = None
+    else:
+        try:
+            rows = read_usage_rows(ledger_path, start=window_start, end=window_end)
+        except Exception as exc:
+            print(
+                f"rulings-per-dollar failed reading usage ledger: {type(exc).__name__}",
+                file=sys.stderr,
+            )
+            return 1
+
+    payload = build_rulings_per_dollar(scan, rows, weeks=args.weeks)
+    if args.json:
+        _print_compact_json(payload)
+        return 0
+
+    coverage = payload["coverage"]
+    header = (
+        f"{'week':10} {'rulings':>7} {'list price':>12} {'per $1k':>9} "
+        f"{'output tok':>12}  classes"
+    )
+    print(header)
+    print("-" * len(header))
+    for entry in payload["series"]:
+        price = entry.get("list_price_usd")
+        ratio = entry.get("rulings_per_1k_usd")
+        output_tokens = entry.get("output_tokens")
+        classes = " ".join(
+            f"{name}:{count}"
+            for name, count in sorted(entry["rulings_by_class"].items())
+            if count
+        )
+        # "—" for a ratio means the week has no denominator (no priced
+        # traffic), which is not the same statement as a ratio of zero.
+        week_label = entry["week"] + ("*" if entry["partial"] else "")
+        price_text = f"${price}" if price is not None else "—"
+        ratio_text = f"{ratio:.2f}" if ratio is not None else "—"
+        tokens_text = f"{output_tokens:,}" if output_tokens is not None else "—"
+        print(
+            f"{week_label:10} {entry['rulings_total']:>7} {price_text:>12} "
+            f"{ratio_text:>9} {tokens_text:>12}  {classes}"
+        )
+    print()
+    print(
+        f"weeks={payload['weeks']} tz={payload['timezone']} source={coverage['source']} "
+        f"ledgers={coverage['ledgers_scanned']} entries={coverage['entries_parsed']} "
+        f"parse_errors={coverage['parse_errors']} duplicates={coverage['duplicate_uids']}"
+    )
+    for detail in coverage["parse_error_details"]:
+        location = f"{detail['path']}:{detail['line']}" if detail.get("line") else detail["path"]
+        print(f"  parse error: {location}: {detail['reason']}", file=sys.stderr)
+    print("* partial week (still in progress).")
+    print(f"list price is an ESTIMATE at the {coverage['rate_basis']} service tier, not billed cost.")
+    print("counts RECORDED rulings, not keeper adjudication traffic.")
     return 0
 
 
@@ -712,6 +829,52 @@ def main() -> int:
         ),
     )
     unmapped_parser.set_defaults(func=cmd_unmapped_models)
+
+    rulings_parser = subparsers.add_parser(
+        "rulings-per-dollar",
+        help=(
+            "Weekly keeper ratifications joined to the same weeks' list-price "
+            "inference estimate (read-only)"
+        ),
+    )
+    rulings_parser.add_argument(
+        "--weeks",
+        type=_bounded_weeks,
+        default=DEFAULT_RULING_WEEKS,
+        help=f"ISO weeks back, including the current one (1-{MAX_RULING_WEEKS}; default: {DEFAULT_RULING_WEEKS})",
+    )
+    rulings_parser.add_argument(
+        "--json", action="store_true", help="Emit the compact JSON payload instead of a table"
+    )
+    rulings_parser.add_argument(
+        "--atrium-root",
+        dest="atrium_root",
+        default=DEFAULT_SOL_ATRIUM_ROOT,
+        help=f"Atrium root to scan for ruling ledgers (default: {DEFAULT_SOL_ATRIUM_ROOT})",
+    )
+    rulings_parser.add_argument(
+        "--rulings-source",
+        dest="rulings_source",
+        choices=RULING_SOURCES,
+        default="canon",
+        help=(
+            "Where ruling entries come from: 'canon' scans the Atrium directly "
+            "(default), 'service' calls Atrium Service's /rulings endpoint"
+        ),
+    )
+    rulings_parser.add_argument(
+        "--service-url",
+        dest="service_url",
+        default=DEFAULT_SERVICE_URL,
+        help=f"Atrium Service base URL for --rulings-source service (default: {DEFAULT_SERVICE_URL})",
+    )
+    rulings_parser.add_argument(
+        "--usage-ledger",
+        dest="usage_ledger",
+        default=os.environ.get("UNIFIED_USAGE_LEDGER_PATH") or DEFAULT_UNIFIED_USAGE_LEDGER,
+        help="Type-bound usage_event_v1 ledger to price the weeks against",
+    )
+    rulings_parser.set_defaults(func=cmd_rulings_per_dollar)
 
     collect_parser = subparsers.add_parser(
         "collect-all",

@@ -32,6 +32,17 @@ from .provider_spend import (
     read_provider_spend_rows,
     summarize_provider_spend,
 )
+from .rulings import (
+    DEFAULT_WEEKS as DEFAULT_RULING_WEEKS,
+    MAX_WEEKS as MAX_RULING_WEEKS,
+    RULING_SOURCES,
+    RulingScan,
+    RulingsSourceUnavailable,
+    build_rulings_per_dollar,
+    build_weekly_rulings,
+    load_rulings,
+    usage_window,
+)
 from .token_correlation import build_token_correlation_rows, resolve_state_db_path
 from .canonical_ledger import (
     IdentityConflictError,
@@ -539,6 +550,63 @@ def _limit_argument(default: int = _DEFAULT_DATA_ROW_LIMIT) -> tuple[int | None,
     if limit < 0:
         return None, (jsonify({"error": "limit must be nonnegative"}), 400)
     return (None if limit == 0 else limit), None
+
+
+# Ruling-ledger reads are a filesystem walk of the whole Atrium (a couple of
+# seconds over ~17k markdown files), so the scan is memoized briefly rather
+# than repeated for every panel refresh. The TTL is short enough that a
+# just-recorded ruling shows up within a minute.
+_RULINGS_SCAN_TTL_SECONDS = 60.0
+_rulings_scan_cache: dict[tuple[str, str], tuple[float, RulingScan]] = {}
+_rulings_scan_lock = threading.Lock()
+
+
+def _weeks_argument() -> tuple[int, tuple[Any, int] | None]:
+    """Parse ``?weeks=`` for the ruling series; default eight, bounded."""
+    weeks_text = request.args.get("weeks")
+    if weeks_text is None:
+        return DEFAULT_RULING_WEEKS, None
+    try:
+        weeks = int(weeks_text)
+    except ValueError:
+        return DEFAULT_RULING_WEEKS, (jsonify({"error": "weeks must be an integer"}), 400)
+    if not 1 <= weeks <= MAX_RULING_WEEKS:
+        return DEFAULT_RULING_WEEKS, (
+            jsonify({"error": f"weeks must be between 1 and {MAX_RULING_WEEKS}"}),
+            400,
+        )
+    return weeks, None
+
+
+def _rulings_source_argument() -> tuple[str, tuple[Any, int] | None]:
+    """Parse ``?source=canon|service``; the canon scan is the default because
+    the Atrium Service rulings endpoint is not deployed yet."""
+    source = request.args.get("source")
+    if source is None:
+        return "canon", None
+    if source not in RULING_SOURCES:
+        return "canon", (
+            jsonify({"error": f"source must be one of: {', '.join(RULING_SOURCES)}"}),
+            400,
+        )
+    return source, None
+
+
+def _cached_rulings_scan(
+    *, atrium_root: str, source: str, now: float | None = None
+) -> RulingScan:
+    import time as _time
+
+    moment = _time.time() if now is None else now
+    key = (source, atrium_root)
+    with _rulings_scan_lock:
+        cached = _rulings_scan_cache.get(key)
+        if cached is not None and moment - cached[0] < _RULINGS_SCAN_TTL_SECONDS:
+            return cached[1]
+    scan = load_rulings(atrium_root=atrium_root, source=source)
+    with _rulings_scan_lock:
+        _rulings_scan_cache[key] = (moment, scan)
+    return scan
 
 
 def _iso_z(value: datetime) -> str:
@@ -2005,6 +2073,65 @@ def create_app(
                 rows, window_start=series_start, window_end=series_end
             )
         return jsonify(payload)
+
+    @app.route("/api/rulings")
+    def api_rulings():
+        """Weekly ratification counts, no pricing join.
+
+        Works with no usage ledger configured: the count of recorded keeper
+        rulings is a fact on its own, and the join is the optional part.
+        """
+        weeks, weeks_error = _weeks_argument()
+        if weeks_error is not None:
+            return weeks_error
+        source, source_error = _rulings_source_argument()
+        if source_error is not None:
+            return source_error
+        try:
+            scan = _cached_rulings_scan(atrium_root=atrium_root, source=source)
+        except RulingsSourceUnavailable as exc:
+            return jsonify({"error": str(exc)}), 503
+        return jsonify(build_weekly_rulings(scan, weeks=weeks))
+
+    @app.route("/api/rulings-per-dollar")
+    def api_rulings_per_dollar():
+        """Rulings per ISO week against the same week's list-price estimate.
+
+        Keeper ruling 2026-09-10: the keeper's unit of produced value is a
+        ratification, so judgment-per-dollar is computed here instead of
+        mined. The dollars are the list-price ESTIMATE at the standard
+        service tier over canonical usage rows — not billed cost — and the
+        numerator counts rulings that were RECORDED, which is why the
+        coverage block travels with the series.
+        """
+        weeks, weeks_error = _weeks_argument()
+        if weeks_error is not None:
+            return weeks_error
+        source, source_error = _rulings_source_argument()
+        if source_error is not None:
+            return source_error
+        if not resolved_unified_usage:
+            return jsonify({"error": "unified usage ledger is not configured"}), 404
+        try:
+            scan = _cached_rulings_scan(atrium_root=atrium_root, source=source)
+        except RulingsSourceUnavailable as exc:
+            return jsonify({"error": str(exc)}), 503
+        window_start, window_end = usage_window(weeks)
+        try:
+            rows = _private_facts(
+                resolved_unified_usage,
+                fact_type="usage_event_v1",
+                filters={},
+                cutoff=window_start,
+                before=window_end,
+            )
+        except UnsupportedLedgerSuffix:
+            return jsonify({"error": "unsupported ledger suffix"}), 400
+        except PrivateLedgerQueryTooLarge:
+            return jsonify({"error": "ledger query exceeds private API row limit"}), 413
+        except (MalformedLedgerError, ValidationError, IdentityConflictError):
+            return jsonify({"error": "configured private ledger is unavailable"}), 503
+        return jsonify(build_rulings_per_dollar(scan, rows, weeks=weeks))
 
     @app.route("/api/provider-status")
     def api_provider_status():
