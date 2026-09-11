@@ -316,3 +316,64 @@ def estimate_list_price(buckets: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         # so the estimate may understate them. Stated, not hidden.
         "long_context_unverified_tokens": long_context_unverified_tokens,
     }
+
+
+# ── Token bucketing for the estimate. These two helpers moved here from
+# dashboard.py on 2026-09-10 (rulings-per-dollar lane) so every consumer —
+# the dashboard's window/daily estimates, and now the weekly rulings join —
+# folds rows into price buckets exactly one way, against exactly one rate
+# table. The dashboard keeps its private aliases; nothing about the grouping
+# changed in the move.
+LIST_PRICE_TOKEN_FIELDS = (
+    "input_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "output_tokens",
+    "reasoning_tokens",
+)
+
+
+def accumulate_price_bucket(
+    buckets: Dict[Tuple[str, str, str], Dict[str, Any]], row: Mapping[str, Any]
+) -> None:
+    """Fold one canonical row into its (provider, model, context basis) bucket.
+
+    The long-context meter is a PER-REQUEST test (see
+    :func:`request_context_basis`): canonical ``input_tokens`` excludes cache,
+    so the threshold is input + cache_read + cache_write on a single request.
+    Classifying here — while the individual rows are still in hand — is why
+    the basis is part of the grouping key rather than something re-derived
+    from a model's aggregate, which would be wrong in both directions (many
+    short requests summing past the threshold, or one long request diluted by
+    short ones).
+    """
+    key = (
+        str(row.get("provider") or "unknown"),
+        str(row.get("model_reported") or row.get("model_requested") or "unknown"),
+        request_context_basis(row),
+    )
+    bucket = buckets.setdefault(
+        key,
+        {
+            "provider": key[0],
+            "model": key[1],
+            "context_basis": key[2],
+            **{field: 0 for field in LIST_PRICE_TOKEN_FIELDS},
+        },
+    )
+    for field in LIST_PRICE_TOKEN_FIELDS:
+        bucket[field] += int(row.get(field) or 0)
+
+
+def finalize_price_buckets(
+    buckets: Dict[Tuple[str, str, str], Dict[str, Any]]
+) -> list[Dict[str, Any]]:
+    for bucket in buckets.values():
+        # Reasoning is diagnostic and already inside output — never a second
+        # time in the accounted total.
+        bucket["total_tokens"] = sum(
+            bucket[field]
+            for field in LIST_PRICE_TOKEN_FIELDS
+            if field != "reasoning_tokens"
+        )
+    return list(buckets.values())

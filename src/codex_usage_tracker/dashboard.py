@@ -13,7 +13,12 @@ from typing import Any, Dict, List, Optional, TypeAlias
 from flask import Flask, jsonify, request
 
 from .capability_matrix import get_capability_matrix
-from .list_pricing import estimate_list_price, request_context_basis
+from .list_pricing import (
+    LIST_PRICE_TOKEN_FIELDS,
+    accumulate_price_bucket,
+    estimate_list_price,
+    finalize_price_buckets,
+)
 from .codex_call_accounting import build_codex_accounting_rows
 from .jsonl_store import newest_first, read_jsonl
 from .ledger import reconcile_snapshot_windows
@@ -760,57 +765,13 @@ def _build_unified_time_series(
     }
 
 
-_LIST_PRICE_TOKEN_FIELDS = (
-    "input_tokens",
-    "cache_read_tokens",
-    "cache_write_tokens",
-    "output_tokens",
-    "reasoning_tokens",
-)
-
-
-def _accumulate_price_bucket(
-    buckets: dict[tuple[str, str, str], dict[str, Any]], row: dict[str, Any]
-) -> None:
-    """Fold one canonical row into its (provider, model, context basis) bucket.
-
-    The long-context meter is a PER-REQUEST test (see
-    ``list_pricing.request_context_basis``): canonical ``input_tokens``
-    excludes cache, so the threshold is input + cache_read + cache_write on a
-    single request. Classifying here — while the individual rows are still in
-    hand — is why the basis is part of the grouping key rather than something
-    re-derived from a model's aggregate, which would be wrong in both
-    directions (many short requests summing past the threshold, or one long
-    request diluted by short ones).
-    """
-    key = (
-        str(row.get("provider") or "unknown"),
-        str(row.get("model_reported") or row.get("model_requested") or "unknown"),
-        request_context_basis(row),
-    )
-    bucket = buckets.setdefault(
-        key,
-        {
-            "provider": key[0],
-            "model": key[1],
-            "context_basis": key[2],
-            **{field: 0 for field in _LIST_PRICE_TOKEN_FIELDS},
-        },
-    )
-    for field in _LIST_PRICE_TOKEN_FIELDS:
-        bucket[field] += int(row.get(field) or 0)
-
-
-def _finalize_price_buckets(buckets: dict[tuple[str, str, str], dict[str, Any]]) -> list[dict[str, Any]]:
-    for bucket in buckets.values():
-        # Reasoning is diagnostic and already inside output — never a second
-        # time in the accounted total.
-        bucket["total_tokens"] = sum(
-            bucket[field]
-            for field in _LIST_PRICE_TOKEN_FIELDS
-            if field != "reasoning_tokens"
-        )
-    return list(buckets.values())
+# Price bucketing lives in list_pricing (moved 2026-09-10): the dashboard's
+# window and daily estimates and the weekly rulings-per-dollar join must
+# fold rows the same way against the same rate table. These aliases keep the
+# module-private call sites below unchanged.
+_LIST_PRICE_TOKEN_FIELDS = LIST_PRICE_TOKEN_FIELDS
+_accumulate_price_bucket = accumulate_price_bucket
+_finalize_price_buckets = finalize_price_buckets
 
 
 def _build_list_price_daily(
