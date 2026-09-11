@@ -260,7 +260,25 @@ export function replaceChartData(
   options: Record<string, unknown>,
 ): void {
   chart.data.labels = labels;
-  chart.data.datasets = datasets;
+  // Keep the dataset objects Chart.js keys its controllers on. Assigning a
+  // fresh array made every dataset "new" on each 60-second hydrate, so each
+  // line animated up from the baseline again: the charts visibly collapsed
+  // and regrew once a minute (caught in a 2026-09-10 screenshot with every
+  // series at two-thirds of its value). In-place updates animate only the
+  // points that actually changed.
+  const existing = chart.data.datasets as Record<string, unknown>[];
+  datasets.forEach((dataset, index) => {
+    const current: Record<string, unknown> | undefined = existing[index];
+    if (!current) {
+      existing.push(dataset);
+      return;
+    }
+    Object.keys(current).forEach((key) => {
+      if (!(key in dataset)) delete current[key];
+    });
+    Object.assign(current, dataset);
+  });
+  existing.length = datasets.length;
   chart.options = options;
   chart.update();
 }
