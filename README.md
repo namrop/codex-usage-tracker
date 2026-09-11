@@ -15,11 +15,13 @@ explicit interchange format.
 - Collects usage from Hermes, Claude Code, and OpenCode plus quota/account
   observations from Codex, Claude Code, Kimi Code, OpenRouter, DeepSeek, and
   estimated OpenCode Go windows.
-- Maintains separate `usage_event_v1`, `quota_observation_v1`, and
-  `billing_fact_v1` SQLite ledgers.
+- Maintains separate `usage_event_v1`, `quota_observation_v1`,
+  `billing_fact_v1`, and `search_event_v1` SQLite ledgers.
 - Joins Atrium keeper ratifications to the list-price estimate as rulings per
   ISO week (see [Rulings per dollar](#rulings-per-dollar)).
-- Provides thirteen CLI subcommands:
+- Counts web search/extract calls per backend so an approaching provider limit
+  is visible before it stops a run (see [Search accounting](#search-accounting)).
+- Provides fifteen CLI subcommands:
   - `fetch`
   - `daemon`
   - `dump-raw`
@@ -27,6 +29,8 @@ explicit interchange format.
   - `write-public-projection`
   - `write-public-usage-projection`
   - `collect-all`
+  - `collect-searches`
+  - `searches`
   - `migrate-ledger`
   - `export-ledger`
   - `audit-ledger`
@@ -237,7 +241,7 @@ Dashboard routes:
 
 ## Cross-harness private accounting
 
-`collect-all` maintains three distinct private canonical ledgers without changing
+`collect-all` maintains four distinct private canonical ledgers without changing
 the source harness stores:
 
 - `usage_event_v1` is the additive request/aggregate ledger populated from Hermes
@@ -249,7 +253,9 @@ the source harness stores:
 - `billing_fact_v1` is the signed monetary ledger for invoice lines, charges,
   credits, refunds, payments, taxes, and adjustments. `collect-all` binds and
   creates this ledger but does not synthesize billing facts from request-cost
-  estimates.
+  estimates;
+- `search_event_v1` is the per-call web search/extract ledger populated from the
+  Hermes search audit feed (see [Search accounting](#search-accounting)).
 
 SQLite is the operational default. Each fact class has its own type-bound WAL
 ledger under `~/.local/state/codex-usage-tracker/`:
@@ -257,8 +263,9 @@ ledger under `~/.local/state/codex-usage-tracker/`:
 - `usage_events.sqlite3`
 - `quota_observations.sqlite3`
 - `billing_facts.sqlite3`
+- `search_events.sqlite3`
 
-The three destination paths must be distinct. Reusing or aliasing a destination
+The destination paths must be distinct. Reusing or aliasing a destination
 is rejected before source collection or any write. Existing JSONL ledgers remain
 supported as an explicit compatibility/interchange backend, but SQLite is the
 hot store.
@@ -292,10 +299,12 @@ root but leaves quota authentication on Claude Code's normal default layout
 (`~/.claude` plus the home-level `~/.claude.json`). Only non-primary instances
 set `CLAUDE_CONFIG_DIR` to their declared custom config directory.
 
-Use `--scope usage` or `--scope quota` to run the independently schedulable lanes.
-The usage scope reads and writes only usage sources/the usage ledger. The quota
-scope reads the Codex/OpenCode quota sources plus enabled provider probes and
-writes only the quota ledger. Out-of-scope default paths are not preflighted or
+Use `--scope usage`, `--scope quota`, or `--scope searches` to run the
+independently schedulable lanes. The usage scope reads and writes only usage
+sources/the usage ledger. The quota scope reads the Codex/OpenCode quota sources
+plus enabled provider probes and writes only the quota ledger. The searches scope
+reads only the Hermes search audit feed and writes the search ledger plus any
+quota observation it derives. Out-of-scope default paths are not preflighted or
 created; billing remains bound only by the compatibility `all` scope.
 
 A lane that fails to read or persist never fails the run (keeper-ruled
@@ -478,6 +487,77 @@ The older `write-public-projection` command remains a compatibility boundary for
 the legacy Codex snapshot/token-correlation chart. It is additive and is not
 replaced by `write-public-usage-projection`; choose the artifact contract your
 consumer expects.
+
+## Search accounting
+
+Keeper ruling 2026-09-10: "the ai usage ledger should start tracking searches as
+well in a new table." That night a newspaper composer run found Z.ai's web
+search/reader weekly limit exhausted (reset 2026-09-24) and nobody could see it
+coming, because web calls were accounted nowhere.
+
+### The feed
+
+Hermes appends one JSON object per web call to
+`$HERMES_HOME/logs/search_audit.jsonl` (`schema: "search_event.v1"`):
+`observed_at`, `harness`, `session_id`, `job_id`, `tool` (`web_search` or
+`web_extract`), `backend` (`zai` / `brave` / `keyless` / `firecrawl` / other),
+`query_sha256`, `url_count`, `result_count`, `status` (`ok` / `rate_limited` /
+`error`), `error_code`, `latency_ms`, and `fallback_from`.
+
+**No query text and no URL ever enters the feed or the ledger.** The projection
+names every field it copies, so a feed that later widens is narrowed rather than
+passed through.
+
+### The ledger
+
+`search_event_v1` reuses the shared facts-table shape rather than inventing one:
+`provider` is the backend, `purpose` is the tool, `status` reuses the billing
+status column, and `observed_at` joins `quota_observation_v1` in the timestamp
+column. Every existing index and the generic `migrate-ledger` / `export-ledger` /
+`audit-ledger` verbs carry it unchanged.
+
+`source_search_event_id` is sha256 over `[observed_at, session_id, query_sha256,
+tool]` with `observed_at` canonicalized to UTC first, so a feed re-emitting the
+same instant in another offset replays instead of minting a second fact, and a
+full re-read of the audit file is idempotent.
+
+### Collecting
+
+```bash
+codex-usage-tracker collect-searches \
+  --search-audit /var/lib/hermes/primary/logs/search_audit.jsonl \
+  --search-ledger ~/.local/state/codex-usage-tracker/search_events.sqlite3 \
+  --quota-ledger ~/.local/state/codex-usage-tracker/quota_observations.sqlite3
+```
+
+Equivalent to `collect-all --scope searches`; the lane also runs under
+`--scope all`. Reads are incremental on a byte-offset watermark kept beside the
+ledger. Rotation or truncation restarts from zero, a torn trailing line is
+deferred to the next pass, a malformed interior line is counted rather than
+fatal, and a missing feed is an empty lane that still succeeds — so the Hermes
+writer and this reader can be enabled in either order. The watermark advances
+only after the canonical appends commit; a ceded lane leaves it in place and the
+next run replays the same bytes harmlessly.
+
+A `rate_limited` event whose `error_code` names a reset instant (for example
+`web_search_weekly_limit_exhausted;reset=2026-09-24`) also derives a
+`quota_observation_v1` row — `remaining_value: "0"`, `resets_at`,
+`measurement_confidence: estimated` — filed under the provider name the live
+probe already uses (`z-ai`), so the exhaustion joins that provider's existing
+series instead of starting a new one. Events naming no reset derive nothing; the
+`rate_limited` count in the search ledger already carries them.
+
+### Reading
+
+```bash
+codex-usage-tracker searches --days 7
+```
+
+Calls per backend per tool per UTC day, with rate-limited, error, and fallback
+counts and the last rate-limit reason per backend. Read-only; an absent ledger
+reports zero calls rather than failing. The dashboard serves the same shape at
+`GET /api/searches?days=7`, configured by `--search-ledger` or
+`SEARCH_LEDGER_PATH`.
 
 ## Rulings per dollar
 
