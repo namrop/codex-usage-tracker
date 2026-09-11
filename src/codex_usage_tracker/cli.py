@@ -222,6 +222,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         unified_usage_ledger=args.unified_usage_ledger,
         quota_ledger=args.quota_ledger,
         billing_ledger=args.billing_ledger,
+        search_ledger=args.search_ledger,
         host=args.host,
         port=args.port,
     )
@@ -1188,6 +1189,11 @@ def main() -> int:
     )
     dashboard_parser.add_argument(
         "--billing-ledger", default=None, help="Private canonical billing SQLite/JSONL ledger"
+    )
+    dashboard_parser.add_argument(
+        "--search-ledger",
+        default=None,
+        help="Private canonical web search/extract SQLite/JSONL ledger",
     )
     dashboard_parser.add_argument(
         "--atrium-root",

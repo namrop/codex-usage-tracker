@@ -2311,6 +2311,7 @@ def test_dashboard_cli_threads_private_ledgers_without_repurposing_legacy_ledger
         "--unified-usage-ledger", "/private/usage.sqlite3",
         "--quota-ledger", "/private/quota.sqlite3",
         "--billing-ledger", "/private/billing.sqlite3",
+        "--search-ledger", "/private/search.sqlite3",
     ])
     assert main() == 0
     assert captured == {
@@ -2319,6 +2320,7 @@ def test_dashboard_cli_threads_private_ledgers_without_repurposing_legacy_ledger
         "unified_usage_ledger": "/private/usage.sqlite3",
         "quota_ledger": "/private/quota.sqlite3",
         "billing_ledger": "/private/billing.sqlite3",
+        "search_ledger": "/private/search.sqlite3",
         "host": "127.0.0.1",
         "port": 5174,
     }

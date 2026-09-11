@@ -464,3 +464,66 @@ def test_generic_ledger_verbs_accept_the_new_fact_type():
     from codex_usage_tracker.cli import CANONICAL_FACT_TYPES
 
     assert "search_event_v1" in CANONICAL_FACT_TYPES
+
+
+# --- dashboard ---------------------------------------------------------------
+
+
+def _search_app(tmp_path, *, populate=True):
+    from codex_usage_tracker.dashboard import create_app
+
+    ledger = tmp_path / "search_events.sqlite3"
+    if populate:
+        append_sqlite_facts(
+            ledger,
+            [project_search_event(row, NAMESPACE) for row in _fixture_rows()[:5]],
+            fact_type="search_event_v1",
+        )
+    app = create_app(
+        atrium_root=str(tmp_path), ledger=None, search_ledger=str(ledger)
+    )
+    app.config.update(TESTING=True)
+    return app
+
+
+def test_api_searches_reports_backends_days_and_rate_limits(tmp_path):
+    app = _search_app(tmp_path)
+    with app.test_client() as client:
+        response = client.get("/api/searches?days=92")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["totals"] == {
+        "calls": 5, "rate_limited": 1, "errors": 1, "fallbacks": 2
+    }
+    backends = {entry["backend"]: entry for entry in payload["backends"]}
+    assert backends["zai"]["rate_limited"] == 1
+    assert "reset=2026-09-24" in backends["zai"]["last_error_code"]
+    assert backends["brave"]["fallback_from"] == {"zai": 1}
+    assert payload["generated_at"].endswith("Z")
+    # No query text or URL can reach the panel, because none is in the ledger.
+    assert "query" not in response.get_data(as_text=True)
+
+
+def test_api_searches_filters_by_typed_column(tmp_path):
+    app = _search_app(tmp_path)
+    with app.test_client() as client:
+        payload = client.get("/api/searches?days=92&provider=zai").get_json()
+    assert payload["totals"]["calls"] == 2
+    assert [entry["backend"] for entry in payload["backends"]] == ["zai"]
+
+
+def test_api_searches_is_404_when_no_ledger_is_configured(tmp_path):
+    from codex_usage_tracker.dashboard import create_app
+
+    app = create_app(atrium_root=str(tmp_path), ledger=None, search_ledger=None)
+    app.config.update(TESTING=True)
+    with app.test_client() as client:
+        assert client.get("/api/searches").status_code == 404
+
+
+def test_api_searches_reads_an_uncollected_ledger_as_an_empty_panel(tmp_path):
+    app = _search_app(tmp_path, populate=False)
+    with app.test_client() as client:
+        response = client.get("/api/searches")
+    assert response.status_code == 200
+    assert response.get_json()["totals"]["calls"] == 0

@@ -43,6 +43,7 @@ from .rulings import (
     load_rulings,
     usage_window,
 )
+from .search_events import build_search_summary
 from .token_correlation import build_token_correlation_rows, resolve_state_db_path
 from .canonical_ledger import (
     IdentityConflictError,
@@ -400,7 +401,11 @@ def _private_facts(
         rows = [row for row in read_facts(path) if row.get("fact_type") == fact_type]
         for field, expected in filters.items():
             rows = [row for row in rows if row.get(field) == expected]
-        timestamp_field = "observed_at" if fact_type == "quota_observation_v1" else "occurred_at"
+        timestamp_field = (
+            "observed_at"
+            if fact_type in {"quota_observation_v1", "search_event_v1"}
+            else "occurred_at"
+        )
         if cutoff is not None:
             rows = [row for row in rows if _fact_datetime(row.get(timestamp_field)) >= cutoff]
         if before is not None:
@@ -1693,11 +1698,13 @@ def create_app(
     unified_usage_ledger: Optional[str] = None,
     quota_ledger: Optional[str] = None,
     billing_ledger: Optional[str] = None,
+    search_ledger: Optional[str] = None,
 ) -> Flask:
     resolved_ledger_path = _resolve_ledger_path(atrium_root, ledger)
     resolved_unified_usage = unified_usage_ledger or os.environ.get("UNIFIED_USAGE_LEDGER_PATH")
     resolved_quota_ledger = quota_ledger or os.environ.get("QUOTA_LEDGER_PATH")
     resolved_billing_ledger = billing_ledger or os.environ.get("BILLING_LEDGER_PATH")
+    resolved_search_ledger = search_ledger or os.environ.get("SEARCH_LEDGER_PATH")
     app = Flask(__name__)
 
     def _load_ledger_rows() -> List[Dict[str, Any]]:
@@ -2358,6 +2365,54 @@ def create_app(
             )
         )
 
+    @app.route("/api/searches")
+    def api_searches():
+        """Web search/extract calls per backend per day, with rate limits.
+
+        Keeper ruling 2026-09-10: the masthead composer hit an exhausted Z.ai
+        weekly web search limit that nothing was counting down to. This is the
+        panel's data source — call volume by backend and UTC day, plus the
+        rate-limited, error, and fallback counts that make an approaching
+        limit visible before it stops a run.
+        """
+        if not resolved_search_ledger:
+            return jsonify({"error": "search ledger is not configured"}), 404
+        days, days_error = _days_argument()
+        if days_error is not None:
+            return days_error
+        window_days = days or 7
+        generated_at = datetime.now(timezone.utc)
+        cutoff = generated_at - timedelta(days=window_days)
+        typed_filters = {
+            field: requested
+            for field in ("provider", "harness", "purpose")
+            if (requested := request.args.get(field)) is not None
+        }
+        try:
+            rows = _private_facts(
+                resolved_search_ledger,
+                fact_type="search_event_v1",
+                filters=typed_filters,
+                cutoff=cutoff,
+                order="asc",
+            )
+        except UnsupportedLedgerSuffix:
+            return jsonify({"error": "unsupported ledger suffix"}), 400
+        except PrivateLedgerQueryTooLarge:
+            return jsonify({"error": "ledger query exceeds private API row limit"}), 413
+        except (MalformedLedgerError, ValidationError, IdentityConflictError):
+            return jsonify({"error": "configured private ledger is unavailable"}), 503
+        except FileNotFoundError:
+            # Nothing collected yet is a legible empty panel, not an outage:
+            # the Hermes feed and this ledger can be enabled in either order.
+            rows = []
+        return jsonify(
+            {
+                **build_search_summary(rows, days=window_days, now=generated_at),
+                "generated_at": _iso_z(generated_at),
+            }
+        )
+
     @app.route("/api/billing")
     def api_billing():
         if not resolved_billing_ledger:
@@ -2468,6 +2523,7 @@ def run_dashboard(
     unified_usage_ledger: Optional[str] = None,
     quota_ledger: Optional[str] = None,
     billing_ledger: Optional[str] = None,
+    search_ledger: Optional[str] = None,
 ) -> None:
     app = create_app(
         atrium_root=atrium_root,
@@ -2475,6 +2531,7 @@ def run_dashboard(
         unified_usage_ledger=unified_usage_ledger,
         quota_ledger=quota_ledger,
         billing_ledger=billing_ledger,
+        search_ledger=search_ledger,
     )
     app.run(host=host, port=port)
 
