@@ -88,13 +88,31 @@ BILLING_OPTIONAL_DEFAULTS: dict[str, Any] = {
     "description_code": None,
     "provider_receipt_id": None,
 }
+SEARCH_OPTIONAL_DEFAULTS: dict[str, Any] = {
+    "session_id": None, "job_id": None, "query_sha256": None, "url_count": None,
+    "result_count": None, "error_code": None, "latency_ms": None, "fallback_from": None,
+}
 USAGE_REQUIRED = ("source_namespace", "source_event_id", "harness", "purpose", "record_kind", "occurred_at", "recorded_at", "usage_source", "usage_completeness", "measurement_confidence", "cost_status")
 QUOTA_REQUIRED = ("source_namespace", "source_observation_id", "harness", "observed_at", "provider", "quota_name", "quota_scope", "window_kind", "unit", "measurement_confidence")
 BILLING_REQUIRED = (
     "source_namespace", "source_billing_fact_id", "provider", "occurred_at",
     "transaction_kind", "status", "amount", "currency",
 )
-SUPPORTED_FACT_TYPES = frozenset({"usage_event_v1", "quota_observation_v1", "billing_fact_v1"})
+# Web search/extract calls (keeper ruling 2026-09-10: "the ai usage ledger
+# should start tracking searches as well in a new table"). ``provider`` is the
+# search backend (zai/brave/keyless/firecrawl/...) and ``purpose`` is the tool
+# (web_search/web_extract) so the fixed SQLite typed columns and their indexes
+# carry both without a search-specific schema. No query text or URL is ever a
+# field of this contract; only ``query_sha256`` and counts.
+SEARCH_REQUIRED = (
+    "source_namespace", "source_search_event_id", "harness", "observed_at", "provider",
+    "purpose", "status",
+)
+SEARCH_STATUSES = frozenset({"ok", "rate_limited", "error"})
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
+SUPPORTED_FACT_TYPES = frozenset(
+    {"usage_event_v1", "quota_observation_v1", "billing_fact_v1", "search_event_v1"}
+)
 
 class ValidationError(ValueError): pass
 class IdentityConflictError(ValueError): pass
@@ -376,6 +394,16 @@ def normalize_fact(fact: dict[str, Any]) -> dict[str, Any]:
         row["usage_event_refs"] = sorted(
             normalized_refs, key=lambda ref: (ref["source_namespace"], ref["source_event_id"])
         )
+    elif kind == "search_event_v1":
+        _nonempty(row, ("fact_type", *SEARCH_REQUIRED))
+        for field, default in SEARCH_OPTIONAL_DEFAULTS.items(): row.setdefault(field, default)
+        _optional_strings(row, ("session_id", "job_id", "error_code", "fallback_from"))
+        row["observed_at"] = _timestamp(row["observed_at"], "observed_at")
+        if row["status"] not in SEARCH_STATUSES: raise ValidationError("unsupported status")
+        digest = row["query_sha256"]
+        if digest is not None and (not isinstance(digest, str) or _SHA256_HEX_RE.fullmatch(digest) is None):
+            raise ValidationError("query_sha256 must be 64 lowercase hex characters or null")
+        for field in ("url_count", "result_count", "latency_ms"): row[field] = _int(row[field], field)
     else: raise ValidationError("unsupported fact_type")
     for key in row:
         allowed = (
@@ -383,6 +411,8 @@ def normalize_fact(fact: dict[str, Any]) -> dict[str, Any]:
             if kind == "usage_event_v1"
             else {"fact_type", "schema_version", *QUOTA_REQUIRED, *QUOTA_OPTIONAL_DEFAULTS}
             if kind == "quota_observation_v1"
+            else {"fact_type", "schema_version", *SEARCH_REQUIRED, *SEARCH_OPTIONAL_DEFAULTS}
+            if kind == "search_event_v1"
             else {"fact_type", "schema_version", *BILLING_REQUIRED, *BILLING_OPTIONAL_DEFAULTS}
         )
         if key not in allowed and not key.startswith("x_"):
@@ -473,6 +503,7 @@ def _identity(row: dict[str, Any]) -> tuple[str, str]:
         "usage_event_v1": "source_event_id",
         "quota_observation_v1": "source_observation_id",
         "billing_fact_v1": "source_billing_fact_id",
+        "search_event_v1": "source_search_event_id",
     }[row["fact_type"]]
     return row["source_namespace"], row[key]
 
@@ -1099,7 +1130,11 @@ def _create_sqlite_schema(connection: sqlite3.Connection, fact_type: str) -> Non
 
 def _typed_values(row: dict[str, Any]) -> tuple[Any, ...]:
     kind = row["fact_type"]
-    timestamp = row.get("observed_at") if kind == "quota_observation_v1" else row.get("occurred_at")
+    timestamp = (
+        row.get("observed_at")
+        if kind in {"quota_observation_v1", "search_event_v1"}
+        else row.get("occurred_at")
+    )
     model = row.get("model_reported") or row.get("model_requested")
     return (
         timestamp,
