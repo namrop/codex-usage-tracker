@@ -123,10 +123,51 @@ def _is_token_expired(token: str, skew_seconds: float = TOKEN_EXPIRY_SKEW_SECOND
     return time.time() + max(0.0, skew_seconds) >= exp
 
 
+def _pool_tokens(auth_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """The newest usable ``credential_pool.openai-codex`` entry's tokens.
+
+    ``hermes auth add openai-codex`` writes a ``manual:device_code`` pool
+    entry and no singleton (2026-09-11: after the live store lost its Codex
+    credential, that is how it comes back), so a singleton-only reader stays
+    dead after a re-auth. Entries the pool has marked dead are skipped; the
+    most recently refreshed entry wins.
+    """
+    pool = auth_payload.get("credential_pool", {})
+    entries = pool.get("openai-codex") if isinstance(pool, dict) else None
+    if not isinstance(entries, list):
+        return {}
+    usable = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("access_token"), str)
+        and entry.get("access_token")
+        and str(entry.get("last_status") or "").lower() != "dead"
+    ]
+    if not usable:
+        return {}
+
+    def freshness(entry: Dict[str, Any]) -> float:
+        for key in ("last_refresh", "last_status_at"):
+            value = entry.get(key)
+            if isinstance(value, (int, float)):
+                return float(value)
+        return 0.0
+
+    newest = max(usable, key=freshness)
+    return {
+        "access_token": newest.get("access_token"),
+        "account_id": newest.get("account_id"),
+    }
+
+
 def _extract_tokens(auth_payload: Dict[str, Any]) -> Dict[str, Any]:
     providers = auth_payload.get("providers", {})
     provider_block = providers.get("openai-codex", {})
-    return provider_block.get("tokens", {}) if isinstance(provider_block, dict) else {}
+    tokens = provider_block.get("tokens", {}) if isinstance(provider_block, dict) else {}
+    if isinstance(tokens, dict) and isinstance(tokens.get("access_token"), str) and tokens.get("access_token"):
+        return tokens
+    return _pool_tokens(auth_payload)
 
 
 def get_credentials() -> Optional[Dict[str, Any]]:

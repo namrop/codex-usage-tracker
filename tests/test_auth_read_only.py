@@ -104,3 +104,57 @@ def test_expired_token_makes_no_network_call(tmp_path, monkeypatch):
     )
 
     assert auth.get_credentials() is None
+
+
+def _write_pool_only_auth(tmp_path, monkeypatch, entries):
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(
+        json.dumps({"version": 1, "providers": {}, "credential_pool": {"openai-codex": entries}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_USAGE_AUTH_FILE", str(auth_file))
+    return auth_file
+
+
+def test_falls_back_to_the_newest_live_pool_entry_when_the_singleton_is_gone(tmp_path, monkeypatch):
+    """2026-09-11: the live store lost providers.openai-codex; `hermes auth add
+    openai-codex` restores a manual:device_code POOL entry only. A singleton-only
+    reader would keep the Codex quota lane dead after the re-auth."""
+    older = _jwt(time.time() + 3600)
+    newer = _jwt(time.time() + 7200)
+    auth_file = _write_pool_only_auth(tmp_path, monkeypatch, [
+        {"id": "a", "source": "manual:device_code", "access_token": older,
+         "account_id": "acct-old", "last_refresh": 100.0},
+        {"id": "b", "source": "manual:device_code", "access_token": newer,
+         "account_id": "acct-new", "last_refresh": 200.0},
+        {"id": "c", "source": "manual:device_code", "access_token": _jwt(time.time() + 9000),
+         "account_id": "acct-dead", "last_refresh": 300.0, "last_status": "dead"},
+    ])
+    before = auth_file.read_bytes()
+    creds = auth.get_credentials()
+    assert creds is not None
+    assert creds["api_key"] == newer
+    assert creds["account_id"] == "acct-new"
+    assert auth_file.read_bytes() == before, "auth.json must not be rewritten"
+
+
+def test_singleton_still_wins_over_the_pool(tmp_path, monkeypatch):
+    singleton = _jwt(time.time() + 3600)
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(json.dumps({
+        "version": 1,
+        "providers": {"openai-codex": {"tokens": {"access_token": singleton, "account_id": "acct-s"}}},
+        "credential_pool": {"openai-codex": [
+            {"id": "p", "access_token": _jwt(time.time() + 7200), "account_id": "acct-p", "last_refresh": 5.0},
+        ]},
+    }), encoding="utf-8")
+    monkeypatch.setenv("CODEX_USAGE_AUTH_FILE", str(auth_file))
+    assert auth.get_credentials()["account_id"] == "acct-s"
+
+
+def test_pool_without_usable_entries_returns_none(tmp_path, monkeypatch):
+    _write_pool_only_auth(tmp_path, monkeypatch, [
+        {"id": "d", "access_token": _jwt(time.time() + 3600), "last_status": "dead"},
+        {"id": "e", "refresh_token": "only-a-refresh-token"},
+    ])
+    assert auth.get_credentials() is None
