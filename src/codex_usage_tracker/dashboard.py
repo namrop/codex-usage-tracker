@@ -359,6 +359,7 @@ def _ledger_freshness(
     except (OSError, ValueError, OverflowError):
         payload: dict[str, Any] = {
             "status": "empty",
+            "heartbeat_status": "empty",
             "latest_at": None,
             "max_age_seconds": _PRIVATE_LEDGER_MAX_AGE_SECONDS,
         }
@@ -373,6 +374,12 @@ def _ledger_freshness(
         # Writes can land on schedule while one lane has been silently dead for
         # days, so a stale lane makes the whole surface stale.
         "status": "stale" if (status == "stale" or stale_lanes) else "fresh",
+        # The write-level state on its own. `status` folds lane staleness in
+        # so the badge and notices stay honest about a quiet source; the
+        # charts gate on this field instead (2026-09-10: one ceded Z.AI lane
+        # hid every provider's utilization chart for twelve hours while the
+        # other eight lanes were writing on schedule).
+        "heartbeat_status": status,
         "latest_at": latest.isoformat().replace("+00:00", "Z"),
         "max_age_seconds": _PRIVATE_LEDGER_MAX_AGE_SECONDS,
     }

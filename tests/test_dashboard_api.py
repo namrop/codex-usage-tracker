@@ -628,6 +628,34 @@ def test_stale_notices_name_the_failing_lane():
     assert "freshness={state.freshness}" in frontend_surfaces.source("App.tsx")
 
 
+def test_subscription_charts_gate_on_the_heartbeat_not_the_folded_status():
+    """2026-09-10: one ceded Z.AI lane (twelve hours stale) folded into
+    freshness.status and blanked BOTH unified utilization charts while eight
+    lanes wrote on schedule. The charts gate on the write-level heartbeat
+    (server `heartbeat_status`, derived from latest_at on older servers);
+    the stale notice and badge keep following `status`, and the quiet lane
+    is named beside the chart summary. The reset rail applies the same
+    freshness threshold so a stale lane's last sample cannot sit in the
+    hero's soonest-reset slot reading "resetting…"."""
+    freshness_lib = frontend_surfaces.source("lib/freshness.ts")
+    assert "export function heartbeatStatus(freshness" in freshness_lib
+    assert "heartbeat_status" in freshness_lib
+    assert "freshness.latest_at" in freshness_lib
+
+    card = frontend_surfaces.source("components/SubscriptionsCard.tsx")
+    assert "heartbeatStatus(freshness, Date.now())" in card
+    assert 'heartbeat === "stale"' in card
+    assert 'freshness.status === "stale"' not in card.split("let unavailableMessage", 1)[1]
+    assert "laneNote" in card and "staleLaneSuffix(freshness)" in card
+    # Each window card answers "how long until this resets" on its own line.
+    assert "CountdownText" in card and "resetCountdown" in card
+
+    rail = frontend_surfaces.source("components/ResetRail.tsx")
+    assert "maxAgeSeconds" in rail and "row.observed_at" in rail
+    app = frontend_surfaces.source("App.tsx")
+    assert "subscriptionThresholdSeconds(" in app
+
+
 def test_subscription_provider_js_preserves_authority_and_freshness():
     """The subscription cards preserve provider authority and freshness
     semantics: confidence labels, coverage/provider-state provenance, the
@@ -975,6 +1003,7 @@ def test_unknown_provider_punctuation_does_not_merge_jsonl_and_sqlite_payloads(
         "_ledger_freshness",
         lambda *args, **kwargs: {
             "status": "fresh",
+            "heartbeat_status": "fresh",
             "latest_at": "2026-08-05T11:15:00Z",
             "max_age_seconds": 10_800,
         },
@@ -1158,6 +1187,7 @@ def test_subscription_exact_request_time_is_latest_without_admitting_future_fact
         "_ledger_freshness",
         lambda *args, **kwargs: {
             "status": "fresh",
+            "heartbeat_status": "fresh",
             "latest_at": "2026-08-05T12:34:56Z",
             "max_age_seconds": 10_800,
         },

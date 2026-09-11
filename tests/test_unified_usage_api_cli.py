@@ -1085,6 +1085,7 @@ def test_private_dashboard_labels_stale_usage_and_quota_ledgers(tmp_path, monkey
     quota_payload = client.get("/api/subscriptions?days=30&history=0").get_json()
     expected = {
         "status": "stale",
+        "heartbeat_status": "stale",
         "latest_at": "2026-07-14T06:00:00Z",
         "max_age_seconds": 10800,
     }
@@ -1126,6 +1127,7 @@ def test_private_dashboard_uses_success_heartbeats_for_noop_collection_freshness
 
     expected = {
         "status": "fresh",
+        "heartbeat_status": "fresh",
         "latest_at": "2026-07-14T11:30:00Z",
         "max_age_seconds": 10800,
     }
@@ -1213,6 +1215,10 @@ def test_freshness_names_the_stale_lane_behind_a_healthy_heartbeat(tmp_path, mon
     freshness = client.get("/api/unified-usage?hours=3").get_json()["freshness"]
 
     assert freshness["status"] == "stale"
+    # The write-level state stays visible on its own: the surface is stale
+    # because a lane went quiet, not because writes stopped (the subscription
+    # charts gate on this field so one dead lane cannot blank them all).
+    assert freshness["heartbeat_status"] == "fresh"
     assert freshness["stale_lanes"] == ["opencode"]
     assert freshness["never_lanes"] == ["claude_code_secondary"]
     by_lane = {lane["lane"]: lane for lane in freshness["lanes"]}
@@ -1251,6 +1257,7 @@ def test_freshness_falls_back_to_the_heartbeat_when_lane_health_is_absent(tmp_pa
 
     assert freshness == {
         "status": "fresh",
+        "heartbeat_status": "fresh",
         "latest_at": "2026-07-14T11:30:00Z",
         "max_age_seconds": 10800,
     }

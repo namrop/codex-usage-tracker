@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { Palette } from "../lib/palette";
 import { LINE_SMOOTHING, subscriptionQuotaChartOptions, type ChartConfig } from "../lib/chart";
 import { formatTimestamp } from "../lib/format";
+import { heartbeatStatus, staleLaneSuffix, type Freshness } from "../lib/freshness";
 import {
   PROVIDER_DISPLAY_NAMES,
   PROVIDER_ORDER,
@@ -11,6 +12,7 @@ import {
   subscriptionUnifiedProviderColor,
 } from "../lib/providers";
 import {
+  QUOTA_WEEKLY_NAMES,
   missingQuotaMessage,
   normalizedQuotaSeries,
   quotaConfidenceLabel,
@@ -23,8 +25,21 @@ import { useViewportWidth } from "../hooks/useViewportWidth";
 import { ChartCanvas } from "./ChartCanvas";
 import { DirectLabels } from "./DirectLabels";
 import { Fold, tableFoldSummary } from "./Fold";
+import { CountdownText } from "./ResetRail";
 import { SeriesTable } from "./SeriesTable";
 import { TextRow } from "./UnifiedUsageCard";
+
+// The freshness threshold chain the provider cards badge against, shared
+// with the reset rail so a chip and its card agree on what "current" means.
+export function subscriptionThresholdSeconds(freshness: Freshness): number {
+  const thresholdCandidate = Number(freshness.threshold_seconds);
+  const maxAgeCandidate = Number(freshness.max_age_seconds);
+  return Number.isFinite(thresholdCandidate) && thresholdCandidate > 0
+    ? thresholdCandidate
+    : Number.isFinite(maxAgeCandidate) && maxAgeCandidate > 0
+      ? maxAgeCandidate
+      : 21600;
+}
 
 // Quota observations are point-in-time states sampled on the collector's
 // cadence, so the chart holds the last observed level across empty buckets
@@ -102,6 +117,8 @@ interface HistoryCardProps {
   // Non-null = charts are ruled unavailable (stale/empty/malformed history);
   // the message replaces the summary and the canvas hides.
   unavailableMessage: string | null;
+  // A quiet lane named beside a chart that still draws the other providers.
+  laneNote: string;
   title: string;
   caption: string;
   loadingText: string;
@@ -115,7 +132,7 @@ interface HistoryCardProps {
 
 function SubscriptionHistoryCard({
   palette, prefix, period, seriesDescription, chartBucketLimit, projection, bucketStarts, bucketMinutes,
-  labels, tooltipTitles, viewportWidth, unavailableMessage, title, caption, loadingText, loaded, foldKey,
+  labels, tooltipTitles, viewportWidth, unavailableMessage, laneNote, title, caption, loadingText, loaded, foldKey,
   foldLabel, tableCaption, canvasAriaLabel, labelsAriaLabel,
 }: HistoryCardProps) {
   const [chartOk, setChartOk] = useState(true);
@@ -163,7 +180,7 @@ function SubscriptionHistoryCard({
       || `No comparable ${seriesDescription}: no mapped provider series was returned (status unavailable).`;
   } else {
     const windowNote = bounded ? ` Chart shows the last ${chartHours} hours; the table keeps the full window.` : "";
-    summary = `${rows.length} comparable ${seriesDescription}.${windowNote} ${missingMessage}`.trim();
+    summary = `${rows.length} comparable ${seriesDescription}.${windowNote} ${missingMessage}${laneNote}`.trim();
     if (!chartOk) {
       summary = `${summary} Chart drawing is unavailable; the accessible data table remains current.`;
     }
@@ -362,6 +379,10 @@ function SubscriptionWindow({ row }: { row: any }) {
     : `${usedText} / ${limitText}`;
 
   const explanationText = presentationExplanation(row, confidence);
+  const resetAtMs = hasQuotaValue(row.resets_at) ? Date.parse(String(row.resets_at)) : NaN;
+  const resetCountdown = Number.isFinite(resetAtMs) && resetAtMs > Date.now()
+    ? { resetAt: resetAtMs, weekly: QUOTA_WEEKLY_NAMES.has(String(row.quota_name || "")) }
+    : null;
 
   return (
     <section className={confidence.key === "estimated" ? "subscription-window is-estimated" : "subscription-window"}>
@@ -424,6 +445,16 @@ function SubscriptionWindow({ row }: { row: any }) {
       )}
       <p className="subscription-window-time">
         {`Window: ${formatTimestamp(row.window_started_at)} → ${formatTimestamp(row.window_ends_at)} · Reset: ${formatTimestamp(row.resets_at)}`}
+        {/* The literal question ("how long until the Codex reset?") answered
+            on the window itself, not only in the rail's sort order: a live
+            countdown to a future reset. A past reset on a fresh row is the
+            provider's next sample away and says nothing here. */}
+        {resetCountdown && (
+          <>
+            {" · in "}
+            <span className="mono"><CountdownText resetAt={resetCountdown.resetAt} weekly={resetCountdown.weekly} /></span>
+          </>
+        )}
       </p>
       {explanationText && <p className="subscription-explanation">{explanationText}</p>}
     </section>
@@ -513,14 +544,23 @@ export function SubscriptionsCard({ palette, subs }: { palette: Palette; subs: S
   const contentVisible = !subs.loading && (Boolean(data) || subs.placeholder);
 
   // Charts hidden while observations are stale/empty (honest quota meters,
-  // polish round) — the ruled messages, verbatim.
+  // polish round) — the ruled messages, verbatim. "Stale" here is the
+  // ledger's own write state (heartbeatStatus), not the folded `status`: a
+  // single quiet lane keeps the stale notice and badge above, is named
+  // beside the chart summary, and its series falls off at the hold window,
+  // while every other provider keeps drawing (2026-09-10 refinement: one
+  // ceded Z.AI lane had blanked both charts for twelve hours).
   const timeSeries = data ? data.time_series : null;
+  const heartbeat = data ? heartbeatStatus(freshness, Date.now()) : "unknown";
+  const laneNote = data && freshness.status === "stale" && heartbeat !== "stale"
+    ? staleLaneSuffix(freshness)
+    : "";
   let unavailableMessage: string | null = null;
   if (subs.placeholder || !data) {
     unavailableMessage = "Subscription quota history is unavailable.";
-  } else if (freshness.status === "stale") {
+  } else if (heartbeat === "stale") {
     unavailableMessage = "Subscription quota history is stale; charts are hidden until current observations arrive.";
-  } else if (freshness.status === "empty") {
+  } else if (heartbeat === "empty") {
     unavailableMessage = "Subscription quota history is unavailable because the quota ledger is empty.";
   } else if (!timeSeries || typeof timeSeries !== "object" || !Array.isArray(timeSeries.bucket_starts) || !timeSeries.bucket_starts.length) {
     unavailableMessage = "No bounded subscription quota history is available for this 168-hour window.";
@@ -584,13 +624,7 @@ export function SubscriptionsCard({ palette, subs }: { palette: Palette; subs: S
     });
   }, [subs.placeholder, data, rows]);
 
-  const thresholdCandidate = Number(freshness.threshold_seconds);
-  const maxAgeCandidate = Number(freshness.max_age_seconds);
-  const thresholdSeconds = Number.isFinite(thresholdCandidate) && thresholdCandidate > 0
-    ? thresholdCandidate
-    : Number.isFinite(maxAgeCandidate) && maxAgeCandidate > 0
-      ? maxAgeCandidate
-      : 21600;
+  const thresholdSeconds = subscriptionThresholdSeconds(freshness);
 
   const rawSummary = tableFoldSummary({ rows: rows.length, singular: "observation" });
 
@@ -619,6 +653,7 @@ export function SubscriptionsCard({ palette, subs }: { palette: Palette; subs: S
               tooltipTitles={tooltipTitles}
               viewportWidth={viewportWidth}
               unavailableMessage={unavailableMessage}
+              laneNote={laneNote}
               title="Unified weekly subscription utilization"
               caption="Each provider’s explicitly mapped primary weekly-equivalent quota on a normalized 0–100% scale."
               loadingText="Loading weekly subscription quota history…"
@@ -642,6 +677,7 @@ export function SubscriptionsCard({ palette, subs }: { palette: Palette; subs: S
               tooltipTitles={tooltipTitles}
               viewportWidth={viewportWidth}
               unavailableMessage={unavailableMessage}
+              laneNote={laneNote}
               title="Unified five-hour subscription utilization"
               caption={`Each provider’s explicitly mapped comparable five-hour quota over the last 48 hours on a normalized 0–100% scale (the folded ${wording.adjective.toLowerCase()} table keeps the full week).`}
               loadingText="Loading five-hour subscription quota history…"

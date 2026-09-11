@@ -9,7 +9,7 @@ import { RulingsPerDollarCard } from "./components/RulingsPerDollarCard";
 import { GlassPanels } from "./components/GlassPanels";
 import { OpsHero } from "./components/OpsHero";
 import { deriveResetChips } from "./components/ResetRail";
-import { SubscriptionsCard } from "./components/SubscriptionsCard";
+import { SubscriptionsCard, subscriptionThresholdSeconds } from "./components/SubscriptionsCard";
 import { UnifiedUsageCard } from "./components/UnifiedUsageCard";
 
 // The shared estate picker: a gear that expands. mountSwitcher fetches it
@@ -48,9 +48,13 @@ export default function App() {
   const quotaLatest = state.subs.data && Array.isArray(state.subs.data.latest)
     ? state.subs.data.latest
     : undefined;
+  const subsFreshness = state.subs.data ? state.subs.data.freshness : null;
   const resetChips = useMemo(
-    () => deriveResetChips(quotaLatest || []),
-    [quotaLatest],
+    () => deriveResetChips(quotaLatest || [], {
+      now: Date.now(),
+      maxAgeSeconds: subscriptionThresholdSeconds(subsFreshness || {}),
+    }),
+    [quotaLatest, subsFreshness],
   );
 
   return (

@@ -28,12 +28,27 @@ function chipDisplayName(cardKey: string, raw: string): string {
   return SUBSCRIPTION_PROVIDER_SHORT_LABELS[cardKey] || cardKey || raw || "unknown";
 }
 
-export function deriveResetChips(rows: QuotaRow[]): ResetChipModel[] {
+export interface ResetChipOptions {
+  now: number;
+  // Rows observed longer ago than this are not countdowns: a chip claims an
+  // exact reset, and a stale lane's last sample (2026-09-10: Z.AI, twelve
+  // hours old, its five-hour window long past) read "resetting…" at the top
+  // of the rail and in the hero's soonest-reset slot. Same chain the
+  // subscription cards use for their freshness badge.
+  maxAgeSeconds: number;
+}
+
+export function deriveResetChips(rows: QuotaRow[], options?: ResetChipOptions): ResetChipModel[] {
   const chips = rows
     .filter((row) => row.resets_at
       && String(row.measurement_confidence || "").trim().toLowerCase() === "exact"
       && isPercentQuotaRow(row)
       && row.used_value != null && row.limit_value != null)
+    .filter((row) => {
+      if (!options) return true;
+      const observed = Date.parse(String(row.observed_at || ""));
+      return Number.isFinite(observed) && (options.now - observed) / 1000 <= options.maxAgeSeconds;
+    })
     .map((row) => {
       const raw = String(row.provider || "unknown");
       const canonical = quotaRowProviderKey(row);

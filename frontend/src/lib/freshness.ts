@@ -8,6 +8,7 @@ export interface LaneDetail {
 
 export interface Freshness {
   status?: unknown;
+  heartbeat_status?: unknown;
   latest_at?: unknown;
   lanes?: LaneDetail[];
   stale_lanes?: unknown[];
@@ -34,4 +35,24 @@ export function staleLaneSuffix(freshness: Freshness): string {
 export function cededLanes(freshness: Freshness): LaneDetail[] {
   const lanes = Array.isArray(freshness.lanes) ? freshness.lanes : [];
   return lanes.filter((lane) => lane && lane.ceded === true);
+}
+
+// The write-level state on its own. `status` folds lane staleness in (one
+// quiet lane makes the surface stale so the badge and notices stay honest);
+// the subscription charts gate on this instead, so one ceded lane is named
+// in the notice and falls off the chart at the hold window without hiding
+// every other provider's series (2026-09-10: a Z.AI lane dead for twelve
+// hours blanked both utilization charts while eight lanes wrote on
+// schedule). Servers before that date carry no heartbeat_status; derive it
+// from the heartbeat write time against the same threshold.
+export function heartbeatStatus(freshness: Freshness, now: number): string {
+  const explicit = freshness.heartbeat_status;
+  if (typeof explicit === "string" && explicit) return explicit;
+  const status = String(freshness.status || "unknown");
+  if (status === "empty" || status === "unknown") return status;
+  const latest = Date.parse(String(freshness.latest_at || ""));
+  if (!Number.isFinite(latest)) return status;
+  const maxAge = Number(freshness.max_age_seconds);
+  const threshold = Number.isFinite(maxAge) && maxAge > 0 ? maxAge : 10800;
+  return (now - latest) / 1000 > threshold ? "stale" : "fresh";
 }

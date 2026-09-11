@@ -409,8 +409,16 @@ write time. When the collector's per-lane health file is readable the response
 also lists every lane: a lane that has succeeded before and gone quiet past the
 threshold is named in `stale_lanes` and makes the surface stale; a lane that has
 never succeeded (status `never`, typically registered before its credentials
-exist) is named in `never_lanes` and does not. The UI stops rendering ordinary
-charts/rows when either canonical lane is stale:
+exist) is named in `never_lanes` and does not. `heartbeat_status` carries the
+write-level state on its own (`fresh`/`stale`/`empty` from the heartbeat alone).
+The stale badge and notices follow `status`; the subscription utilization
+charts gate on `heartbeat_status`, so one quiet lane is named in the notice and
+falls off the chart at the three-hour hold without hiding the other providers'
+series (before 2026-09-10 a single ceded lane blanked both charts). Online
+dashboard reads integrity-check each returned row (hash, identity, typed
+columns) rather than re-running the full contract, which is what
+`audit-ledger` is for. The unified usage panel still stops rendering ordinary
+charts/rows when its canonical lane is stale:
 
 - `GET /api/unified-usage` supports `provider`, `harness`, `purpose`,
   `model_requested`, `days`, and `before`; it returns token/request-cost totals,
