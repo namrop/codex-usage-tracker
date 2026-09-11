@@ -587,6 +587,7 @@ def cmd_searches(args: argparse.Namespace) -> int:
     Z.ai weekly web search limit that nothing was counting down to. This is
     the surface that counts it. It writes nothing.
     """
+    from .canonical_ledger import _SQLITE_QUERY_LIMIT as SQLITE_QUERY_LIMIT
     from .canonical_ledger import query_sqlite_facts
     from .search_events import build_search_summary
 
@@ -602,23 +603,33 @@ def cmd_searches(args: argparse.Namespace) -> int:
                 "daily": [],
                 "paths": {"sqlite": str(target)},
                 "ledger_present": False,
+                "truncated": False,
             }
         )
         return 0
     cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
+    # The canonical query is itself bounded. Say so when the window filled it
+    # rather than presenting a truncated count as the whole window.
+    limit = SQLITE_QUERY_LIMIT
     try:
         facts = query_sqlite_facts(
             target,
             fact_type="search_event_v1",
             occurred_or_observed_at_gte=cutoff.isoformat().replace("+00:00", "Z"),
             order="asc",
+            limit=limit,
         )
         summary = build_search_summary(facts, days=args.days)
     except Exception as exc:
         print(f"searches failed: {type(exc).__name__}", file=sys.stderr)
         return 1
     _print_compact_json(
-        {**summary, "paths": {"sqlite": str(target)}, "ledger_present": True}
+        {
+            **summary,
+            "paths": {"sqlite": str(target)},
+            "ledger_present": True,
+            "truncated": len(facts) >= limit,
+        }
     )
     return 0
 

@@ -527,3 +527,60 @@ def test_api_searches_reads_an_uncollected_ledger_as_an_empty_panel(tmp_path):
         response = client.get("/api/searches")
     assert response.status_code == 200
     assert response.get_json()["totals"]["calls"] == 0
+
+
+def test_derived_exhaustion_does_not_break_the_existing_quota_surfaces(tmp_path):
+    """The derived row enters a ledger the quota panels already read.
+
+    window_kind is unknown and limit_value is null on a derived observation —
+    shapes the probed z-ai rows never have — so every route that consumes the
+    quota ledger is exercised with one in place.
+    """
+    from codex_usage_tracker.dashboard import create_app
+
+    facts = [project_search_event(row, NAMESPACE) for row in _fixture_rows()[:5]]
+    observations = derive_search_quota_observations(facts, NAMESPACE)
+    quota_ledger = tmp_path / "quota_observations.sqlite3"
+    append_sqlite_facts(quota_ledger, observations, fact_type="quota_observation_v1")
+
+    app = create_app(
+        atrium_root=str(tmp_path), ledger=None, quota_ledger=str(quota_ledger)
+    )
+    app.config.update(TESTING=True)
+    with app.test_client() as client:
+        for rule in sorted(str(rule) for rule in app.url_map.iter_rules()):
+            if "<" in rule:
+                continue
+            assert client.get(rule).status_code < 500, rule
+
+
+def test_cli_searches_reports_whether_the_bounded_query_filled_up(tmp_path, capsys, monkeypatch):
+    from codex_usage_tracker import cli
+
+    ledger = tmp_path / "search_events.sqlite3"
+    append_sqlite_facts(
+        ledger,
+        [project_search_event(row, NAMESPACE) for row in _fixture_rows()[:5]],
+        fact_type="search_event_v1",
+    )
+    _run_cli(monkeypatch, "searches", "--sqlite", str(ledger), "--days", "92")
+    assert cli.main() == 0
+    assert json.loads(capsys.readouterr().out)["truncated"] is False
+
+
+def test_read_surfaces_never_mint_the_collector_s_ledger(tmp_path, capsys, monkeypatch):
+    """A read must not leave a 0-byte SQLite file at the collector's destination."""
+    from codex_usage_tracker import cli
+    from codex_usage_tracker.dashboard import create_app
+
+    ledger = tmp_path / "search_events.sqlite3"
+    _run_cli(monkeypatch, "searches", "--sqlite", str(ledger))
+    assert cli.main() == 0
+    capsys.readouterr()
+    assert not ledger.exists()
+
+    app = create_app(atrium_root=str(tmp_path), ledger=None, search_ledger=str(ledger))
+    app.config.update(TESTING=True)
+    with app.test_client() as client:
+        assert client.get("/api/searches").status_code == 200
+    assert not ledger.exists()
