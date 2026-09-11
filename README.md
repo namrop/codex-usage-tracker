@@ -17,7 +17,9 @@ explicit interchange format.
   estimated OpenCode Go windows.
 - Maintains separate `usage_event_v1`, `quota_observation_v1`, and
   `billing_fact_v1` SQLite ledgers.
-- Provides eleven CLI subcommands:
+- Joins Atrium keeper ratifications to the list-price estimate as rulings per
+  ISO week (see [Rulings per dollar](#rulings-per-dollar)).
+- Provides thirteen CLI subcommands:
   - `fetch`
   - `daemon`
   - `dump-raw`
@@ -28,6 +30,8 @@ explicit interchange format.
   - `migrate-ledger`
   - `export-ledger`
   - `audit-ledger`
+  - `unmapped-models`
+  - `rulings-per-dollar`
   - `dashboard`
 - Can write a public-safe derived token chart JSON so a DMZ host never needs any
   private canonical ledger.
@@ -227,6 +231,9 @@ Dashboard routes:
   - total rows, first/last `fetched_at`, current usage percentages, and `plan_type`
 - `GET /api/trend` — last 168 rows with fields:
   - `fetched_at`, `session_used_pct`, `weekly_used_pct`, `spark_session_used_pct`, `spark_weekly_used_pct`
+- `GET /api/rulings` and `GET /api/rulings-per-dollar` — keeper ratifications
+  per ISO week, with and without the list-price join (see
+  [Rulings per dollar](#rulings-per-dollar))
 
 ## Cross-harness private accounting
 
@@ -471,6 +478,85 @@ The older `write-public-projection` command remains a compatibility boundary for
 the legacy Codex snapshot/token-correlation chart. It is additive and is not
 replaced by `write-public-usage-projection`; choose the artifact contract your
 consumer expects.
+
+## Rulings per dollar
+
+Keeper ruling 2026-09-10 ("yeah we need to make ratification a first class
+thing … delegate it to subagents to implement"): tokens are a lossy proxy for
+cost, cost for value used, and value used for value produced. The keeper's
+unit of *produced* value is a ratification — a keeper ruling — so the tracker
+computes **rulings per ISO week against the same week's list-price inference
+estimate** instead of leaving that join to be mined by hand.
+
+Ruling entries come from the Atrium canon: markdown files whose frontmatter
+carries `ruling_ledger: v1`, holding fenced ` ```ruling ` blocks of YAML with
+`uid` (UUIDv7), `ruled_at` (ISO with offset), `class`
+(`correction | scope | routing | replan | adoption | gate | assent |
+convention`), `grade`, `state`, `who`, `verbatim`, `rationale`, `applies_to`,
+`supersedes`, and `recorded_by` (frontmatter standard v2.9 §9.7). The reader
+walks fenced blocks in document order, so a ```ruling block shown as an
+*example* inside a wider ````…```` documentation fence is skipped rather than
+counted as a malformed entry. `grade` and `state` are **not** policed: those
+vocabularies are Valarin's and evolve on their own schedule, so an unknown
+value is still counted and recorded verbatim in the by-grade breakdown. A
+block the reader cannot parse is reported as a `parse_error` with its file,
+line, and reason — never dropped silently.
+
+### Endpoints
+
+- `GET /api/rulings-per-dollar?weeks=N` — the weekly join. Per week:
+  `rulings_total`, `rulings_by_class`, `rulings_by_grade`, `list_price_usd`,
+  `rulings_per_1k_usd`, `output_tokens`, `total_tokens`,
+  `unpriced_token_share`, `unpriced_providers`, and `partial` (the week
+  containing now). Weeks are ISO weeks in **America/New_York**, because the
+  keeper rules in local wall time and a UTC week cuts Sunday evenings into
+  the following one. Requires a configured canonical usage ledger (404
+  otherwise);
+- `GET /api/rulings?weeks=N` — the same weekly counts with no pricing, which
+  works with no usage ledger configured.
+
+Both accept `weeks` (1–104, default 8) and `source=canon|service`. `canon`
+scans the Atrium root the dashboard was started with, skipping `.git`,
+`50_drive`, `99_archive`, and `08_archives`; `service` calls Atrium Service's
+`GET /rulings` instead, for after that service is deployed (it is Nix-built,
+so the canon scan stays the default). The scan is a filesystem walk of the
+whole Atrium and is memoized for 60 seconds. The **AI Usage** dashboard
+renders the series as a panel below billing.
+
+### CLI
+
+```bash
+codex-usage-tracker rulings-per-dollar
+codex-usage-tracker rulings-per-dollar --weeks 12 --json
+codex-usage-tracker rulings-per-dollar \
+  --atrium-root /srv/pharos/atrium/canon \
+  --rulings-source canon \
+  --usage-ledger ~/.local/state/codex-usage-tracker/usage_events.sqlite3
+```
+
+It prints one row per week (a `*` marks the week in progress) and writes
+parse errors to stderr with their file and line. Read-only: it never writes
+to the Atrium or to any ledger. With no usage ledger on the host it prints
+the counts and dashes the price columns rather than reporting `$0.00`, which
+would read as free judgment.
+
+### What the ratio does and does not measure
+
+- **List price is an estimate.** It prices canonical token aggregates through
+  the same rate table and per-request long-context basis the dashboard's
+  window and daily estimates use, and it assumes the **standard** service
+  tier — Batch/Flex (0.5x) and Fast/Priority (2x) are not modeled because the
+  ledger does not record the tier. Most of this traffic is
+  subscription-included and bills **$0 actual**. The estimate is never a
+  claim of billed cost, and unpriced tokens surface as `unpriced_token_share`
+  rather than being silently priced at zero.
+- **The numerator counts recorded rulings, not keeper activity.** Before the
+  ruling ledger existed, canon captured roughly **2%** of adjudication
+  traffic and none of it was uid-linkable; a backfill of prior rulings is
+  scheduled for **~2026-09-18**. Until then a low count is a statement about
+  the record, not about the keeper. A week with no priced traffic reports a
+  **null** ratio, not zero — "no denominator" and "no rulings" are different
+  facts.
 
 ## Design notes
 
