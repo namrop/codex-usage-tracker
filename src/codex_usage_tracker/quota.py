@@ -488,8 +488,17 @@ def collect_z_ai_quota(
 
         used = _z_ai_decimal(entry.get("currentValue"), "web_search_month currentValue")
         limit = _z_ai_decimal(entry.get("usage"), "web_search_month usage")
+        # The provider reports the raw call count, which overshoots the cap by
+        # the calls that were in flight when the limit tripped (live
+        # 2026-09-10: currentValue 4001 against usage 4000, remaining 0). The
+        # canonical contract keeps used <= limit and remaining >= 0, so the
+        # raw figure travels in an extension (the OpenRouter negative-balance
+        # convention) and the canonical field clamps at the cap. Ceding the
+        # lane here marked the whole subscriptions surface stale for the rest
+        # of the month, which hid every provider's charts, not just Z.AI's.
+        provider_used = used
         if used > limit:
-            raise ValueError("Z.AI web_search_month used value exceeds its limit")
+            used = limit
         derived_remaining = limit - used
         if entry.get("remaining") is None:
             remaining = derived_remaining
@@ -511,6 +520,7 @@ def collect_z_ai_quota(
                 used=used,
                 remaining=remaining,
                 resets_at=_z_ai_reset(entry.get("nextResetTime")),
+                x_provider_used=decimal_string(provider_used, "provider_used"),
                 **extensions,
             )
         )

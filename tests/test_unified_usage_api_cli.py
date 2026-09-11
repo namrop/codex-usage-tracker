@@ -356,6 +356,33 @@ def test_z_ai_quota_rejects_non_object_limits_regardless_of_order(
         _collect_z_ai_limits(monkeypatch, limits)
 
 
+def test_z_ai_quota_clamps_web_search_overshoot_to_the_cap(monkeypatch):
+    """Live 2026-09-10: Z.AI reported currentValue 4001 against usage 4000
+    with remaining 0 once the monthly search cap tripped. The old strict
+    check ceded the lane on that payload for the rest of the month, which
+    marked the whole subscriptions surface stale and hid every provider's
+    charts. The canonical row clamps at the cap; the raw figure is kept."""
+    limits = _complete_z_ai_limits()
+    limits[2] = {
+        "type": "TIME_LIMIT", "unit": 5, "number": 1,
+        "currentValue": 4001, "usage": 4000, "remaining": 0, "percentage": 100,
+        "nextResetTime": 1790190588997,
+    }
+
+    rows = _collect_z_ai_limits(monkeypatch, limits)
+
+    web = next(row for row in rows if row["quota_name"] == "web_search_month")
+    assert (web["limit_value"], web["used_value"], web["remaining_value"]) == (
+        "4000", "4000", "0"
+    )
+    assert web["x_provider_used"] == "4001"
+    assert web["measurement_confidence"] == "exact"
+    # An inconsistent remaining figure is still rejected after the clamp.
+    limits[2] = dict(limits[2], remaining=5)
+    with pytest.raises(ValueError, match="inconsistent"):
+        _collect_z_ai_limits(monkeypatch, limits)
+
+
 def test_z_ai_quota_ignores_unknown_well_formed_limits(monkeypatch):
     limits = _complete_z_ai_limits()
     limits.insert(1, {"type": "FUTURE_LIMIT", "providerField": "preserved-upstream"})
