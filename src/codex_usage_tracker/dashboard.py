@@ -431,7 +431,15 @@ def _private_facts(
             occurred_or_observed_at_lt=upper_bound,
             order=order,
             limit=_PRIVATE_API_MAX_ROWS + 1,
-            contract_validation=fact_type != "usage_event_v1",
+            # Integrity check only (hash, identity, typed columns): facts were
+            # contract-normalized before append and are immutable under the
+            # ledger trigger, so re-running the full contract and secret
+            # scanner per row is audit work, not read work. Measured
+            # 2026-09-10 on the live quota ledger: a 168-hour subscriptions
+            # read spent 46 of 50 profiled seconds in that re-validation and
+            # sat at the frontend's 30-second abort, so the reset rail and
+            # provider cards flapped between "Loading" and "unavailable".
+            contract_validation=False,
         )
         if len(rows) > _PRIVATE_API_MAX_ROWS:
             raise PrivateLedgerQueryTooLarge("ledger query exceeds private API row limit")

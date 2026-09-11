@@ -3323,6 +3323,33 @@ def test_sqlite_private_api_uses_one_stable_query_snapshot(tmp_path, monkeypatch
     assert sum(bucket["events"] for bucket in response.get_json()["by_provider_model"]) == 3
 
 
+def test_private_subscriptions_reads_skip_full_contract_revalidation(tmp_path, monkeypatch):
+    """Measured 2026-09-10 on the live quota ledger: a 168-hour subscriptions
+    read spent 46 of 50 profiled seconds re-running the full contract and
+    secret scanner over 11k immutable rows and sat at the frontend's
+    30-second abort. Dashboard reads integrity-check rows (hash, identity,
+    typed columns); full contract validation is the audit verb's job."""
+    quota = tmp_path / "quota.sqlite3"
+    append_sqlite_facts(
+        quota,
+        _collector_quota_rows("z-ai", "z_ai_api", "ns:z-ai", ("five_hour", "week")),
+        fact_type="quota_observation_v1",
+    )
+    original = dashboard_module.query_sqlite_facts
+    observed_kwargs = None
+
+    def observed_query(*args, **kwargs):
+        nonlocal observed_kwargs
+        observed_kwargs = kwargs
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(dashboard_module, "query_sqlite_facts", observed_query)
+    response = create_app(quota_ledger=str(quota)).test_client().get("/api/subscriptions?days=36500")
+    assert response.status_code == 200
+    assert observed_kwargs is not None
+    assert observed_kwargs["contract_validation"] is False
+
+
 def _pinned_usage_fact(source_event_id, occurred_at, provider):
     return dict(
         _usage_fact(source_event_id),
