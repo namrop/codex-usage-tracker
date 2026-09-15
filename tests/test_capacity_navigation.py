@@ -268,22 +268,36 @@ def test_quota_burn_projection_status_covers_every_state(tmp_path, monkeypatch):
 
 
 def test_quota_burn_estimated_rows_keep_their_confidence(tmp_path, monkeypatch):
+    """A partial-coverage estimate of any provider keeps its confidence on
+    the burn row. The one exception is the retired OpenCode Go USD replay
+    (keeper acceptance 2026-09-14), which no projection uses at all."""
     monkeypatch.setattr(dashboard_module, "datetime", _FrozenNoon)
     rows = [
-        _observation("o1", observed_at="2026-07-14T11:00:00Z", provider="opencode-go", harness="opencode",
+        _observation("o1", observed_at="2026-07-14T11:00:00Z", provider="openai-codex", harness="hermes",
                      unit="usd", used_value="2", limit_value="20", remaining_value="18",
                      measurement_confidence="estimated", resets_at="2026-07-14T15:00:00Z",
                      x_coverage={"status": "partial"}),
-        _observation("o2", observed_at="2026-07-14T12:00:00Z", provider="opencode-go", harness="opencode",
+        _observation("o2", observed_at="2026-07-14T12:00:00Z", provider="openai-codex", harness="hermes",
+                     unit="usd", used_value="4", limit_value="20", remaining_value="16",
+                     measurement_confidence="estimated", resets_at="2026-07-14T15:00:00Z",
+                     x_coverage={"status": "partial"}),
+        _observation("go1", observed_at="2026-07-14T11:00:00Z", provider="opencode-go", harness="opencode",
+                     unit="usd", used_value="2", limit_value="20", remaining_value="18",
+                     measurement_confidence="estimated", resets_at="2026-07-14T15:00:00Z",
+                     x_coverage={"status": "partial"}),
+        _observation("go2", observed_at="2026-07-14T12:00:00Z", provider="opencode-go", harness="opencode",
                      unit="usd", used_value="4", limit_value="20", remaining_value="16",
                      measurement_confidence="estimated", resets_at="2026-07-14T15:00:00Z",
                      x_coverage={"status": "partial"}),
     ]
     client = _client(tmp_path, rows)
-    [row] = client.get("/api/quota-burn?hours=3").get_json()["series"]
+    payload = client.get("/api/quota-burn?hours=3").get_json()
+    [row] = payload["series"]
+    assert row["provider"] == "openai-codex"
     assert row["measurement_confidence"] == "estimated"
     assert row["confidence_status"] == "partial"
     assert row["projection_status"] == "resets_first"
+    assert payload["exclusions"] == {"retired_opencode_go_estimate_rows": 2}
 
 
 # ── Frontend: navigation, hierarchy, labels, copy ────────────────────────

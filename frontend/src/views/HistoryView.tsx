@@ -4,6 +4,7 @@ import type { QuotaRow } from "../lib/quota";
 import type { ResetChipModel } from "../components/ResetRail";
 import { SubscriptionHistoryCharts } from "../components/SubscriptionsCard";
 import { UnifiedUsageCard } from "../components/UnifiedUsageCard";
+import { GoUsageCard } from "../components/GoUsageCard";
 import { WeeklyUtilizationCard } from "../components/WeeklyUtilizationCard";
 
 // History: the weekly allowance use panel first (2026-09-14: "how much am I
@@ -22,6 +23,7 @@ export function HistoryView({ state, palette, quotaLatest, resetChips }: {
   return (
     <>
       <WeeklyUtilizationCard weekly={state.weekly} />
+      <GoUsageCard goUsage={state.goUsage} />
       <UnifiedUsageCard
         palette={palette}
         unified={state.unified}

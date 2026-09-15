@@ -93,7 +93,6 @@ def _empty_other_collectors(monkeypatch):
     monkeypatch.setattr(collector_module, "collect_hermes_usage", lambda *args, **kwargs: [])
     monkeypatch.setattr(collector_module, "collect_opencode_usage", lambda *args, **kwargs: [])
     monkeypatch.setattr(collector_module, "codex_quota_observations", lambda *args, **kwargs: [])
-    monkeypatch.setattr(collector_module, "derive_opencode_go_quotas", lambda *args, **kwargs: [])
 
 
 def test_collect_all_legacy_claude_root_and_primary_namespace_remain_unchanged(tmp_path, monkeypatch):

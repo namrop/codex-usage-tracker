@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { BurnPanelState } from "../hooks/useDashboardData";
 import { burnRowClass, deriveBurnRows, projectionText } from "../lib/burn";
-import { formatTimestamp, percent } from "../lib/format";
+import { formatTimestamp } from "../lib/format";
 
 // Burn panel (2026-09-02, keeper-approved from the Claude session-limit burn
 // analysis; widened 2026-09-14): every per-account quota window the ledger
@@ -75,7 +75,10 @@ export function BurnRateCard({ burn }: { burn: BurnPanelState }) {
               {rows.map((row) => (
                 <tr key={row.key} className={burnRowClass(row.status)} data-projection-status={row.status}>
                   <th scope="row">{`${row.label} · ${row.windowName}`}</th>
-                  <td>{row.latestPct == null ? "—" : percent(row.latestPct)}</td>
+                  <td>
+                    {row.latestPctText}
+                    {row.resolutionLabel ? <span className="caption"> · {row.resolutionLabel}</span> : null}
+                  </td>
                   <td>{row.confidenceLabel}</td>
                   <td><Sparkline points={row.spark} /></td>
                   <td>
@@ -94,7 +97,7 @@ export function BurnRateCard({ burn }: { burn: BurnPanelState }) {
           </table>
         </div>
         <p className="caption" id="burnFootnote">
-          Rate is measured while the window is moving (idle spans do not dilute it). “Resets first” means the window is expected to reset before it empties at the observed active-use rate; “no rise measured” means no positive rate exists yet; “stale” means the latest sample is too old, or the window reset after it, to assert anything about now; balances and lifetime windows are never forecast. Confidence is the provider’s own: an estimated window is never shown as exact.
+          Rate is measured while the window is moving (idle spans do not dilute it). “Resets first” means the window is expected to reset before it empties at the observed active-use rate; “no rise measured” means no positive rate exists yet; “stale” means the latest sample is too old, or the window reset after it, to assert anything about now; balances and lifetime windows are never forecast. Confidence is the provider’s own: an estimated window is never shown as exact. A native OpenCode Go reading is the provider’s whole-point figure and prints as an integer; the rate beside it is derived and keeps its decimals.
         </p>
       </div>
     </section>

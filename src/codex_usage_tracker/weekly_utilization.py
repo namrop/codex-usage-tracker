@@ -44,9 +44,11 @@ from .dashboard import (
     _QuotaAccountIdentity,
     _canonical_quota_provider,
     _fact_datetime,
+    _is_retired_opencode_go_estimate,
     _iso_z,
     _quota_account_identity,
     _quota_observation_order_key,
+    _quota_public_metadata,
     _quota_row_confidence,
     _quota_utilization_pct,
     _rfc3339_order_key,
@@ -82,12 +84,21 @@ def weekly_lookback_days(weeks: int) -> int:
     return 7 * (weeks + 1)
 
 
+_NO_METADATA: dict[str, Any] = {
+    "source_surface": None,
+    "percent_resolution": None,
+    "provider_state": None,
+}
+
+
 @dataclass(frozen=True)
 class _Sample:
     observed_at: datetime
     used: Decimal | None
     resets_at: datetime | None
     confidence: str
+    # Allowlisted reader metadata (``dashboard._quota_public_metadata``).
+    metadata: dict[str, Any] = field(default_factory=lambda: dict(_NO_METADATA))
 
 
 @dataclass
@@ -200,6 +211,7 @@ def _current(samples: list[_Sample], *, now: datetime) -> dict[str, Any]:
         "observed_at": None if latest is None else _iso_z(latest.observed_at),
         "resets_at": None if latest is None or latest.resets_at is None else _iso_z(latest.resets_at),
         "confidence": "unknown" if latest is None else latest.confidence,
+        **(dict(_NO_METADATA) if latest is None else latest.metadata),
         "status": status,
         "eligible": status == "fresh",
         "_used": None if latest is None else latest.used,
@@ -273,12 +285,18 @@ def build_weekly_utilization(
     and every roster account gets a primary window row even with no data.
     """
     grouped: dict[tuple[str, str, _QuotaAccountIdentity], list[tuple[Any, _Sample]]] = {}
-    source_rows = invalid_rows = outside_roster = 0
+    source_rows = invalid_rows = outside_roster = retired_go_rows = 0
     for row in rows:
         provider = _canonical_quota_provider(row.get("provider"))
         primary = _PRIMARY_WEEKLY_QUOTAS.get(provider)
         quota_name = str(row.get("quota_name") or "unknown")
         if primary is None or not (quota_name == primary or quota_name.startswith(f"{primary}_")):
+            continue
+        if _is_retired_opencode_go_estimate(row):
+            # Not a reading (see the predicate): excluded from current and
+            # from every inferred cycle, and counted so the panel can say
+            # the Go history restarts at the native cutover.
+            retired_go_rows += 1
             continue
         account = _quota_account_identity(row)
         if account not in account_indexes.get(provider, {}):
@@ -301,6 +319,7 @@ def build_weekly_utilization(
             used=None if pct is None else Decimal(str(pct)),
             resets_at=None if reset_key is None else _fact_datetime(row.get("resets_at")),
             confidence=_quota_row_confidence(row),
+            metadata=_quota_public_metadata(row),
         )
         grouped.setdefault((provider, quota_name, account), []).append(
             (_quota_observation_order_key(row), sample)
@@ -409,6 +428,16 @@ def build_weekly_utilization(
         notes.append(
             f"{outside_roster} observations from accounts outside the current 168h roster were ignored."
         )
+    if retired_go_rows or account_indexes.get("opencode-go"):
+        # Go-specific, not a provider-wide policy: the retired replay is the
+        # only source this panel excludes by name.
+        notes.append(
+            f"OpenCode Go: {retired_go_rows} retired estimated observations (the first-use USD replay, "
+            "which omitted model cost multipliers and the Monday/anniversary window anchors) are "
+            "excluded from every cut, so its weekly history restarts at the native usage API "
+            "cutover; native readings are whole percentage points (floor-rounded, capped at 100) "
+            "with the provider's own status and reset."
+        )
     return {
         "generated_at": _iso_z(generated_at),
         "weeks": weeks,
@@ -421,6 +450,7 @@ def build_weekly_utilization(
             "source_rows": source_rows,
             "invalid_rows": invalid_rows,
             "excluded_cycles": excluded_cycles,
+            "retired_opencode_go_estimate_rows": retired_go_rows,
         },
         "notes": notes,
     }

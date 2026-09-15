@@ -1782,6 +1782,44 @@ tbody tr:hover {
   font-size: 0.8rem;
 }
 
+/* -- OpenCode Go usage explanation (2026-09-14): the small expandable card
+ * after the weekly panel on History. It reuses the weekly bar, mode, detail
+ * and notes vocabulary; only the layout it adds lives here. Tokens only,
+ * and no state colour — an estimate beside a provider figure is not an
+ * alarm. -- */
+.go-usage-card {
+  min-width: 0;
+}
+
+.go-usage-reconcile {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.go-usage-detail .weekly-mode {
+  margin-top: 4px;
+}
+
+.go-usage-table {
+  min-width: 900px;
+}
+
+.go-usage-table tr.is-unpriced :is(th, td) {
+  color: var(--muted);
+}
+
+.go-usage-buckets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 1100px) {
   .ops-hero,
   .window-pair {

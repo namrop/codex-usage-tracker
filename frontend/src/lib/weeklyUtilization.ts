@@ -1,3 +1,4 @@
+import { WHOLE_POINT_LABEL, isWholePointNative, nativePercentText } from "./nativePercent";
 import { PROVIDER_DISPLAY_NAMES, PROVIDER_ORDER } from "./providers";
 
 // Weekly allowance utilization (keeper request 2026-09-14: "what percentage
@@ -49,6 +50,11 @@ export interface WeeklyWindowCurrent {
   confidence: string;
   status: string;
   eligible: boolean;
+  // Native whole-point metadata (OpenCode Go usage API); optional for
+  // backward compatibility. See lib/nativePercent.ts.
+  source_surface?: string | null;
+  percent_resolution?: number | null;
+  provider_state?: string | null;
 }
 
 export interface WeeklyWindowCompleted {
@@ -102,6 +108,20 @@ export interface WeeklyUtilizationPayload {
 
 export const WEEKLY_USED_LABEL = "Average weekly allowance used";
 export const WEEKLY_WEIGHTING_TEXT = "equal weight per account";
+// A native (whole-point) provider with no completed cycle: the provider has
+// not yet been observed through a completed window — said so, never 0%.
+export const NO_COMPLETED_NATIVE_TEXT = "no completed native window yet";
+
+// A current window the provider reported at whole-point resolution.
+export function isWholePointCurrent(current: WeeklyWindowCurrent | null | undefined): boolean {
+  return isWholePointNative(current);
+}
+
+// A current window's own percent: an integer for a whole-point native
+// reading, the one-decimal text otherwise.
+export function currentPctText(current: WeeklyWindowCurrent, field: "used_pct" | "remaining_pct"): string {
+  return nativePercentText(current[field], current);
+}
 
 export function pctNumber(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -178,6 +198,9 @@ export interface WeeklyProviderRow {
   estimated: boolean;
   // No account contributed: the bar draws empty, the text says why.
   empty: boolean;
+  // The row is one account's own whole-point native reading (not a mean),
+  // so its text is the provider's integer.
+  wholePoint: boolean;
 }
 
 function providerRank(provider: string): number {
@@ -185,32 +208,57 @@ function providerRank(provider: string): number {
   return index === -1 ? PROVIDER_ORDER.length : index;
 }
 
-export function weeklyProviderRows(summary: WeeklySummary, mode: WeeklyMode): WeeklyProviderRow[] {
+// The provider summaries carry no resolution metadata; the panel's primary
+// windows do. A provider row is whole-point only when it is ONE account
+// whose one primary window is a native whole-point reading — a mean of two
+// accounts is a mean and keeps its decimal even if both are native. With
+// no windows supplied nothing is claimed.
+function primaryWindowsByProvider(windows: readonly WeeklyWindow[] | undefined): Map<string, WeeklyWindow[]> {
+  const grouped = new Map<string, WeeklyWindow[]>();
+  (Array.isArray(windows) ? windows : []).forEach((entry) => {
+    if (!entry || entry.role !== "primary") return;
+    const list = grouped.get(entry.provider) || [];
+    list.push(entry);
+    grouped.set(entry.provider, list);
+  });
+  return grouped;
+}
+
+export function weeklyProviderRows(summary: WeeklySummary, mode: WeeklyMode, windows?: readonly WeeklyWindow[]): WeeklyProviderRow[] {
   const providers = Array.isArray(summary.providers) ? summary.providers : [];
+  const primaries = primaryWindowsByProvider(windows);
   return providers
     .map((entry) => {
       const accounts = Number(entry.account_count) || 0;
       const estimated = Number(entry.estimated_account_count) || 0;
       const excluded = Number(entry.excluded_account_count) || 0;
       const cycles = Number(entry.cycle_count) || 0;
+      const providerWindows = primaries.get(entry.provider) || [];
+      const nativeWindows = providerWindows.filter((entry) => isWholePointCurrent(entry.current));
+      const nativeProvider = nativeWindows.length > 0 && nativeWindows.length === providerWindows.length;
+      const wholePoint = mode === "current" && accounts === 1 && providerWindows.length === 1 && nativeWindows.length === 1;
       const coverage: string[] = [];
-      coverage.push(accounts ? plural(accounts, "account") : "no contributing account");
+      if (accounts) coverage.push(plural(accounts, "account"));
+      else coverage.push(mode === "completed" && nativeProvider ? NO_COMPLETED_NATIVE_TEXT : "no contributing account");
       if (mode === "completed" && accounts) coverage.push(plural(cycles, "cycle"));
       if (estimated) coverage.push(`${estimated} estimated`);
       if (excluded) coverage.push(`${excluded} excluded`);
+      if (wholePoint) coverage.push(WHOLE_POINT_LABEL);
+      const native = wholePoint ? nativeWindows[0].current : null;
       return {
         provider: entry.provider,
         label: entry.label || PROVIDER_DISPLAY_NAMES[entry.provider] || entry.provider,
         usedPct: pctNumber(entry.used_pct),
         complementPct: pctNumber(entry.remaining_pct),
-        usedText: pctText(entry.used_pct),
+        usedText: native ? nativePercentText(entry.used_pct, native) : pctText(entry.used_pct),
         complementLabel: complementLabel(mode),
-        complementText: pctText(entry.remaining_pct),
+        complementText: native ? nativePercentText(entry.remaining_pct, native) : pctText(entry.remaining_pct),
         coverageText: coverage.join(" · "),
         accountCount: accounts,
         cycleCount: cycles,
         estimated: estimated > 0,
         empty: accounts === 0 || pctNumber(entry.used_pct) === null,
+        wholePoint,
       };
     })
     .sort((a, b) => providerRank(a.provider) - providerRank(b.provider) || a.label.localeCompare(b.label));

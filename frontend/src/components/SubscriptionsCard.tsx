@@ -3,6 +3,7 @@ import type { Palette } from "../lib/palette";
 import { LINE_SMOOTHING, subscriptionQuotaChartOptions, type ChartConfig } from "../lib/chart";
 import { formatTimestamp } from "../lib/format";
 import { heartbeatStatus, staleLaneSuffix, type Freshness } from "../lib/freshness";
+import { wholePointLabel } from "../lib/nativePercent";
 import {
   PROVIDER_DISPLAY_NAMES,
   PROVIDER_ORDER,
@@ -305,6 +306,12 @@ function presentationExplanation(row: any, confidence: { key: string }): string 
   if (confidence.key === "estimated") {
     parts.push("Partial estimate; not an exact provider observation.");
   }
+  if (wholePointLabel(row)) {
+    // Native OpenCode Go usage API: whole percents, floor-rounded, capped at
+    // 100 — the figure above is the provider's integer, not a rounding of
+    // a finer one.
+    parts.push("Provider-reported at whole-point resolution: the native usage API floors to whole percents and caps at 100.");
+  }
   if (hasQuotaValue(row.coverage_status)) {
     parts.push(`Coverage: ${String(row.coverage_status).replace(/[-_]+/g, " ")}.`);
   }
@@ -374,6 +381,7 @@ function SubscriptionWindow({ row }: { row: any }) {
   }
   if (hasQuotaValue(row.quota_scope)) metadataParts.push(`Scope: ${String(row.quota_scope)}`);
   metadataParts.push(`Unit: ${displayUnit || "unavailable"}`);
+  if (wholePointLabel(row)) metadataParts.push("Resolution: whole points");
 
   const ratioIsAuthoritative = !balanceOnly
     && !meterless

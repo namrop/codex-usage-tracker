@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 import json
 import os
+import stat
 import threading
 from typing import Any, Dict, List, Optional, TypeAlias
 
@@ -46,6 +47,7 @@ from .rulings import (
 from .search_events import build_search_summary
 from .token_correlation import build_token_correlation_rows, resolve_state_db_path
 from .canonical_ledger import (
+    _read_facts_without_side_effects,
     IdentityConflictError,
     MalformedLedgerError,
     ValidationError,
@@ -119,8 +121,22 @@ _UNIFIED_STATUS_PROVIDER_LIMIT = 12
 _SUBSCRIPTION_CHART_PROVIDER_LIMIT = 32
 _SUBSCRIPTION_CHART_SERIES_PER_PROVIDER_LIMIT = 16
 _PRIVATE_LEDGER_MAX_AGE_SECONDS = 3 * 60 * 60
-_QUOTA_PROVIDER_STATES = frozenset({"inactive_or_not_reported"})
+# Provider-reported window states that may cross the API boundary:
+# Kimi's inactive marker, and the OpenCode Go usage API's ok / rate-limited.
+_QUOTA_PROVIDER_STATES = frozenset({"inactive_or_not_reported", "ok", "rate_limited"})
 _QUOTA_COVERAGE_STATUSES = frozenset({"partial"})
+# Reader surface tags that are safe to publish (no path, URL or credential).
+_QUOTA_SOURCE_SURFACES = frozenset(
+    {
+        "opencode_go_usage_api",
+        "opencode_go_server_function",
+        "claude_oauth_usage_api",
+        "claude_code_cli_usage",
+        "z_ai_usage_quota",
+    }
+)
+# Percent resolutions a reader may declare; 1 = whole points (OpenCode Go).
+_QUOTA_PERCENT_RESOLUTIONS = frozenset({1})
 _QUOTA_PROVIDER_ORDER = (
     "openai-codex",
     "anthropic",
@@ -398,6 +414,7 @@ def _private_facts(
     cutoff: datetime | None = None,
     before: datetime | None = None,
     order: str = "asc",
+    readonly_jsonl: bool = False,
 ) -> list[dict[str, Any]]:
     """Dispatch canonical private reads by explicit suffix and preserve JSONL."""
     path = Path(ledger_path).expanduser()
@@ -405,7 +422,8 @@ def _private_facts(
     if suffix == ".jsonl":
         if path.exists() and path.stat().st_size > _PRIVATE_API_MAX_JSONL_BYTES:
             raise PrivateLedgerQueryTooLarge("JSONL ledger exceeds private API byte limit")
-        rows = [row for row in read_facts(path) if row.get("fact_type") == fact_type]
+        reader = _read_facts_without_side_effects if readonly_jsonl else read_facts
+        rows = [row for row in reader(path) if row.get("fact_type") == fact_type]
         for field, expected in filters.items():
             rows = [row for row in rows if row.get(field) == expected]
         timestamp_field = (
@@ -1181,6 +1199,8 @@ def _build_quota_burn_projection(
             continue
         if not _quota_observation_is_informative(row):
             continue
+        if _is_retired_opencode_go_estimate(row):
+            continue
         grouped.setdefault(_quota_series_identity(row), []).append(row)
 
     ordinals: dict[str, dict[_QuotaAccountIdentity, int]]
@@ -1205,18 +1225,28 @@ def _build_quota_burn_projection(
     for identity in sorted(grouped, key=_quota_identity_sort_key):
         provider, quota_name, harness, quota_scope, window_kind, unit, account = identity
         window_rows = sorted(grouped[identity], key=_quota_observation_order_key)
-        observations: list[dict[str, Any]] = []
+        latest_row = window_rows[-1]
+        rate_rows = window_rows
+        if (
+            provider == "opencode-go"
+            and _quota_source_surface(latest_row) == "opencode_go_usage_api"
+        ):
+            for index in range(len(window_rows) - 1, -1, -1):
+                if _quota_source_surface(window_rows[index]) != "opencode_go_usage_api":
+                    rate_rows = window_rows[index + 1 :]
+                    break
+        observations = [
+            {
+                "observed_at": row.get("observed_at"),
+                "used_pct": _quota_utilization_pct(row),
+            }
+            for row in window_rows
+        ]
         deltas: list[dict[str, Any]] = []
         previous: tuple[float, datetime] | None = None
-        for row in window_rows:
+        for row in rate_rows:
             pct = _quota_utilization_pct(row)
             observed_at = _fact_datetime(row.get("observed_at"))
-            observations.append(
-                {
-                    "observed_at": row.get("observed_at"),
-                    "used_pct": pct,
-                }
-            )
             if pct is None or previous is None:
                 previous = (pct, observed_at) if pct is not None else None
                 continue
@@ -1242,7 +1272,6 @@ def _build_quota_burn_projection(
             # producing a delta; only genuine rises measure burn.
             previous = (pct, observed_at)
 
-        latest_row = window_rows[-1]
         latest_pct = _quota_utilization_pct(latest_row)
         latest_observed = _fact_datetime(latest_row.get("observed_at"))
         rate_window = deltas[-3:]
@@ -1265,7 +1294,7 @@ def _build_quota_burn_projection(
             pct_per_hour=pct_per_hour,
             resets_at=resets_at,
             seconds_to_reset=seconds_to_reset,
-            observation_count=len(observations),
+            observation_count=len(rate_rows),
             now=generated_at,
         )
         exhaustion_at: str | None = None
@@ -1286,6 +1315,7 @@ def _build_quota_burn_projection(
             "provider_account_count": len(ordinals[provider]),
             "measurement_confidence": latest_row.get("measurement_confidence"),
             "confidence_status": _quota_series_confidence(window_rows),
+            **_quota_public_metadata(latest_row),
             "resets_at": resets_at,
             "seconds_to_reset": int(seconds_to_reset) if seconds_to_reset is not None else None,
             "latest_observed_at": latest_row.get("observed_at"),
@@ -1362,6 +1392,57 @@ def _quota_series_confidence(rows: list[dict[str, Any]]) -> str:
     if len(statuses) == 1:
         return next(iter(statuses))
     return "mixed" if statuses else "unknown"
+
+
+def _quota_provider_state(row: dict[str, Any]) -> str | None:
+    value = row.get("x_provider_state")
+    return value if isinstance(value, str) and value in _QUOTA_PROVIDER_STATES else None
+
+
+def _quota_source_surface(row: dict[str, Any]) -> str | None:
+    value = row.get("x_source_surface")
+    return value if isinstance(value, str) and value in _QUOTA_SOURCE_SURFACES else None
+
+
+def _quota_percent_resolution(row: dict[str, Any]) -> int | None:
+    value = row.get("x_percent_resolution")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value in _QUOTA_PERCENT_RESOLUTIONS else None
+
+
+def _quota_public_metadata(row: dict[str, Any]) -> dict[str, Any]:
+    """The bounded, allowlisted reader metadata every quota surface may
+    publish for an observation: which reader surface produced it, the
+    percent resolution it honours, and the provider's own window state.
+    Anything outside the allowlists serializes as null."""
+    return {
+        "source_surface": _quota_source_surface(row),
+        "percent_resolution": _quota_percent_resolution(row),
+        "provider_state": _quota_provider_state(row),
+    }
+
+
+def _is_retired_opencode_go_estimate(row: dict[str, Any]) -> bool:
+    """The first-use USD replay of OpenCode Go usage events (retired by
+    keeper acceptance 2026-09-14). It omitted the provider's model cost
+    multipliers and anchored the weekly/monthly windows on first use rather
+    than Monday 00:00 UTC / the subscription anniversary, so its figures
+    are not allowance readings. The predicate is explicit and provider
+    scoped: an ``opencode-go`` row labelled ``estimated`` or denominated in
+    USD. Provider-observed percent rows of either reader surface (cookie or
+    native) are legitimate and stay; other providers are never touched. The
+    raw ledger keeps these rows unpruned for audit; no projection uses
+    them."""
+    if _canonical_quota_provider(row.get("provider")) != "opencode-go":
+        return False
+    confidence = str(row.get("measurement_confidence") or "").casefold()
+    unit = str(row.get("unit") or "").casefold()
+    return confidence == "estimated" or unit == "usd"
+
+
+def _drop_retired_opencode_go_estimates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [row for row in rows if not _is_retired_opencode_go_estimate(row)]
 
 
 def _quota_observation_order_key(
@@ -1560,6 +1641,8 @@ def _build_subscription_time_series(
             continue
         if not _quota_observation_is_informative(row):
             continue
+        if _is_retired_opencode_go_estimate(row):
+            continue
         identity = _quota_series_identity(row)
         provider = identity[0]
         grouped.setdefault(identity, []).append(row)
@@ -1647,6 +1730,7 @@ def _build_subscription_time_series(
                 "latest_observed_at": latest.get("observed_at"),
                 "measurement_confidence": latest.get("measurement_confidence"),
                 "confidence_status": _quota_series_confidence(valid_rows),
+                **_quota_public_metadata(latest),
                 "sample_count": len(valid_rows),
                 "observation_count": len(quota_rows),
                 "provider_account_index": provider_account_index,
@@ -2418,8 +2502,15 @@ def create_app(
         # the one the quota charts index, and the shared sort key makes the
         # ordinals identical too. /api/quota-burn numbers against this same
         # roster (see _ACCOUNT_ROSTER_HOURS), so "Claude 2" is one identity
-        # on every surface.
+        # on every surface. The roster is numbered before the retired
+        # OpenCode Go estimates are dropped: those rows are not readings, but
+        # they are evidence the account exists, so its presence (and the
+        # weekly panel's excluded-account row) survives until native
+        # readings re-establish it.
         latest_account_indexes = _quota_account_ordinals(latest)
+        retired_estimate_rows = sum(_is_retired_opencode_go_estimate(row) for row in rows)
+        rows = _drop_retired_opencode_go_estimates(rows)
+        latest = _drop_retired_opencode_go_estimates(latest)
 
         def project(row: dict[str, Any]) -> dict[str, Any]:
             projected = {field: row.get(field) for field in QUOTA_RESPONSE_FIELDS}
@@ -2431,12 +2522,7 @@ def create_app(
             )
             projected["provider_account_index"] = account_index
             projected["provider_account_count"] = len(accounts) if accounts else 0
-            provider_state = row.get("x_provider_state")
-            projected["provider_state"] = (
-                provider_state
-                if isinstance(provider_state, str) and provider_state in _QUOTA_PROVIDER_STATES
-                else None
-            )
+            projected.update(_quota_public_metadata(row))
             coverage = row.get("x_coverage")
             coverage_status = coverage.get("status") if isinstance(coverage, dict) else None
             projected["coverage_status"] = (
@@ -2465,6 +2551,9 @@ def create_app(
                 project(row) for row in latest if _quota_observation_is_informative(row)
             ],
             "observations": [project(row) for row in rows] if include_history else [],
+            # Retired rows the read matched but no cut projects; the ledger
+            # keeps them, the panel says how many it is not showing.
+            "exclusions": {"retired_opencode_go_estimate_rows": retired_estimate_rows},
         }
         if window_meta:
             payload["window"] = window_meta
@@ -2544,13 +2633,16 @@ def create_app(
             for row in rows
             if (key := observed_key(row)) is not None and key[0] >= cutoff
         ]
-        return jsonify(
-            _build_quota_burn_projection(
-                burn_rows,
-                generated_at=generated_at,
-                account_indexes=_quota_account_ordinals(_latest_rows_per_identity(roster_rows)),
-            )
+        # Roster before the drop (account presence), series after it.
+        account_indexes = _quota_account_ordinals(_latest_rows_per_identity(roster_rows))
+        retired_estimate_rows = sum(_is_retired_opencode_go_estimate(row) for row in burn_rows)
+        payload = _build_quota_burn_projection(
+            _drop_retired_opencode_go_estimates(burn_rows),
+            generated_at=generated_at,
+            account_indexes=account_indexes,
         )
+        payload["exclusions"] = {"retired_opencode_go_estimate_rows": retired_estimate_rows}
+        return jsonify(payload)
 
     @app.route("/api/weekly-utilization")
     def api_weekly_utilization():
@@ -2623,6 +2715,63 @@ def create_app(
                 account_indexes=_quota_account_ordinals(_latest_rows_per_identity(roster_rows)),
             )
         )
+
+    @app.route("/api/opencode-go-usage")
+    def api_opencode_go_usage():
+        """Current UTC-week model explanation beside native Go quota state.
+
+        Quota authority remains the collected provider observation. This
+        read-only view never calls the provider or changes either ledger.
+        """
+        from .go_usage import build_go_usage
+
+        if not resolved_unified_usage or not resolved_quota_ledger:
+            return jsonify({"error": "Go usage and quota ledgers are not configured"}), 404
+        ledger_paths = tuple(
+            Path(path).expanduser()
+            for path in (resolved_unified_usage, resolved_quota_ledger)
+        )
+        try:
+            for path in ledger_paths:
+                if not stat.S_ISREG(path.stat().st_mode):
+                    return jsonify({"error": "configured private ledger is unavailable"}), 503
+        except FileNotFoundError:
+            return jsonify({"error": "Go usage or quota ledger is not available"}), 404
+        except OSError:
+            return jsonify({"error": "configured private ledger is unavailable"}), 503
+        generated_at = datetime.now(timezone.utc)
+        week_start = generated_at.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=generated_at.weekday())
+        before = generated_at + timedelta(microseconds=1)
+        try:
+            usage_rows = _private_facts(
+                resolved_unified_usage,
+                fact_type="usage_event_v1",
+                filters={"provider": "opencode-go"},
+                cutoff=week_start,
+                before=before,
+                readonly_jsonl=True,
+            )
+            quota_rows = _private_facts(
+                resolved_quota_ledger,
+                fact_type="quota_observation_v1",
+                filters={"provider": "opencode-go"},
+                cutoff=week_start,
+                before=before,
+                readonly_jsonl=True,
+            )
+            if len(usage_rows) + len(quota_rows) > _PRIVATE_API_MAX_ROWS:
+                raise PrivateLedgerQueryTooLarge("combined Go query exceeds row limit")
+        except UnsupportedLedgerSuffix:
+            return jsonify({"error": "unsupported ledger suffix"}), 400
+        except PrivateLedgerQueryTooLarge:
+            return jsonify({"error": "ledger query exceeds private API row limit"}), 413
+        except (MalformedLedgerError, ValidationError, IdentityConflictError):
+            return jsonify({"error": "configured private ledger is unavailable"}), 503
+        except FileNotFoundError:
+            return jsonify({"error": "Go usage or quota ledger is not available"}), 404
+        except OSError:
+            return jsonify({"error": "configured private ledger is unavailable"}), 503
+        return jsonify(build_go_usage(usage_rows, quota_rows, generated_at=generated_at))
 
     @app.route("/api/searches")
     def api_searches():

@@ -1,3 +1,4 @@
+import { isWholePointNative, nativePercentText, wholePointLabel } from "./nativePercent";
 import { accountDisplayLabel } from "./providers";
 import { quotaConfidenceLabel } from "./quota";
 
@@ -39,7 +40,15 @@ export interface BurnRowModel {
   confidenceStatus: string;
   confidenceLabel: string;
   latestPct: number | null;
+  // The latest used percent as text: an integer for a native whole-point
+  // reading (OpenCode Go usage API), one decimal otherwise, "—" when none.
+  latestPctText: string;
+  wholePoint: boolean;
+  resolutionLabel: string | null;
+  providerState: string | null;
   latestObservedAt: string | null;
+  // The backend's derived rate — a decimal figure whatever the source's
+  // resolution.
   rate: number | null;
   rateWindowDeltas: number;
   observationCount: number;
@@ -97,6 +106,10 @@ export function deriveBurnRows(series: any[]): BurnRowModel[] {
       confidenceStatus,
       confidenceLabel: quotaConfidenceLabel(confidenceStatus),
       latestPct: row.latest_used_pct == null ? null : Number(row.latest_used_pct),
+      latestPctText: nativePercentText(row.latest_used_pct, row),
+      wholePoint: isWholePointNative(row),
+      resolutionLabel: wholePointLabel(row),
+      providerState: row.provider_state == null || row.provider_state === "" ? null : String(row.provider_state),
       latestObservedAt: row.latest_observed_at ? String(row.latest_observed_at) : null,
       rate: row.burn_rate_pct_per_hour == null ? null : Number(row.burn_rate_pct_per_hour),
       rateWindowDeltas: Number(row.rate_window_deltas || 0),

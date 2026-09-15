@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { formatTimestamp } from "../lib/format";
 import { staleLaneSuffix, type Freshness } from "../lib/freshness";
 import { whenThemeReady } from "../lib/palette";
+import { isGoUsagePayload, type GoUsagePayload } from "../lib/goUsage";
 import { isWeeklyUtilizationPayload, type WeeklyUtilizationPayload } from "../lib/weeklyUtilization";
 
 // One hydrate cycle = the private-panel loaders (unified usage,
@@ -48,6 +49,12 @@ export interface WeeklyPanelState {
   contentVisible: boolean;
 }
 
+export interface GoUsagePanelState {
+  data: GoUsagePayload | null;
+  message: string | null;
+  contentVisible: boolean;
+}
+
 export interface DashboardState {
   unified: UnifiedPanelState;
   // The digest mirrors freshness even when the panel falls back to a
@@ -60,6 +67,7 @@ export interface DashboardState {
   billing: BillingPanelState;
   rulings: RulingsPanelState;
   weekly: WeeklyPanelState;
+  goUsage: GoUsagePanelState;
   providerStatusFeeds: Record<string, any> | null;
   refreshing: boolean;
 }
@@ -74,6 +82,7 @@ const INITIAL_STATE: DashboardState = {
   billing: { data: null, message: "Loading billing facts…", contentVisible: false },
   rulings: { data: null, message: "Loading rulings per dollar…", contentVisible: false },
   weekly: { data: null, message: "Loading weekly allowance use…", contentVisible: false },
+  goUsage: { data: null, message: "Loading OpenCode Go usage…", contentVisible: false },
   providerStatusFeeds: null,
   refreshing: false,
 };
@@ -315,6 +324,35 @@ async function loadWeeklyUtilization(set: Set): Promise<void> {
   }
 }
 
+async function loadGoUsage(set: Set): Promise<void> {
+  // OpenCode Go usage explanation (contract 2026-09-14, docs/go-native-
+  // usage-explanation.md). One bounded read of the current UTC week; the
+  // History card owns this slot. A 404 is the backend's "route not wired /
+  // source not configured" answer and reads as such — never as a zero
+  // native percent; a malformed body fails the same way a bad status does.
+  try {
+    const response = await fetch("/api/opencode-go-usage", { signal: AbortSignal.timeout(30000) });
+    if (response.status === 404) {
+      set((prev) => ({
+        ...prev,
+        goUsage: { data: null, message: "OpenCode Go usage explanation is not configured on this dashboard.", contentVisible: false },
+      }));
+      return;
+    }
+    if (!response.ok) throw new Error("unavailable");
+    const data = await response.json();
+    if (!isGoUsagePayload(data)) throw new Error("malformed");
+    set((prev) => ({ ...prev, goUsage: { data, message: null, contentVisible: true } }));
+  } catch (error) {
+    set((prev) => {
+      if (prev.goUsage.contentVisible) {
+        return { ...prev, goUsage: { ...prev.goUsage, message: "Refresh failed — showing last good data." } };
+      }
+      return { ...prev, goUsage: { data: null, message: "OpenCode Go usage explanation unavailable.", contentVisible: false } };
+    });
+  }
+}
+
 async function loadProviderStatusFeeds(set: Set): Promise<void> {
   try {
     const response = await fetch("/api/provider-status", { signal: AbortSignal.timeout(15000) });
@@ -343,6 +381,7 @@ export function useDashboardData(): { state: DashboardState; refresh: () => void
         loadBilling(setState),
         loadRulings(setState),
         loadWeeklyUtilization(setState),
+        loadGoUsage(setState),
         loadProviderStatusFeeds(setState),
       ]);
     } finally {

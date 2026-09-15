@@ -119,6 +119,9 @@ def test_current_summary_is_the_mean_of_account_percentages():
         "observed_at": "2026-07-14T12:00:00Z",
         "resets_at": "2026-07-18T09:00:00Z",
         "confidence": "exact",
+        "source_surface": None,
+        "percent_resolution": None,
+        "provider_state": None,
         "status": "fresh",
         "eligible": True,
     }
@@ -159,7 +162,9 @@ def test_stale_and_invalid_current_readings_are_excluded_not_zero():
     assert (passed["used_pct"], passed["status"], passed["eligible"]) == ("55.0", "reset_passed_since_observation", False)
     # The Kimi window's target has passed with no rollover observed: that is
     # one displayed, excluded (unconfirmed) cycle.
-    assert payload["coverage"] == {"source_rows": 4, "invalid_rows": 1, "excluded_cycles": 1}
+    assert payload["coverage"] == {
+        "source_rows": 4, "invalid_rows": 1, "excluded_cycles": 1, "retired_opencode_go_estimate_rows": 0,
+    }
 
 
 # ── completed: inferred reset periods ─────────────────────────────────────
@@ -493,7 +498,9 @@ def test_empty_input_is_a_null_summary_not_zero_percent():
     assert payload["current"]["used_pct"] is None
     assert payload["completed"]["remaining_pct"] is None
     assert payload["windows"] == []
-    assert payload["coverage"] == {"source_rows": 0, "invalid_rows": 0, "excluded_cycles": 0}
+    assert payload["coverage"] == {
+        "source_rows": 0, "invalid_rows": 0, "excluded_cycles": 0, "retired_opencode_go_estimate_rows": 0,
+    }
 
 
 # ── endpoint ───────────────────────────────────────────────────────────────

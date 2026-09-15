@@ -75,6 +75,16 @@ function WindowChip({ window, now }: { window: CapacityWindow; now: number }) {
       )}
       <div className="capacity-window-meta">
         <span className={`subscription-badge confidence-${window.confidence}`}>{confidenceText(window)}</span>
+        {window.resolutionLabel && (
+          // A native whole-point reading (OpenCode Go usage API): the integer
+          // the provider reported, said as such — never "100.0%".
+          <span className="capacity-resolution">
+            {window.usedText ? `${window.usedText} used · ${window.resolutionLabel}` : window.resolutionLabel}
+          </span>
+        )}
+        {window.resolutionLabel && window.providerState && (
+          <span>{`provider state ${window.providerState.replace(/[-_]+/g, " ")}`}</span>
+        )}
         <span className={window.stale ? "capacity-stale-text" : undefined}>
           {window.stale
             ? window.staleReason === "reset_passed_since_observation"

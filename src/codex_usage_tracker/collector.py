@@ -6,7 +6,7 @@ canonical usage, quota, and optional billing ledgers supplied by the caller.
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
 import json
@@ -36,7 +36,6 @@ from .canonical_ledger import (
     append_sqlite_facts_quarantined,
     append_sqlite_facts_quarantined_reconciled,
     canonical_json,
-    canonical_timestamp,
     normalize_fact,
     query_sqlite_facts,
 )
@@ -49,9 +48,9 @@ from .quota import (
     collect_deepseek_quota,
     collect_kimi_code_quota,
     collect_opencode_go_quota as collect_exact_opencode_go_quota,
+    collect_opencode_go_usage_quota,
     collect_openrouter_quota,
     collect_z_ai_quota,
-    derive_opencode_go_quotas,
 )
 from .search_events import (
     DEFAULT_SEARCH_LEDGER,
@@ -75,6 +74,7 @@ ALLOWED_DOTENV_KEYS = frozenset(
         "ZAI_API_KEY",
         "OPENCODE_GO_WORKSPACE_ID",
         "OPENCODE_GO_AUTH_COOKIE",
+        "OPENCODE_GO_API_KEY",
     }
 )
 
@@ -448,13 +448,6 @@ class EmptyLaneResult(ValueError):
     """
 
 
-class OpencodeGoSourcesUnavailable(RuntimeError):
-    """Neither in-run OpenCode rows nor a readable usage ledger are available.
-
-    The estimate lane cedes rather than fabricating a 0-used observation.
-    """
-
-
 # Exceptions the lane wrapper never retries: the screen (or emptiness) will
 # not change on its own, and every retry would only burn its full timeout.
 _LANE_TERMINAL_EXCEPTIONS: tuple[type[BaseException], ...] = (
@@ -463,7 +456,6 @@ _LANE_TERMINAL_EXCEPTIONS: tuple[type[BaseException], ...] = (
 )
 
 DEFAULT_USAGE_LEDGER = "~/.local/state/codex-usage-tracker/usage_events.sqlite3"
-OPENCODE_GO_ESTIMATE_LOOKBACK = timedelta(days=31)
 
 
 def _materialize_lane_read(value: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -482,70 +474,6 @@ def _materialize_lane_read(value: Any) -> tuple[list[dict[str, Any]], dict[str, 
         except StopIteration as stop:
             diagnostics = stop.value if isinstance(stop.value, dict) else {}
             return rows, diagnostics
-
-
-def _readable_usage_ledger(path: str | Path | None) -> Path | None:
-    """The usage ledger the opencode-go estimate may read, or None.
-
-    The production quota lane runs without ``--usage-ledger``; the default
-    private ledger path stands in. A missing file or an unsupported suffix
-    means "no ledger fallback", never an error.
-    """
-    target = Path(DEFAULT_USAGE_LEDGER if path is None else path).expanduser()
-    if not target.is_file():
-        return None
-    try:
-        _ledger_backend(target)
-    except ValueError:
-        return None
-    return target
-
-
-def _read_opencode_go_ledger_rows(target: Path, *, since: datetime) -> list[dict[str, Any]]:
-    """Read-only: opencode-go usage events at or after ``since``."""
-    cutoff = canonical_timestamp(since.astimezone(timezone.utc).isoformat())
-    if _ledger_backend(target) == "sqlite":
-        return query_sqlite_facts(
-            target,
-            fact_type="usage_event_v1",
-            filters={"provider": "opencode-go"},
-            occurred_or_observed_at_gte=cutoff,
-        )
-    return [
-        row
-        for row in _read_facts_without_side_effects(target)
-        if row.get("fact_type") == "usage_event_v1"
-        and row.get("provider") == "opencode-go"
-        and str(row.get("occurred_at") or "") >= cutoff
-    ]
-
-
-def _opencode_go_estimate_inputs(
-    in_run_rows: Iterable[Mapping[str, Any]],
-    ledger_path: Path | None,
-    *,
-    now: datetime | None = None,
-) -> list[dict[str, Any]]:
-    """Union of this run's OpenCode rows and the ledger's recent opencode-go history.
-
-    De-duplicated by canonical identity; the in-run row wins because it is
-    the fresher derivation. Only opencode-go rows are kept — Hermes routes
-    through opencode-go too, and those rows only ever exist in the ledger.
-    """
-    current = now or datetime.now(timezone.utc)
-    merged: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in in_run_rows:
-        if row.get("provider") != "opencode-go":
-            continue
-        identity = (str(row.get("source_namespace")), str(row.get("source_event_id")))
-        merged.setdefault(identity, dict(row))
-    if ledger_path is not None:
-        for row in _read_opencode_go_ledger_rows(
-            ledger_path, since=current - OPENCODE_GO_ESTIMATE_LOOKBACK
-        ):
-            identity = (str(row.get("source_namespace")), str(row.get("source_event_id")))
-            merged.setdefault(identity, row)
-    return list(merged.values())
 
 
 def lane_health_name(scope: str) -> str:
@@ -1147,9 +1075,9 @@ def collect_all(
             )
         sources[source] = _source_result(len(rows))
         lane["discovered"] = len(rows)
-        # A clean read is already a success for a lane that is only ever read:
-        # the quota scope reads opencode usage to derive opencode-go windows
-        # and never persists it, and that lane must not read as never-healthy.
+        # A clean read is already a success; a persisted lane's write side
+        # re-judges it below, and a read-only lane must not read as
+        # never-healthy.
         lane["succeeded"] = True
         lane["last_error_class"] = None
         return rows
@@ -1346,11 +1274,6 @@ def collect_all(
             sources["codex_quota"] = _source_result(len(codex_history))
             quota_sources.append(("codex_quota", codex_history))
         else:
-            if opencode is None:
-                opencode = collect_source(
-                    "opencode",
-                    lambda: collect_opencode_usage(opencode_dbs, f"{source_prefix}:opencode"),
-                )
             quota_sources.append(
                 (
                     "codex_quota",
@@ -1363,31 +1286,35 @@ def collect_all(
                     ),
                 )
             )
+            # OpenCode Go (keeper acceptance 2026-09-14): the provider's usage
+            # API is the quota authority. The native API-key reader is
+            # preferred; the cookie reader remains only where no native key
+            # is configured. A failing reader cedes the lane and the ledger
+            # keeps its last good reading — the retired first-use USD replay
+            # is never a fallback, and without either credential the lane
+            # reports unavailable rather than a fresh estimate.
+            opencode_go_api_key = env.get("OPENCODE_GO_API_KEY")
             opencode_go_workspace = env.get("OPENCODE_GO_WORKSPACE_ID")
             opencode_go_cookie = env.get("OPENCODE_GO_AUTH_COOKIE")
-
-            def _estimate_opencode_go(source_name: str) -> None:
-                """First-use anchored estimate over in-run + ledger opencode-go rows.
-
-                Never fabricates: when the OpenCode read lane ceded this run
-                AND no usage ledger is readable there is nothing to estimate
-                from, so the lane cedes instead of persisting "0 used".
-                """
-                ledger_path = _readable_usage_ledger(usage_ledger)
-                if _lane("opencode")["ceded"] and ledger_path is None:
-                    sources[source_name] = _source_result(0)
-                    _cede_lane(source_name, OpencodeGoSourcesUnavailable.__name__)
-                    return
-                estimated_rows = collect_source(
-                    source_name,
-                    lambda: derive_opencode_go_quotas(
-                        _opencode_go_estimate_inputs(opencode or [], ledger_path),
+            selected_opencode_go = (
+                quota_lanes is None or "opencode_go_quota" in quota_lanes
+            )
+            opencode_go_rows: list[dict[str, Any]] = []
+            if live_quota and selected_opencode_go and opencode_go_api_key:
+                opencode_go_rows = collect_source(
+                    "opencode_go_quota",
+                    lambda: collect_opencode_go_usage_quota(
+                        opencode_go_api_key,
                         f"{source_prefix}:opencode-go",
                     ),
+                    require_rows=True,
                 )
-                quota_sources.append((source_name, estimated_rows))
-
-            if live_quota and opencode_go_workspace and opencode_go_cookie:
+            elif (
+                live_quota
+                and selected_opencode_go
+                and opencode_go_workspace
+                and opencode_go_cookie
+            ):
                 opencode_go_rows = collect_source(
                     "opencode_go_quota",
                     lambda: collect_exact_opencode_go_quota(
@@ -1397,12 +1324,12 @@ def collect_all(
                     ),
                     require_rows=True,
                 )
-                if opencode_go_rows:
-                    quota_sources.append(("opencode_go_quota", opencode_go_rows))
-                else:
-                    _estimate_opencode_go("opencode_go_quota_estimated")
             else:
-                _estimate_opencode_go("opencode_go_quota")
+                # Not configured is not a failure (the stand-down convention
+                # of the active-window tick): reported, not ceded.
+                sources["opencode_go_quota"] = _source_result(0)
+            if opencode_go_rows:
+                quota_sources.append(("opencode_go_quota", opencode_go_rows))
 
             if live_quota:
                 # Five-minute active-window tick (keeper-approved burn panel,

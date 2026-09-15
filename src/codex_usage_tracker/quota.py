@@ -31,6 +31,7 @@ DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance"
 KIMI_CODING_USAGE_URL = "https://api.kimi.com/coding/v1/usages"
 Z_AI_QUOTA_URL = "https://api.z.ai/api/monitor/usage/quota/limit"
 OPENCODE_GO_QUOTA_URL = "https://opencode.ai/_server/"
+OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
 GO_WINDOWS: tuple[tuple[str, timedelta, Decimal], ...] = (
     ("five_hour", timedelta(hours=5), Decimal("12")),
     ("week", timedelta(days=7), Decimal("30")),
@@ -655,6 +656,121 @@ def collect_opencode_go_quota(
     return rows
 
 
+# Native usage API (keeper acceptance 2026-09-14): ``usage.{rolling,weekly,
+# monthly}`` → the same quota_name vocabulary the cookie reader established,
+# so the cutover continues one historical series per window. ``status`` maps
+# to the public provider_state vocabulary.
+_OPENCODE_GO_USAGE_WINDOWS: tuple[tuple[str, str, str], ...] = (
+    ("rolling", "five_hour", "rolling"),
+    ("weekly", "week", "fixed"),
+    ("monthly", "month", "fixed"),
+)
+_OPENCODE_GO_USAGE_STATES = {"ok": "ok", "rate-limited": "rate_limited"}
+
+
+def _opencode_go_usage_percent(value: Any, window: str) -> Decimal:
+    """A whole percentage point in [0, 100], as the server floor-rounds and caps.
+
+    Only JSON numbers are accepted (never bool, strings or null); a fraction
+    is rejected rather than rounded so the whole-point resolution this reader
+    labels its rows with is never a claim the row does not honour.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"OpenCode Go {window} percent is malformed")
+    parsed = Decimal(str(value))
+    if not parsed.is_finite():
+        raise ValueError(f"OpenCode Go {window} percent is malformed")
+    if parsed < 0 or parsed > 100:
+        raise ValueError(f"OpenCode Go {window} percent is outside [0, 100]")
+    if parsed != parsed.to_integral_value():
+        raise ValueError(f"OpenCode Go {window} percent is not a whole point")
+    return parsed.to_integral_value()
+
+
+def _opencode_go_usage_reset(value: Any, window: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"OpenCode Go {window} resetsAt is malformed")
+    try:
+        return canonical_timestamp(value)
+    except (ValidationError, ValueError):
+        raise ValueError(f"OpenCode Go {window} resetsAt is malformed") from None
+
+
+def collect_opencode_go_usage_quota(
+    api_key: str,
+    source_namespace: str,
+    *,
+    observed_at: str | datetime | None = None,
+    timeout: float = 30.0,
+) -> list[dict[str, Any]]:
+    """Read OpenCode Go's rolling, weekly and monthly allowance from its usage API.
+
+    One authenticated GET (``Authorization: Bearer <OPENCODE_GO_API_KEY>``,
+    no cookies or workspace id). The provider's ``status`` and absolute
+    ``resetsAt`` are authoritative and travel as given; ``percent`` is the
+    server's floor-rounded, 100-capped whole point, so the rows are labelled
+    ``x_percent_resolution = 1`` and never claim an unrounded cost. Window
+    bounds are captured only where the provider defines them: the weekly
+    (Monday 00:00 UTC) and monthly (subscription anniversary) windows end at
+    their reset; the rolling five-hour window claims no bound, because an
+    idle account reads ``now + 5h`` without any cycle having opened. Every
+    HTTP, transport, decode or shape failure raises a sanitized ``ValueError``
+    that carries neither the key nor the provider's message, so the lane
+    cedes and the ledger keeps its last good reading.
+    """
+    observed = _now(observed_at)
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(
+                OPENCODE_GO_USAGE_URL,
+                headers={"Accept": "application/json", "Authorization": f"Bearer {api_key}"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+    except Exception:
+        raise ValueError("OpenCode Go usage request failed") from None
+    if not isinstance(payload, Mapping):
+        raise ValueError("OpenCode Go usage response is not an object")
+    usage = payload.get("usage")
+    if not isinstance(usage, Mapping):
+        raise ValueError("OpenCode Go usage response has no usage object")
+
+    rows: list[dict[str, Any]] = []
+    for response_name, quota_name, window_kind in _OPENCODE_GO_USAGE_WINDOWS:
+        window = usage.get(response_name)
+        if not isinstance(window, Mapping):
+            raise ValueError(f"OpenCode Go {quota_name} window is missing")
+        used = _opencode_go_usage_percent(window.get("percent"), quota_name)
+        status = window.get("status")
+        provider_state = (
+            _OPENCODE_GO_USAGE_STATES.get(status) if isinstance(status, str) else None
+        )
+        if provider_state is None:
+            raise ValueError(f"OpenCode Go {quota_name} status is malformed")
+        resets_at = _opencode_go_usage_reset(window.get("resetsAt"), quota_name)
+        rows.append(
+            _quota(
+                namespace=source_namespace,
+                observation_id=f"{observed}:{quota_name}",
+                harness="opencode_go_api",
+                observed_at=observed,
+                provider="opencode-go",
+                quota_name=quota_name,
+                window_kind=window_kind,
+                unit="percent",
+                limit=Decimal("100"),
+                used=used,
+                remaining=Decimal("100") - used,
+                resets_at=resets_at,
+                window_ends_at=resets_at if window_kind == "fixed" else None,
+                x_source_surface="opencode_go_usage_api",
+                x_percent_resolution=1,
+                x_provider_state=provider_state,
+            )
+        )
+    return rows
+
+
 def _kimi_quota_detail(detail: Any, label: str) -> tuple[str, str, str, str | None]:
     if not isinstance(detail, Mapping):
         raise ValueError(f"Kimi {label} quota detail is missing")
@@ -868,6 +984,14 @@ def derive_opencode_go_quotas(
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Estimate Go subscription windows from opencode-go usage events.
+
+    RETIRED FROM COLLECTION (keeper acceptance 2026-09-14): the shared Go
+    allowance consumes ``round(cost * model.costMultiplier)`` and the weekly
+    and monthly windows are calendar-anchored, neither of which this replay
+    models, so ``collect_all`` no longer emits these rows and every operator
+    projection excludes the ones already in the ledger
+    (``dashboard._is_retired_opencode_go_estimate``). The pure function stays
+    for audit and its existing utility tests only.
 
     OpenCode Go's windows are not trailing slices: each opens at first use
     after the previous window closed and runs for its full duration (the exact

@@ -14,7 +14,8 @@ explicit interchange format.
 - Preserves the legacy Codex JSONL snapshot daemon and public-safe projection.
 - Collects usage from Hermes, Claude Code, and OpenCode plus quota/account
   observations from Codex, Claude Code, Kimi Code, OpenRouter, DeepSeek, and
-  estimated OpenCode Go windows.
+  the OpenCode Go usage API (see
+  `docs/opencode-go-native-quota-2026-09-14.md`).
 - Maintains separate `usage_event_v1`, `quota_observation_v1`,
   `billing_fact_v1`, and `search_event_v1` SQLite ledgers.
 - Joins Atrium keeper ratifications to the list-price estimate as rulings per
@@ -249,7 +250,7 @@ the source harness stores:
   OpenCode SQLite databases;
 - `quota_observation_v1` is the point-in-time snapshot ledger populated from the
   existing Codex snapshot ledger, the authenticated Claude Code CLI `/usage`
-  view, estimated OpenCode Go windows, and optional provider account APIs;
+  view, the OpenCode Go usage API, and optional provider account APIs;
 - `billing_fact_v1` is the signed monetary ledger for invoice lines, charges,
   credits, refunds, payments, taxes, and adjustments. `collect-all` binds and
   creates this ledger but does not synthesize billing facts from request-cost

@@ -46,6 +46,9 @@ const ANCHOR_PREFIXES: readonly [string, ViewId][] = Object.freeze([
   // Weekly allowance use (2026-09-14): the Now strip links here; the panel
   // is the first card on History and carries id="weeklyUtilization".
   ["weeklyUtilization", "history"],
+  // OpenCode Go usage explanation (2026-09-14): the small card right after
+  // the weekly panel on History, id="goUsage".
+  ["goUsage", "history"],
   ["subscriptionUnified", "history"],
   ["modelToken", "history"],
   ["tokenComposition", "history"],

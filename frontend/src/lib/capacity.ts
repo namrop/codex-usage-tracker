@@ -1,6 +1,7 @@
 import { PROVIDER_ORDER, accountDisplayLabel } from "./providers";
 import { QUOTA_WEEKLY_NAMES, isPercentQuotaRow, quotaRowProviderKey, type QuotaRow } from "./quota";
 import { projectionStatusOf, type BurnProjectionStatus } from "./burn";
+import { isWholePointNative, nativePercentText, wholePointLabel } from "./nativePercent";
 
 // Account-level capacity summary (keeper authorization 2026-09-14). One
 // account per row, every window the provider reports in that window's OWN
@@ -56,6 +57,16 @@ export interface CapacityWindow {
   remainingValue: number | null;
   // Fraction of the cap used, for windows that HAVE a cap (never balances).
   usedPct: number | null;
+  // The used percentage as text for percent windows: an integer when the
+  // provider reported whole points (native OpenCode Go), one decimal
+  // otherwise; null for balances, dollar caps and counted quotas.
+  usedText: string | null;
+  // The provider reported this reading at whole-point resolution.
+  wholePoint: boolean;
+  // "provider-reported · whole points" for such rows, else null.
+  resolutionLabel: string | null;
+  // The provider's own state on the row ("ok", "rate_limited"), or null.
+  providerState: string | null;
   // What remains, in the window's own units ("94% left", "$16.00 of $20.00
   // left", "0 of 4000 requests left", "$0.00 balance").
   remainingText: string;
@@ -312,6 +323,9 @@ export function deriveCapacityWindow(row: any, options: CapacityOptions, canonic
   }
 
   const base = split ? split.base : quotaName;
+  const providerState = row.provider_state === null || row.provider_state === undefined || row.provider_state === ""
+    ? null
+    : String(row.provider_state);
   return {
     quotaName,
     displayName: split ? `${base.replace(/_/g, " ")} · ${titleCase(split.tag)}` : quotaName.replace(/_/g, " "),
@@ -323,6 +337,10 @@ export function deriveCapacityWindow(row: any, options: CapacityOptions, canonic
     limitValue: limit,
     remainingValue: remaining,
     usedPct,
+    usedText: percentRow && kind !== "balance" && usedPct !== null ? nativePercentText(usedPct, row) : null,
+    wholePoint: isWholePointNative(row),
+    resolutionLabel: wholePointLabel(row),
+    providerState,
     remainingText,
     confidence: confidenceOf(row),
     measured: measurementOf(row),

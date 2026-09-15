@@ -251,6 +251,10 @@ def test_subscription_api_projects_only_safe_normalized_extension_presentations(
         "measurement_confidence",
         "provider_state",
         "coverage_status",
+        # Reader metadata (OpenCode Go native cutover, 2026-09-14): the
+        # allowlisted surface tag and the percent resolution it honours.
+        "source_surface",
+        "percent_resolution",
         # Reset-rail additions: the canonical provider key the donut legend
         # joins on, and an account ORDINAL. account_ref itself stays private —
         # the serialized-payload scan at the end of this test is the gate.
@@ -819,8 +823,9 @@ def test_subscription_chart_is_opt_in_and_preserves_days_history_contract(tmp_pa
         "/api/subscriptions?days=30&history=1"
     ).get_json()
 
-    assert set(payload) == {"freshness", "latest", "observations", "window"}
+    assert set(payload) == {"freshness", "latest", "observations", "window", "exclusions"}
     assert payload["window"] == {"days": 30}
+    assert payload["exclusions"] == {"retired_opencode_go_estimate_rows": 0}
 
 
 def test_subscription_hours_default_excludes_history_and_rejects_history_opt_in(tmp_path):
@@ -1916,6 +1921,9 @@ def test_unified_five_hour_handles_one_series_and_missing_or_invalid_primary_dat
             used_value="25",
             remaining_value="75",
             limit_value="100",
+            # A provider-observed Go reading; an "estimated" Go row is the
+            # retired replay and never charts (2026-09-14).
+            measurement_confidence="exact",
         ),
         # Present but impossible (used > limit): reported, not comparable.
         _quota_observation(

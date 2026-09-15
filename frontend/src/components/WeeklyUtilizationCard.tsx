@@ -1,11 +1,15 @@
 import { useMemo, useState } from "react";
 import type { WeeklyPanelState } from "../hooks/useDashboardData";
 import { formatTimestamp } from "../lib/format";
+import { WHOLE_POINT_LABEL, providerStateText } from "../lib/nativePercent";
 import {
+  NO_COMPLETED_NATIVE_TEXT,
   WEEKLY_MODES,
   compactWeeklySummary,
+  currentPctText,
   cycleReasonText,
   humanizeToken,
+  isWholePointCurrent,
   pctText,
   sampleLeadText,
   sortWeeklyWindows,
@@ -87,16 +91,20 @@ function WindowLabel({ window }: { window: WeeklyWindow }) {
 function WindowRows({ window, mode }: { window: WeeklyWindow; mode: WeeklyMode }) {
   const rowClasses = [`role-${window.role === "model_cap" ? "model-cap" : "primary"}`];
   if (mode === "current" && !window.current.eligible) rowClasses.push("is-excluded");
+  // A native whole-point reading (OpenCode Go usage API) prints the
+  // provider's integer and says so; every other window keeps one decimal.
+  const wholePoint = isWholePointCurrent(window.current);
   if (mode === "current") {
     const current = window.current;
+    const state = wholePoint ? providerStateText(current) : null;
     return (
       <tr className={rowClasses.join(" ")}>
         <th scope="row"><WindowLabel window={window} /></th>
         <td>{humanizeToken(window.quota_name)}</td>
-        <td>{pctText(current.used_pct)}</td>
-        <td>{pctText(current.remaining_pct)}</td>
-        <td>{humanizeToken(current.confidence)}</td>
-        <td>{`${humanizeToken(current.status)}${current.eligible ? "" : " · excluded"}`}</td>
+        <td>{currentPctText(current, "used_pct")}</td>
+        <td>{currentPctText(current, "remaining_pct")}</td>
+        <td>{`${humanizeToken(current.confidence)}${wholePoint ? ` · ${WHOLE_POINT_LABEL}` : ""}`}</td>
+        <td>{`${humanizeToken(current.status)}${current.eligible ? "" : " · excluded"}${state ? ` · provider state ${state}` : ""}`}</td>
         <td>{`observed ${formatTimestamp(current.observed_at)} · resets ${formatTimestamp(current.resets_at)}`}</td>
       </tr>
     );
@@ -112,7 +120,13 @@ function WindowRows({ window, mode }: { window: WeeklyWindow; mode: WeeklyMode }
         <td>{pctText(completed.remaining_pct)}</td>
         <td>mean of eligible cycles</td>
         <td>{`${completed.cycle_count} eligible · ${completed.excluded_cycle_count} excluded`}</td>
-        <td>{cycles.length ? `${cycles.length} boundary records` : "no boundary record"}</td>
+        <td>
+          {cycles.length
+            ? `${cycles.length} boundary records`
+            : wholePoint
+              ? `${NO_COMPLETED_NATIVE_TEXT} · waiting for provider-observed completed windows`
+              : "no boundary record"}
+        </td>
       </tr>
       {cycles.map((cycle, cycleIndex) => (
         <tr key={weeklyCycleKey(window, cycle, cycleIndex)} className={`weekly-cycle${cycle.eligible ? "" : " is-excluded"}`}>
@@ -134,7 +148,12 @@ export function WeeklyUtilizationCard({ weekly }: { weekly: WeeklyPanelState }) 
   const payload = weekly.data;
   const summary = payload ? (mode === "completed" ? payload.completed : payload.current) : null;
   const headline = useMemo(() => (summary ? summaryHeadline(summary, mode) : null), [summary, mode]);
-  const providerRows = useMemo(() => (summary ? weeklyProviderRows(summary, mode) : []), [summary, mode]);
+  // The provider rows read the windows' native whole-point metadata (the
+  // summaries carry none) so a single native Go account prints its integer.
+  const providerRows = useMemo(
+    () => (summary && payload ? weeklyProviderRows(summary, mode, payload.windows) : []),
+    [summary, mode, payload],
+  );
   const windows = useMemo(() => (payload ? sortWeeklyWindows(payload.windows) : []), [payload]);
   const modelCaps = windows.filter((window) => window.role === "model_cap").length;
 

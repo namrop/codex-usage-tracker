@@ -2005,6 +2005,7 @@ def test_quota_dotenv_allowlist_adds_only_exact_new_inputs(tmp_path):
         "ZAI_API_KEY": "z-ai-alias",
         "OPENCODE_GO_WORKSPACE_ID": "workspace-private",
         "OPENCODE_GO_AUTH_COOKIE": "cookie-private",
+        "OPENCODE_GO_API_KEY": "go-key-private",
     }
     dotenv.write_text(
         "".join(f"{key}={value}\n" for key, value in expected.items())
@@ -2031,8 +2032,8 @@ def test_collect_all_prefers_exact_opencode_go_quota_when_both_credentials_exist
             "opencode-go", "opencode_go_api", namespace, ("five_hour", "week", "month")
         )
 
-    def forbid_estimate(*args, **kwargs):
-        raise AssertionError("estimated OpenCode Go fallback must not run")
+    def forbid_native(*args, **kwargs):
+        raise AssertionError("the native reader must not run without OPENCODE_GO_API_KEY")
 
     monkeypatch.setattr(
         collector_module,
@@ -2040,7 +2041,7 @@ def test_collect_all_prefers_exact_opencode_go_quota_when_both_credentials_exist
         collect_exact,
         raising=False,
     )
-    monkeypatch.setattr(collector_module, "derive_opencode_go_quotas", forbid_estimate)
+    monkeypatch.setattr(collector_module, "collect_opencode_go_usage_quota", forbid_native)
     result, quota = _collect_quota_only(
         tmp_path,
         environment={
@@ -2068,9 +2069,12 @@ def test_collect_all_prefers_exact_opencode_go_quota_when_both_credentials_exist
     assert auth_cookie not in serialized
 
 
-def test_collect_all_keeps_estimated_opencode_go_fallback_without_credentials(
+def test_collect_all_reports_opencode_go_unavailable_without_credentials(
     tmp_path, monkeypatch
 ):
+    """Keeper acceptance 2026-09-14: the first-use USD estimate is retired.
+    Without a native key or a cookie pair the lane reports unavailable —
+    no network call, no fabricated rows, no warning."""
     exact_calls = []
     local_fact = dict(
         _usage_fact("opencode-go-local"),
@@ -2086,6 +2090,11 @@ def test_collect_all_keeps_estimated_opencode_go_fallback_without_credentials(
         lambda *args, **kwargs: exact_calls.append(args),
         raising=False,
     )
+    monkeypatch.setattr(
+        collector_module,
+        "collect_opencode_go_usage_quota",
+        lambda *args, **kwargs: exact_calls.append(args),
+    )
 
     result, quota = _collect_quota_only(tmp_path, environment={})
 
@@ -2094,14 +2103,10 @@ def test_collect_all_keeps_estimated_opencode_go_fallback_without_credentials(
         if row["provider"] == "opencode-go"
     ]
     assert exact_calls == []
-    assert result["sources"]["opencode_go_quota"] == {"discovered": 3}
+    assert result["sources"]["opencode_go_quota"] == {"discovered": 0}
+    assert "opencode_go_quota_estimated" not in result["sources"]
     assert result["warnings"] == []
-    assert len(rows) == 3
-    assert all(
-        row["measurement_confidence"] == "estimated"
-        and row["x_coverage"]["status"] == "partial"
-        for row in rows
-    )
+    assert rows == []
 
 
 @pytest.mark.parametrize(
@@ -2111,7 +2116,7 @@ def test_collect_all_keeps_estimated_opencode_go_fallback_without_credentials(
         ({"OPENCODE_GO_AUTH_COOKIE": "partial-private-cookie"}, "partial-private-cookie"),
     ],
 )
-def test_collect_all_uses_estimate_without_calling_network_for_partial_opencode_credentials(
+def test_collect_all_reports_unavailable_without_calling_network_for_partial_opencode_credentials(
     tmp_path, monkeypatch, partial_environment, partial_secret
 ):
     exact_calls = []
@@ -2121,6 +2126,11 @@ def test_collect_all_uses_estimate_without_calling_network_for_partial_opencode_
         lambda *args, **kwargs: exact_calls.append(args),
         raising=False,
     )
+    monkeypatch.setattr(
+        collector_module,
+        "collect_opencode_go_usage_quota",
+        lambda *args, **kwargs: exact_calls.append(args),
+    )
 
     result, quota = _collect_quota_only(tmp_path, environment=partial_environment)
 
@@ -2129,14 +2139,9 @@ def test_collect_all_uses_estimate_without_calling_network_for_partial_opencode_
         if row["provider"] == "opencode-go"
     ]
     assert exact_calls == []
-    assert result["sources"]["opencode_go_quota"] == {"discovered": 3}
+    assert result["sources"]["opencode_go_quota"] == {"discovered": 0}
     assert result["warnings"] == []
-    assert len(rows) == 3
-    assert all(
-        row["measurement_confidence"] == "estimated"
-        and row["x_coverage"]["status"] == "partial"
-        for row in rows
-    )
+    assert rows == []
     assert partial_secret not in json.dumps({"result": result, "facts": rows})
 
 
@@ -2144,7 +2149,7 @@ def test_collect_all_uses_estimate_without_calling_network_for_partial_opencode_
     ("failure_mode", "expected_error"),
     [("exception", "RuntimeError"), ("empty", "EmptyLaneResult")],
 )
-def test_collect_all_falls_back_to_estimated_opencode_go_after_exact_failure(
+def test_collect_all_cedes_the_cookie_lane_without_an_estimated_fallback(
     tmp_path, monkeypatch, failure_mode, expected_error
 ):
     workspace_id = "private-opencode-workspace"
@@ -2183,21 +2188,17 @@ def test_collect_all_falls_back_to_estimated_opencode_go_after_exact_failure(
         if row["provider"] == "opencode-go"
     ]
     assert result["sources"]["opencode_go_quota"] == {"discovered": 0}
-    assert result["sources"]["opencode_go_quota_estimated"] == {"discovered": 3}
+    assert "opencode_go_quota_estimated" not in result["sources"]
+    assert result["ceded"] == ["opencode_go_quota"]
     assert result["warnings"] == [
         {"source": "opencode_go_quota", "error": expected_error}
     ]
-    assert len(rows) == 3
-    assert all(
-        row["measurement_confidence"] == "estimated"
-        and row["x_coverage"]["status"] == "partial"
-        for row in rows
-    )
+    assert rows == []
     assert workspace_id not in json.dumps({"result": result, "facts": rows})
     assert auth_cookie not in json.dumps({"result": result, "facts": rows})
 
 
-def test_collect_all_strict_sources_cedes_the_exact_opencode_lane_after_fallback(
+def test_collect_all_strict_sources_cedes_the_exact_opencode_lane_without_fallback(
     tmp_path, monkeypatch
 ):
     """Keeper-ruled 2026-08-29: a failing lane cedes; strict runs still complete."""
@@ -2234,8 +2235,8 @@ def test_collect_all_strict_sources_cedes_the_exact_opencode_lane_after_fallback
         row for row in read_sqlite_facts(quota, fact_type="quota_observation_v1")
         if row["provider"] == "opencode-go"
     ]
-    assert len(rows) == 3
-    assert all(row["measurement_confidence"] == "estimated" for row in rows)
+    # No estimated stand-in: the ledger keeps whatever it last held.
+    assert rows == []
     assert "private exact failure" not in json.dumps(result)
 
 
@@ -2557,7 +2558,9 @@ def test_collect_all_sqlite_append_replay_and_three_fact_bindings(tmp_path, monk
 
     assert first["usage"] == {"discovered": 1, "appended": 1, "replayed": 0}
     assert second["usage"] == {"discovered": 1, "appended": 0, "replayed": 1}
-    assert first["quotas"]["appended"] == 3
+    # No live quota and no OpenCode Go credentials: nothing to append (the
+    # retired Go estimate used to contribute three rows here).
+    assert first["quotas"]["appended"] == 0
     assert first["billing"] == {"discovered": 0, "appended": 0, "replayed": 0}
     assert read_sqlite_facts(paths["usage_ledger"], fact_type="usage_event_v1")[0]["source_event_id"] == "u-1"
     for name, expected in (
@@ -2589,7 +2592,8 @@ def test_collect_all_preserves_jsonl_backend_compatibility(tmp_path, monkeypatch
     )
     assert result["usage"]["appended"] == 1
     assert read_facts(usage)[0]["source_event_id"] == "u-1"
-    assert {row["fact_type"] for row in read_facts(quota)} == {"quota_observation_v1"}
+    assert result["quotas"]["appended"] == 0
+    assert read_facts(quota) == []
     assert read_facts(billing) == []
 
 
