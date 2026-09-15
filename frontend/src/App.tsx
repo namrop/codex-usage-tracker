@@ -1,16 +1,19 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useDashboardData } from "./hooks/useDashboardData";
 import { useGlass } from "./hooks/useGlass";
 import { usePageBackground } from "./hooks/usePageBackground";
 import { usePalette } from "./hooks/usePalette";
-import { BillingCard } from "./components/BillingCard";
-import { BurnRateCard } from "./components/BurnRateCard";
-import { RulingsPerDollarCard } from "./components/RulingsPerDollarCard";
 import { GlassPanels } from "./components/GlassPanels";
 import { OpsHero } from "./components/OpsHero";
 import { deriveResetChips } from "./components/ResetRail";
-import { SubscriptionsCard, subscriptionThresholdSeconds } from "./components/SubscriptionsCard";
-import { UnifiedUsageCard } from "./components/UnifiedUsageCard";
+import { subscriptionThresholdSeconds } from "./components/SubscriptionsCard";
+import { ViewNav } from "./components/ViewNav";
+import { domRevealCandidate, scheduleReveal } from "./lib/reveal";
+import { parseViewHash, sameDocumentAnchorNavigation, type ViewLocation } from "./lib/views";
+import { AccountingView } from "./views/AccountingView";
+import { DiagnosticsView } from "./views/DiagnosticsView";
+import { HistoryView } from "./views/HistoryView";
+import { NowView } from "./views/NowView";
 
 // The shared estate picker: a gear that expands. mountSwitcher fetches it
 // (css + js) through the same origin -> snapshot hops, so this page always
@@ -25,6 +28,61 @@ function mountSwitcher(): void {
   gc.mountSwitcher("#gcSwitcher").catch(() => {});
 }
 
+// Hash-routed views (2026-09-14). The hash is the whole view state, so
+// reload, history and copied links land where the reader was; the data
+// hooks live here above the views, so switching a view never refetches and
+// last-good data, refresh cadence and per-panel failure notices are shared
+// by all four. Inactive views UNMOUNT rather than hide: a Chart.js canvas
+// built inside display:none is 0×0 and stays blank, so a view's charts are
+// built fresh, at their real size, when the view becomes active.
+function useViewLocation(): { location: ViewLocation; revealToken: number } {
+  const [location, setLocation] = useState<ViewLocation>(() => parseViewHash(window.location.hash));
+  // Bumped on every anchor navigation (a reset chip's #subscription-card-*
+  // link), so the fold that hides the card opens and the card scrolls into
+  // view even when the hash did not change. hashchange covers a changed
+  // hash; a repeated click on the SAME link navigates without any event
+  // (browser QA 2026-09-14: the fold stayed shut), so plain primary clicks
+  // on same-document fragment links are routed here too — the browser's
+  // default (history, modifiers, other targets, cross-view links) is never
+  // prevented, and no fake hash or query is written to force a change.
+  const [revealToken, setRevealToken] = useState(() => (parseViewHash(window.location.hash).anchor ? 1 : 0));
+  useEffect(() => {
+    const onHashChange = () => {
+      const next = parseViewHash(window.location.hash);
+      setLocation(next);
+      if (next.anchor) setRevealToken((token) => token + 1);
+    };
+    const onClick = (event: MouseEvent) => {
+      const origin = event.target instanceof Element ? event.target.closest("a[href]") : null;
+      if (!(origin instanceof HTMLAnchorElement)) return;
+      const navigation = sameDocumentAnchorNavigation({
+        href: origin.getAttribute("href"),
+        currentHref: window.location.href,
+        button: event.button,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        target: origin.getAttribute("target"),
+        download: origin.getAttribute("download"),
+        defaultPrevented: event.defaultPrevented,
+      });
+      // A changed hash reaches onHashChange; only the silent repeat of an
+      // anchor needs help.
+      if (!navigation || !navigation.sameHash || !navigation.location.anchor) return;
+      setLocation(navigation.location);
+      setRevealToken((token) => token + 1);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    document.addEventListener("click", onClick);
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+      document.removeEventListener("click", onClick);
+    };
+  }, []);
+  return { location, revealToken };
+}
+
 export default function App() {
   const palette = usePalette();
   // GC owns the glass preference; <GlassPanels> draws it on the shell's
@@ -36,6 +94,8 @@ export default function App() {
   // lib/background.ts for why the CSS token cannot be consumed directly.
   usePageBackground();
   const { state, refresh } = useDashboardData();
+  const { location, revealToken } = useViewLocation();
+  const view = location.view;
 
   useEffect(() => {
     mountSwitcher();
@@ -49,16 +109,37 @@ export default function App() {
     ? state.subs.data.latest
     : undefined;
   const subsFreshness = state.subs.data ? state.subs.data.freshness : null;
+  const thresholdSeconds = subscriptionThresholdSeconds(subsFreshness || {});
   const resetChips = useMemo(
     () => deriveResetChips(quotaLatest || [], {
       now: Date.now(),
-      maxAgeSeconds: subscriptionThresholdSeconds(subsFreshness || {}),
+      maxAgeSeconds: thresholdSeconds,
     }),
-    [quotaLatest, subsFreshness],
+    [quotaLatest, thresholdSeconds],
   );
 
+  // Reveal a deep-linked card once its view and fold have rendered. The
+  // subscriptions loader may still be in flight on a cold deep link, so
+  // this re-runs when it settles. scheduleReveal (lib/reveal.ts, Node-
+  // tested) waits frame by frame for the card to exist and have a box —
+  // the fold's reveal effect opens it on the commit after the token bump —
+  // then scrolls to it and focuses it (the cards carry tabIndex=-1),
+  // retrying until focus has actually landed or a bounded budget runs out.
+  const subsLoaded = !state.subs.loading;
+  useEffect(() => {
+    const anchor = location.anchor;
+    if (!anchor || !revealToken) return;
+    return scheduleReveal(
+      () => domRevealCandidate(document, anchor),
+      {
+        frame: (callback) => window.requestAnimationFrame(callback),
+        cancel: (id) => window.cancelAnimationFrame(id),
+      },
+    );
+  }, [location.anchor, revealToken, subsLoaded]);
+
   return (
-    <main className="shell">
+    <main className="shell" data-view={view}>
       <OpsHero
         freshness={state.freshness}
         soonestChip={resetChips[0]}
@@ -66,24 +147,21 @@ export default function App() {
         subsUnavailable={!state.subs.loading && state.subs.placeholder}
         unifiedData={state.unified.data}
       />
-      <UnifiedUsageCard
-        palette={palette}
-        unified={state.unified}
-        freshness={state.freshness}
-        donutFive={state.donutFive}
-        listPriceDay={state.listPriceDay}
-        quotaLatest={quotaLatest}
-        resetChips={resetChips}
-        subsLoading={state.subs.loading}
-        subsUnavailable={!state.subs.loading && state.subs.placeholder}
-        providerStatusFeeds={state.providerStatusFeeds}
-        refreshing={state.refreshing}
-        onRefresh={refresh}
-      />
-      <SubscriptionsCard palette={palette} subs={state.subs} />
-      <BurnRateCard burn={state.burn} />
-      <BillingCard billing={state.billing} />
-      <RulingsPerDollarCard rulings={state.rulings} />
+      <ViewNav current={view} refreshing={state.refreshing} onRefresh={refresh} />
+      {view === "now" && (
+        <NowView
+          state={state}
+          palette={palette}
+          resetChips={resetChips}
+          thresholdSeconds={thresholdSeconds}
+          revealToken={revealToken}
+        />
+      )}
+      {view === "history" && (
+        <HistoryView state={state} palette={palette} quotaLatest={quotaLatest} resetChips={resetChips} />
+      )}
+      {view === "accounting" && <AccountingView state={state} />}
+      {view === "diagnostics" && <DiagnosticsView state={state} />}
       <GlassPanels glass={glass} />
     </main>
   );

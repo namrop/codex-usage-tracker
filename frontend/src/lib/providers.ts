@@ -107,6 +107,37 @@ export function subscriptionSeriesDisplayLabel(
     : short;
 }
 
+// The ONE account label (2026-09-14): "Claude 1" / "Claude 2" on the
+// capacity summary, the reset rail, the burn table and the provider cards.
+// Identity is the canonical provider plus the API's account ordinal
+// (provider_account_index of provider_account_count, derived server-side
+// from the private account identity, never from array position); a single
+// account wears the bare short label. Rows may carry `provider_canonical`
+// (subscriptions) or a canonical `provider` (burn) — both resolve here.
+export function accountDisplayLabel(
+  row: {
+    provider?: unknown;
+    provider_canonical?: unknown;
+    provider_account_count?: unknown;
+    provider_account_index?: unknown;
+  } | null | undefined,
+): string {
+  const canonicalRaw = row && row.provider_canonical;
+  const canonical = canonicalRaw !== null && canonicalRaw !== undefined && canonicalRaw !== ""
+    ? String(canonicalRaw)
+    : providerKey(row && row.provider);
+  const short = SUBSCRIPTION_PROVIDER_SHORT_LABELS[canonical]
+    || PROVIDER_DISPLAY_NAMES[canonical]
+    || canonical
+    || "unknown";
+  const count = Number(row && row.provider_account_count);
+  const index = Number(row && row.provider_account_index);
+  if (Number.isSafeInteger(count) && count > 1 && Number.isSafeInteger(index) && index >= 1) {
+    return `${short} ${index}`;
+  }
+  return short;
+}
+
 // Stable per-provider card anchors (polish round item 13): the ids the rail
 // chips and the digest chip link to. Keys are the canonical provider group
 // keys the subscription cards render under.

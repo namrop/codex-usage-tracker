@@ -69,7 +69,7 @@ export function RulingsPerDollarCard({ rulings }: { rulings: RulingsPanelState }
         <div className="card-title">
           <h2 id="rulingsTitle">Rulings per dollar</h2>
           <p className="caption">
-            Keeper ratifications recorded in the Atrium ruling ledger, by ISO week (America/New_York), against the same week's list-price inference estimate. The ratio is rulings per $1,000 of estimated spend — judgment per dollar, computed rather than mined.
+            Keeper ratifications recorded in the Atrium ruling ledger, by ISO week (America/New_York), against the same week's API list-price equivalent — what that week's inference would have cost at public list prices, not billed spend. The ratio is recorded rulings per $1,000 of list-price equivalent — judgment per dollar, computed rather than mined.
           </p>
         </div>
       </div>
@@ -86,8 +86,8 @@ export function RulingsPerDollarCard({ rulings }: { rulings: RulingsPanelState }
               <tr>
                 <th scope="col">Week</th>
                 <th scope="col">Rulings</th>
-                <th scope="col">List price</th>
-                <th scope="col">Per $1k</th>
+                <th scope="col">List-price equivalent</th>
+                <th scope="col">Rulings per $1k list</th>
                 <th scope="col">Output tokens</th>
                 <th scope="col">Classes</th>
               </tr>
@@ -111,7 +111,7 @@ export function RulingsPerDollarCard({ rulings }: { rulings: RulingsPanelState }
         <p className="caption" id="rulingsFootnote">
           {totalRulings} recorded {totalRulings === 1 ? "ruling" : "rulings"} across {weeks.length} weeks from {ledgersScanned} {ledgersScanned === 1 ? "ledger" : "ledgers"}
           {parseErrors > 0 ? ` · ${parseErrors} ${parseErrors === 1 ? "entry" : "entries"} unparseable (counted, not dropped)` : ""}.
-          List price is an estimate at the standard service tier, not billed cost — subscription traffic bills $0 actual. The count measures rulings that were <em>recorded</em>, not keeper adjudication traffic.
+          The denominator is the API list-price equivalent at the standard service tier, not billed cost — subscription traffic bills $0 actual. The count measures rulings that were <em>recorded</em>, not keeper adjudication traffic.
         </p>
       </div>
     </section>

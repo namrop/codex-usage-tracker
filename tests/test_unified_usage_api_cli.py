@@ -2433,7 +2433,10 @@ def test_dashboard_page_is_provider_neutral_and_loads_private_panels_independent
     assert "No subscription observations" in hook
     assert "Billing data unavailable" in hook
     assert "No billing transactions" in hook
-    assert "Est. spend (list)" in card
+    # Renamed 2026-09-14 (keeper authorization): the headline is the API
+    # list-price equivalent, on the Accounting view's own card.
+    assert "Est. spend" not in card
+    assert "API list-price equivalent" in frontend_surfaces.source("components/ListPriceHeadline.tsx")
     assert "Billing ledger" in frontend_surfaces.source("components/BillingCard.tsx")
     # Injection safety: React text nodes only, no raw-HTML path.
     assert "dangerouslySetInnerHTML" not in joined

@@ -324,9 +324,11 @@ def test_subscription_provider_overview_and_raw_observation_details_exist(tmp_pa
         "Kimi K3 Coding",
     ):
         assert display_name in providers
+    # The record-class doctrine names the views now (2026-09-14) instead of
+    # "above"/"below", which stopped being true once the page split.
     assert (
-        "Usage events above, subscription quota observations here, and billing facts below "
-        "are separate record classes."
+        "Usage events (History), subscription quota observations (here), and billing facts "
+        "(Accounting) are separate record classes."
     ) in card
     assert "No quota estimate is a billing fact." in card
 
@@ -487,10 +489,11 @@ def test_codex_detail_section_is_removed_entirely():
         '"/api/token-chart"',
     ):
         assert retired_fetch not in surface
-    # The refresh button survives the section it used to live in, and the
-    # refresh cycle drives the unified surfaces.
+    # The refresh button survives the section it used to live in (since
+    # 2026-09-14 on the shared view nav, so every view can reach it), and
+    # the refresh cycle drives the unified surfaces.
     assert 'id="refreshUsage"' in surface
-    assert "onClick={onRefresh}" in frontend_surfaces.source("components/UnifiedUsageCard.tsx")
+    assert "onClick={onRefresh}" in frontend_surfaces.source("components/ViewNav.tsx")
     hook = frontend_surfaces.source("hooks/useDashboardData.ts")
     assert "if (!document.hidden && booted.current) hydrate();" in hook
     assert 'document.addEventListener("visibilitychange", onVisibility);' in hook

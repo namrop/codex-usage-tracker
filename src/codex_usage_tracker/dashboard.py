@@ -1021,6 +1021,58 @@ _BURN_MAX_WINDOW_SECONDS = 7 * 24 * 3600
 # observation still has a predecessor to measure a rise from.
 _BURN_BASELINE_MARGIN_SECONDS = 90 * 60
 
+# Account ordinals ("Claude 1", "Claude 2") are public identity and must read
+# the same on every surface. The subscriptions endpoint numbers the accounts
+# it sees in the dashboard's 168-hour window; the burn endpoint numbers
+# against that same roster rather than against whichever accounts happened
+# to burn in the last few hours, so a quiet primary account never lets the
+# secondary one become "1".
+_ACCOUNT_ROSTER_HOURS = _MAX_UNIFIED_SERIES_HOURS
+
+# Window kinds that are balances rather than windows: nothing resets, so a
+# burn forecast against them would be noise. They keep their data and carry
+# an explicit not-applicable projection status instead.
+_BURN_BALANCE_WINDOW_KINDS = frozenset({"lifetime", "unknown"})
+
+_BURN_PROJECTION_STATUSES = (
+    "exhausted",
+    "projected_before_reset",
+    "resets_first",
+    "insufficient_observations",
+    "not_applicable",
+    "stale",
+)
+
+
+def _latest_rows_per_identity(rows_newest_first: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per private series identity — the newest — from rows already
+    sorted newest first (``_quota_observation_order_key`` descending)."""
+    latest: list[dict[str, Any]] = []
+    seen: set[_QuotaSeriesIdentity] = set()
+    for row in rows_newest_first:
+        identity = _quota_series_identity(row)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        latest.append(row)
+    return latest
+
+
+def _quota_account_ordinals(
+    latest_rows: list[dict[str, Any]],
+) -> dict[str, dict[_QuotaAccountIdentity, int]]:
+    """Number each canonical provider's accounts 1..n by the shared account
+    sort key. The account reference itself stays private; only the ordinal
+    and the count cross the API, and every endpoint derives them here."""
+    indexes: dict[str, dict[_QuotaAccountIdentity, int]] = {}
+    for row in latest_rows:
+        provider = _canonical_quota_provider(row.get("provider"))
+        indexes.setdefault(provider, {})[_quota_account_identity(row)] = 0
+    for accounts in indexes.values():
+        for index, account in enumerate(sorted(accounts, key=_quota_account_sort_key), start=1):
+            accounts[account] = index
+    return indexes
+
 
 def _burn_seconds_until(resets_at: Any, *, now: datetime) -> float | None:
     if not isinstance(resets_at, str):
@@ -1032,10 +1084,74 @@ def _burn_seconds_until(resets_at: Any, *, now: datetime) -> float | None:
     return seconds if seconds > 0 else None
 
 
+def _burn_reset_datetime(resets_at: Any) -> datetime | None:
+    if not isinstance(resets_at, str):
+        return None
+    parsed = _rfc3339_order_key(resets_at)
+    return None if parsed is None else parsed[0]
+
+
+def _burn_projection_status(
+    *,
+    latest_pct: float | None,
+    latest_observed: datetime,
+    window_kind: str,
+    pct_per_hour: float | None,
+    resets_at: Any,
+    seconds_to_reset: float | None,
+    observation_count: int,
+    now: datetime,
+) -> tuple[str, str, float | None]:
+    """Classify one window's forecast. Returns ``(status, reason,
+    seconds_to_empty)``; ``seconds_to_empty`` is set only for
+    ``projected_before_reset``.
+
+    The order is the honesty order: a balance is never a window; a stale
+    reading asserts nothing about now (not even "exhausted"); a cap that is
+    at its cap is exhausted; without a positive measured rate there is no
+    forecast; without a future reset there is nothing to forecast against;
+    and only then does the arithmetic decide whether the window empties
+    first or resets first. The arithmetic itself is the 2026-09-02
+    estimator: rate at the observed active-use rate, no forecast beyond the
+    window's own reset.
+    """
+    if window_kind in _BURN_BALANCE_WINDOW_KINDS:
+        return "not_applicable", "balance_window", None
+    if latest_pct is None:
+        return "not_applicable", "no_utilization_ratio", None
+    if (now - latest_observed).total_seconds() > _PRIVATE_LEDGER_MAX_AGE_SECONDS:
+        return "stale", "observation_stale", None
+    reset_at = _burn_reset_datetime(resets_at)
+    if reset_at is not None and reset_at <= now and reset_at > latest_observed:
+        return "stale", "reset_passed_since_observation", None
+    if latest_pct >= 100:
+        return "exhausted", "used_at_cap", None
+    if pct_per_hour is None or pct_per_hour <= 0:
+        reason = "single_observation" if observation_count < 2 else "no_positive_rate"
+        return "insufficient_observations", reason, None
+    if reset_at is None:
+        return "not_applicable", "no_reset_reported", None
+    if seconds_to_reset is None:
+        return "not_applicable", "reset_not_in_future", None
+    if seconds_to_reset > _BURN_MAX_WINDOW_SECONDS:
+        return "not_applicable", "window_longer_than_seven_days", None
+    seconds_to_empty = (100.0 - latest_pct) / pct_per_hour * 3600.0
+    # Both legs are anchored at the latest observation: the ETA extrapolates
+    # from it, so the reset must be measured from it too. ``seconds_to_reset``
+    # (anchored at now) is the serialized countdown, not the comparison leg —
+    # comparing across anchors called an ETA that precedes the reset
+    # "resets_first" whenever the observation was older than the countdown.
+    observed_seconds_to_reset = (reset_at - latest_observed).total_seconds()
+    if seconds_to_empty <= observed_seconds_to_reset:
+        return "projected_before_reset", "empty_before_reset_at_observed_rate", seconds_to_empty
+    return "resets_first", "reset_before_empty_at_observed_rate", None
+
+
 def _build_quota_burn_projection(
     rows: list[dict[str, Any]],
     *,
     generated_at: datetime,
+    account_indexes: dict[str, dict[_QuotaAccountIdentity, int]] | None = None,
 ) -> dict[str, Any]:
     """Project quota observations into per-window burn series.
 
@@ -1046,8 +1162,17 @@ def _build_quota_burn_projection(
     window, so a reset reads as a gap rather than a negative burn. The
     exhaustion projection divides only by a strictly positive derived rate
     and never extends past the window's own ``resets_at``: if the honest
-    ETA lands after the reset, the panel says unknown instead of inventing
-    a lockout that will not happen.
+    ETA lands after the reset, the row says ``resets_first`` instead of
+    inventing a lockout that will not happen.
+
+    ``account_indexes`` is the authoritative roster the subscriptions
+    endpoint numbers accounts against. When it is supplied, a series whose
+    account is absent from it is historical-only (observed inside the burn
+    read's baseline margin or default window but outside the dashboard
+    roster) and is left out rather than inserted and re-sorted — inserting
+    renumbered the accounts the subscriptions endpoint had already
+    numbered. When it is ``None`` the ordinals are derived from the rows
+    themselves by the same shared sort.
     """
     grouped: dict[_QuotaSeriesIdentity, list[dict[str, Any]]] = {}
     for row in rows:
@@ -1058,9 +1183,27 @@ def _build_quota_burn_projection(
             continue
         grouped.setdefault(_quota_series_identity(row), []).append(row)
 
+    ordinals: dict[str, dict[_QuotaAccountIdentity, int]]
+    if account_indexes is None:
+        ordinals = {}
+        for identity in grouped:
+            ordinals.setdefault(identity[0], {})[identity[6]] = 0
+        for provider_accounts in ordinals.values():
+            for index, account in enumerate(
+                sorted(provider_accounts, key=_quota_account_sort_key), start=1
+            ):
+                provider_accounts[account] = index
+    else:
+        ordinals = {provider: dict(accounts) for provider, accounts in account_indexes.items()}
+        grouped = {
+            identity: window_rows
+            for identity, window_rows in grouped.items()
+            if identity[6] in ordinals.get(identity[0], {})
+        }
+
     series: list[dict[str, Any]] = []
     for identity in sorted(grouped, key=_quota_identity_sort_key):
-        provider, quota_name, _harness, _scope, window_kind, _unit, _account = identity
+        provider, quota_name, harness, quota_scope, window_kind, unit, account = identity
         window_rows = sorted(grouped[identity], key=_quota_observation_order_key)
         observations: list[dict[str, Any]] = []
         deltas: list[dict[str, Any]] = []
@@ -1115,33 +1258,47 @@ def _build_quota_burn_projection(
             pct_per_hour = None
         resets_at = latest_row.get("resets_at")
         seconds_to_reset = _burn_seconds_until(resets_at, now=generated_at)
+        status, reason, seconds_to_empty = _burn_projection_status(
+            latest_pct=latest_pct,
+            latest_observed=latest_observed,
+            window_kind=window_kind,
+            pct_per_hour=pct_per_hour,
+            resets_at=resets_at,
+            seconds_to_reset=seconds_to_reset,
+            observation_count=len(observations),
+            now=generated_at,
+        )
         exhaustion_at: str | None = None
-        if (
-            pct_per_hour is not None
-            and pct_per_hour > 0
-            and latest_pct is not None
-            and latest_pct < 100
-            and latest_observed is not None
-            and seconds_to_reset is not None
-            and seconds_to_reset <= _BURN_MAX_WINDOW_SECONDS
-        ):
-            seconds_to_empty = (100.0 - latest_pct) / pct_per_hour * 3600.0
-            if seconds_to_empty <= seconds_to_reset:
-                exhaustion_at = _iso_z(latest_observed + timedelta(seconds=seconds_to_empty))
+        if seconds_to_empty is not None:
+            exhaustion_at = _iso_z(latest_observed + timedelta(seconds=seconds_to_empty))
+        account_index = ordinals[provider][account]
         entry: dict[str, Any] = {
             "provider": provider,
             "label": _quota_provider_label(provider),
             "quota_name": quota_name,
+            "harness": harness,
+            "quota_scope": quota_scope,
             "window_kind": window_kind,
+            "unit": unit,
+            # Public account identity: the same ordinal and count the
+            # subscriptions endpoint serializes for this provider.
+            "provider_account_index": account_index,
+            "provider_account_count": len(ordinals[provider]),
             "measurement_confidence": latest_row.get("measurement_confidence"),
             "confidence_status": _quota_series_confidence(window_rows),
             "resets_at": resets_at,
             "seconds_to_reset": int(seconds_to_reset) if seconds_to_reset is not None else None,
             "latest_observed_at": latest_row.get("observed_at"),
             "latest_used_pct": latest_pct,
+            "observation_count": len(observations),
             "burn_rate_pct_per_hour": round(pct_per_hour, 4) if pct_per_hour is not None else None,
             "rate_window_deltas": len(rate_window),
-            "exhausted": latest_pct is not None and latest_pct >= 100,
+            # `exhausted` is the raw reading (at cap in the latest sample);
+            # `projection_status` is the honest claim, which a stale reading
+            # or a balance window can withhold.
+            "exhausted": status != "stale" and latest_pct is not None and latest_pct >= 100,
+            "projection_status": status,
+            "projection_reason": reason,
             "projected_exhaustion_at": exhaustion_at,
             "deltas": deltas,
             "observations": observations,
@@ -1151,11 +1308,16 @@ def _build_quota_burn_projection(
     return {
         "generated_at": _iso_z(generated_at),
         "description": (
-            "Per-account subscription windows: observed used percent over time, "
-            "the burn rate derived from the last monotonic rises, and an "
-            "exhaustion projection that never extends past the window's own "
-            "reset."
+            "Per-account quota windows of every kind the ledger observes — "
+            "five-hour and weekly model windows, model-specific caps, monthly "
+            "tool quotas, and account balances: observed used percent over "
+            "time, the burn rate at the observed active-use rate (rises over "
+            "the gaps they were measured across), and an exhaustion "
+            "projection that never extends past the window's own reset. "
+            "projection_status says which claim the row can make; balances "
+            "and lifetime windows carry no forecast and say so."
         ),
+        "projection_statuses": list(_BURN_PROJECTION_STATUSES),
         "series": series,
     }
 
@@ -2246,14 +2408,7 @@ def create_app(
                     )
                 ]
         rows.sort(key=_quota_observation_order_key, reverse=True)
-        latest: list[dict[str, Any]] = []
-        seen: set[_QuotaSeriesIdentity] = set()
-        for row in rows:
-            identity = _quota_series_identity(row)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            latest.append(row)
+        latest = _latest_rows_per_identity(rows)
 
         # Account ordinals for the reset rail. account_ref itself stays private
         # (it is deliberately absent from QUOTA_RESPONSE_FIELDS), but two
@@ -2261,18 +2416,10 @@ def create_app(
         # number. `latest` holds exactly one row per series identity and that
         # identity contains the account, so the account set here is identical to
         # the one the quota charts index, and the shared sort key makes the
-        # ordinals identical too.
-        latest_account_indexes: dict[str, dict[_QuotaAccountIdentity, int]] = {}
-        for row in latest:
-            provider = _canonical_quota_provider(row.get("provider"))
-            latest_account_indexes.setdefault(provider, {})[
-                _quota_account_identity(row)
-            ] = 0
-        for provider, accounts in latest_account_indexes.items():
-            for index, account in enumerate(
-                sorted(accounts, key=_quota_account_sort_key), start=1
-            ):
-                accounts[account] = index
+        # ordinals identical too. /api/quota-burn numbers against this same
+        # roster (see _ACCOUNT_ROSTER_HOURS), so "Claude 2" is one identity
+        # on every surface.
+        latest_account_indexes = _quota_account_ordinals(latest)
 
         def project(row: dict[str, Any]) -> dict[str, Any]:
             projected = {field: row.get(field) for field in QUOTA_RESPONSE_FIELDS}
@@ -2353,6 +2500,11 @@ def create_app(
                 query_before = generated_at + timedelta(microseconds=1)
             except OverflowError:
                 query_before = generated_at
+        # The account roster is the dashboard's subscriptions window
+        # (``/api/subscriptions?hours=168``: from the bucket floor of now),
+        # so the ordinals here are the ordinals there. One query covers both
+        # the roster and the (narrower) burn window.
+        roster_cutoff = _floor_to_bucket(generated_at) - timedelta(hours=_ACCOUNT_ROSTER_HOURS)
         typed_filters = {
             field: requested
             for field in ("provider", "harness", "quota_name")
@@ -2363,7 +2515,7 @@ def create_app(
                 resolved_quota_ledger,
                 fact_type="quota_observation_v1",
                 filters=typed_filters,
-                cutoff=cutoff,
+                cutoff=min(cutoff, roster_cutoff),
                 before=query_before,
                 order="desc",
             )
@@ -2373,10 +2525,30 @@ def create_app(
             return jsonify({"error": "ledger query exceeds private API row limit"}), 413
         except (MalformedLedgerError, ValidationError, IdentityConflictError):
             return jsonify({"error": "configured private ledger is unavailable"}), 503
+        rows = _drop_retired_spark_rows(rows)
+        rows.sort(key=_quota_observation_order_key, reverse=True)
+        generated_at_key = _datetime_rfc3339_order_key(generated_at)
+
+        def observed_key(row: dict[str, Any]) -> tuple[datetime, Decimal] | None:
+            return _rfc3339_order_key(row.get("observed_at"))
+
+        roster_rows = [
+            row
+            for row in rows
+            if (key := observed_key(row)) is not None
+            and key[0] >= roster_cutoff
+            and (generated_at_key is None or key <= generated_at_key)
+        ]
+        burn_rows = [
+            row
+            for row in rows
+            if (key := observed_key(row)) is not None and key[0] >= cutoff
+        ]
         return jsonify(
             _build_quota_burn_projection(
-                _drop_retired_spark_rows(rows),
+                burn_rows,
                 generated_at=generated_at,
+                account_indexes=_quota_account_ordinals(_latest_rows_per_identity(roster_rows)),
             )
         )
 

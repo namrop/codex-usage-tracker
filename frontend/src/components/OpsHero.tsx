@@ -1,10 +1,18 @@
+import { useViewportWidth } from "../hooks/useViewportWidth";
 import { formatTimestamp, intFormat } from "../lib/format";
 import { cededLanes, staleLaneSuffix, type Freshness } from "../lib/freshness";
+import { PHONE_MAX_WIDTH } from "./CapacityCard";
 import { ResetChip, type ResetChipModel } from "./ResetRail";
 
 // Ops digest: mirrors of the unified tile row's state (freshness, soonest
 // reset, week list-price, substitution watch) — the digest derives from the
 // same state the panels render from; it never fetches.
+//
+// On a phone (≤ 640px) the hero keeps its identity, the theme picker and
+// the four digest tiles (two abreast), and folds the descriptive subtitle
+// behind a native <details> — browser QA 2026-09-14 measured the first
+// capacity account a full screen below the top with the full text open.
+// Desktop is unchanged.
 
 export function OpsHero({ freshness, soonestChip, subsLoaded, subsUnavailable = false, unifiedData }: {
   freshness: Freshness | null;
@@ -15,6 +23,7 @@ export function OpsHero({ freshness, soonestChip, subsLoaded, subsUnavailable = 
   subsUnavailable?: boolean;
   unifiedData: any | null;
 }) {
+  const phone = useViewportWidth() <= PHONE_MAX_WIDTH;
   const status = freshness ? String(freshness.status || "unknown") : null;
   const ceded = freshness ? cededLanes(freshness).map((lane) => String(lane.lane)) : [];
   const freshnessRole = freshness
@@ -40,7 +49,7 @@ export function OpsHero({ freshness, soonestChip, subsLoaded, subsUnavailable = 
 
   const totals = (unifiedData && unifiedData.totals) || null;
   const week = (totals && totals.list_price) || null;
-  const spendText = week ? `$${week.estimate_usd || "0"} wk` : "—";
+  const spendText = week ? `$${week.estimate_usd || "0"}` : "—";
   const substituted = totals ? Number(totals.substituted_events || 0) : null;
   const substitutionNote = substituted === null
     ? "—"
@@ -51,12 +60,21 @@ export function OpsHero({ freshness, soonestChip, subsLoaded, subsUnavailable = 
   if (substituted !== null && substituted > 0) substitutionClasses.push("role-violation");
   if (substituted !== null && !substituted) substitutionClasses.push("role-stability");
 
+  const subtitle = (
+    <p className="subtitle">Capacity by account now, seven-day canonical usage history, API list-price equivalents beside posted billing facts, and collection diagnostics across configured AI harnesses and providers.</p>
+  );
+
   return (
     <section className="title-panel ops-hero" aria-labelledby="aiUsageTitle">
       <div className="ops-hero-intro">
         <p className="eyebrow">Private provider-neutral accounting</p>
         <h1 id="aiUsageTitle">AI Usage</h1>
-        <p className="subtitle">Seven-day canonical usage, subscription windows, and posted billing facts across configured AI harnesses and providers.</p>
+        {phone ? (
+          <details className="hero-brief">
+            <summary>About this dashboard</summary>
+            {subtitle}
+          </details>
+        ) : subtitle}
         <div id="gcSwitcher" className="gc-switcher-mount" aria-label="Governed Cognition theme" />
       </div>
       <aside className="ops-digest" aria-label="Operational digest">
@@ -81,9 +99,9 @@ export function OpsHero({ freshness, soonestChip, subsLoaded, subsUnavailable = 
           </span>
         </div>
         <div className="digest-item">
-          <div className="micro-label">Est. spend · week</div>
+          <div className="micro-label">API list-price equivalent · week</div>
           <strong className="digest-value" id="digestSpend">{spendText}</strong>
-          <span className="digest-note">list-price estimate</span>
+          <span className="digest-note">what the traffic would cost at list · not billed cost</span>
         </div>
         <div className={substitutionClasses.join(" ")} id="digestSubstitutionItem">
           <div className="micro-label">Substitution watch</div>

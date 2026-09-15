@@ -1,5 +1,5 @@
 import { formatCountdown } from "../lib/format";
-import { SUBSCRIPTION_PROVIDER_SHORT_LABELS, providerCardDomId, providerKey } from "../lib/providers";
+import { accountDisplayLabel, providerCardDomId, providerKey } from "../lib/providers";
 import { QUOTA_WEEKLY_NAMES, isPercentQuotaRow, quotaRowProviderKey, type QuotaRow } from "../lib/quota";
 import { useNow } from "../hooks/useNow";
 
@@ -10,8 +10,9 @@ import { useNow } from "../hooks/useNow";
 // claims "exact resets" and an estimated window has no honest countdown.
 // Same provider+window twice = a second account. When the API carries a
 // provider_account_count above one every chip of that provider is numbered
-// ("Claude 1", "Claude 2" — the same form the chart legends use); without
-// it, a duplicate window is numbered by order as "(2)".
+// through accountDisplayLabel ("Claude 1", "Claude 2" — the one label the
+// capacity summary, the burn table and the provider cards also use);
+// without it, a duplicate window is numbered by order as "(2)".
 
 export interface ResetChipModel {
   // Canonical provider id (identity); `label` is the display form.
@@ -22,10 +23,6 @@ export interface ResetChipModel {
   resetAt: number;
   weekly: boolean;
   label: string;
-}
-
-function chipDisplayName(cardKey: string, raw: string): string {
-  return SUBSCRIPTION_PROVIDER_SHORT_LABELS[cardKey] || cardKey || raw || "unknown";
 }
 
 export interface ResetChipOptions {
@@ -65,24 +62,21 @@ export function deriveResetChips(rows: QuotaRow[], options?: ResetChipOptions): 
         resetAt: Date.parse(String(row.resets_at)),
         weekly: QUOTA_WEEKLY_NAMES.has(String(row.quota_name || "")),
         label: "",
-        rawProvider: raw,
-        accountOrdinal: Number.isSafeInteger(accountCount) && accountCount > 1
-          && Number.isSafeInteger(accountIndex) && accountIndex >= 1
-          ? accountIndex
-          : 0,
+        accountLabel: accountDisplayLabel({ ...row, provider_canonical: cardKey }),
+        numbered: Number.isSafeInteger(accountCount) && accountCount > 1
+          && Number.isSafeInteger(accountIndex) && accountIndex >= 1,
       };
     })
     .filter((chip) => Number.isFinite(chip.resetAt) && Number.isFinite(chip.usedPct))
     .sort((a, b) => a.resetAt - b.resetAt);
   const seen = new Map<string, number>();
-  return chips.map(({ rawProvider, accountOrdinal, ...chip }) => {
+  return chips.map(({ accountLabel, numbered, ...chip }) => {
     const dupKey = `${chip.provider}:${chip.windowName}`;
     const byOrder = (seen.get(dupKey) || 0) + 1;
     seen.set(dupKey, byOrder);
-    const name = chipDisplayName(chip.cardKey, rawProvider);
-    const label = accountOrdinal
-      ? `${name} ${accountOrdinal}`
-      : byOrder > 1 ? `${name} (${byOrder})` : name;
+    const label = numbered
+      ? accountLabel
+      : byOrder > 1 ? `${accountLabel} (${byOrder})` : accountLabel;
     return { ...chip, label };
   });
 }

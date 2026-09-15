@@ -38,6 +38,9 @@ function expandAllRequested(): boolean {
 export interface FoldState {
   open: boolean;
   toggleOpen: () => void;
+  // Open for this render only (a deep link revealing a card inside the
+  // fold): like ?expand=all it writes no preference back.
+  reveal: () => void;
   allCols: boolean;
   toggleCols: () => void;
 }
@@ -58,6 +61,7 @@ export function useFoldState(foldKey: string): FoldState {
         return next;
       });
     },
+    reveal: () => setOpen(true),
     allCols,
     toggleCols: () => {
       setAllCols((prev) => {

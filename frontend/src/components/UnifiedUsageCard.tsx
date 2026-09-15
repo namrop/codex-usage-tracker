@@ -26,9 +26,14 @@ import { ChartCanvas } from "./ChartCanvas";
 import { DirectLabels, type DirectLabelRow } from "./DirectLabels";
 import { Donut } from "./Donut";
 import { Fold, tableFoldSummary } from "./Fold";
-import { ProviderStatus } from "./ProviderStatus";
-import { CountdownText, ResetRail, type ResetChipModel } from "./ResetRail";
+import { CountdownText, type ResetChipModel } from "./ResetRail";
 import { SeriesTable, type SeriesTableRow } from "./SeriesTable";
+
+// History view (2026-09-14): this card keeps every throughput, model,
+// composition and cache chart and every fold table it always had. The
+// reset rail and the provider status strip moved to the Now view, the
+// refresh control to the shared view nav, and the list-price tile to the
+// Accounting view's ListPriceHeadline.
 
 // Estate-wide token composition (keeper-ruled 2026-08-30, replacing the
 // codex-only Token bucket mix): the five canonical token buckets summed
@@ -253,59 +258,6 @@ function cacheHitRateModel(timeSeries: any, palette: Palette, frame: ChartFrame)
   };
 }
 
-// Spend sparkline (polish round item 12): the server's per-UTC-calendar-day
-// list-price estimates (oldest first; the first and last day may be partial
-// and say so) as a bare structure-role polyline — trend only; the exact
-// values ride the title.
-function spendDayLabel(day: any): string {
-  const date = new Date(day.day_start).toLocaleString([], { timeZone: "UTC", month: "short", day: "numeric" });
-  return `${date} $${day.estimate_usd}${day && day.partial === true ? " (partial)" : ""}`;
-}
-
-function SpendSparkline({ days }: { days: any[] }) {
-  const values = days.map((day) => Number(day && day.estimate_usd));
-  if (days.length < 2 || !values.every((value) => Number.isFinite(value))) {
-    return (
-      <svg
-        id="unifiedSpendSpark"
-        className="spend-spark"
-        viewBox="0 0 100 24"
-        preserveAspectRatio="none"
-        role="img"
-        aria-label="Daily list-price estimates over the window"
-        // SVGElement has no .hidden property — the attribute itself is what
-        // the style layer keys on in the SVG namespace.
-        {...({ hidden: "hidden" } as Record<string, string>)}
-      />
-    );
-  }
-  const width = 100;
-  const height = 24;
-  const pad = 2;
-  const max = Math.max(...values);
-  const points = values
-    .map((value, index) => {
-      const x = (index / (values.length - 1)) * width;
-      const y = max > 0 ? height - pad - (value / max) * (height - pad * 2) : height - pad;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-  const described = days.map(spendDayLabel).join(" · ");
-  return (
-    <svg
-      id="unifiedSpendSpark"
-      className="spend-spark"
-      viewBox="0 0 100 24"
-      preserveAspectRatio="none"
-      role="img"
-      aria-label={`Daily list-price estimates (UTC day buckets): ${described}`}
-    >
-      <polyline points={points} />
-      <title>{described}</title>
-    </svg>
-  );
-}
-
 // An accessible two-button group: exactly one option is pressed, both stay
 // reachable by keyboard as ordinary buttons, and the group is labelled so a
 // screen reader announces what is being switched.
@@ -399,19 +351,13 @@ function ChartSection({ sectionId, titleId, title, caption, controls, canvasId, 
   );
 }
 
-export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listPriceDay, quotaLatest, resetChips, subsLoading, subsUnavailable = false, providerStatusFeeds, refreshing, onRefresh }: {
+export function UnifiedUsageCard({ palette, unified, freshness, donutFive, quotaLatest, resetChips }: {
   palette: Palette;
   unified: { data: any | null; message: string | null; contentVisible: boolean };
   freshness: Freshness | null;
   donutFive: any | null;
-  listPriceDay: any | null;
   quotaLatest: QuotaRow[] | undefined;
   resetChips: ResetChipModel[];
-  subsLoading: boolean;
-  subsUnavailable?: boolean;
-  providerStatusFeeds: Record<string, any> | null;
-  refreshing: boolean;
-  onRefresh: () => void;
 }) {
   const data = unified.data;
   const timeSeries = data ? data.time_series : null;
@@ -449,22 +395,6 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
   const coverage = (data && data.coverage) || {};
   const events = data ? Number((data.window && data.window.event_count) || 0) : 0;
   const substituted = data ? Number(totals.substituted_events || 0) : 0;
-  const listWeek = totals.list_price || {};
-  const listPriceDaily: any[] = data && Array.isArray(data.list_price_daily) ? data.list_price_daily : [];
-
-  // Est. spend at LIST prices (keeper-ruled 2026-08-30): the subscription
-  // lanes report $0 actual, so the tile answers "what would this traffic
-  // cost at list." Week is the value; 24h and 5h fill in as their windows
-  // arrive; coverage keeps the gaps honest.
-  const spendHintParts: string[] = [];
-  if (listPriceDay) spendHintParts.push(`24h $${listPriceDay.estimate_usd}`);
-  const five = donutFive && donutFive.totals ? donutFive.totals.list_price : null;
-  if (five) spendHintParts.push(`5h $${five.estimate_usd}`);
-  const share = listWeek.priced_token_share;
-  if (share !== undefined && share < 0.999) {
-    spendHintParts.push(`${Math.round(share * 100)}% of tokens priced`);
-  }
-  spendHintParts.push("list-price estimate");
 
   const soonest = resetChips[0];
 
@@ -497,11 +427,6 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
           <p className="caption">Canonical token totals and request estimates; reasoning is diagnostic and never counted twice.</p>
           <p className="caption">{`Bucketed surfaces use ${wording.completePlural} (countdowns run in wall-clock time), and legend quota percentages are each provider’s own cap — never shares of one pool, never drawn as slices.`}</p>
         </div>
-        <div className="toolbar" aria-label="Refresh controls">
-          <button className="refresh-btn" id="refreshUsage" disabled={refreshing} onClick={onRefresh}>
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </button>
-        </div>
       </div>
       <div id="unifiedUsageState" className="empty-state" hidden={!unified.message}>{unified.message || ""}</div>
       <p id="unifiedCededNotice" className="lane-notice" hidden={!cededText} aria-live="polite">{cededText}</p>
@@ -523,12 +448,6 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
             <div className="hint" id="unifiedWindow">
               {data ? `${formatTimestamp(data.window.first_occurred_at)} → ${formatTimestamp(data.window.last_occurred_at)}` : "—"}
             </div>
-          </div>
-          <div className="metric">
-            <div className="label">Est. spend (list)</div>
-            <div className="value" id="unifiedPricedSpend">{data ? `$${listWeek.estimate_usd || "0"} wk` : "—"}</div>
-            <SpendSparkline days={listPriceDaily} />
-            <div className="hint" id="unifiedPricedSpendHint">{data ? spendHintParts.join(" · ") : "—"}</div>
           </div>
           <div className="metric">
             <div className="label">Soonest reset</div>
@@ -569,14 +488,6 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
               loadingText="Loading five-hour throughput…"
             />
           </section>
-          <section className="window-card" aria-labelledby="resetRailTitle">
-            <h3 id="resetRailTitle">Reset countdowns</h3>
-            <p className="caption">Every provider quota window that reports an exact reset time, soonest first.</p>
-            <ResetRail chips={resetChips} loading={subsLoading} unavailable={subsUnavailable} />
-          </section>
-        </div>
-
-        <div className="window-pair">
           <section className="window-card" aria-labelledby="weeklyDonutTitle">
             <h3 id="weeklyDonutTitle">Seven-day throughput by provider</h3>
             <p className="caption">The same provider split across the seven-day window.</p>
@@ -592,22 +503,6 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, listP
               palette={palette}
               loadingText="Loading seven-day throughput…"
             />
-          </section>
-          <section className="window-card" aria-labelledby="providerStatusTitle">
-            <h3 id="providerStatusTitle">Provider API status · 48 hours</h3>
-            <p className="caption">Provider status-feed badges over observed per-UTC-hour call health, where a dim cell means no traffic rather than a clean hour.</p>
-            <ProviderStatus
-              timeSeries={timeSeries}
-              feeds={providerStatusFeeds}
-              palette={palette}
-              loading={!data}
-            />
-            <ul className="status-key" aria-hidden="true">
-              <li><span className="status-cell state-ok" />all ok</li>
-              <li><span className="status-cell state-degraded" />some errors</li>
-              <li><span className="status-cell state-failing" />mostly errors</li>
-              <li><span className="status-cell state-idle" />no traffic</li>
-            </ul>
           </section>
         </div>
 

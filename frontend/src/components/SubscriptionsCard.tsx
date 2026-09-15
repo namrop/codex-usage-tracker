@@ -6,6 +6,7 @@ import { heartbeatStatus, staleLaneSuffix, type Freshness } from "../lib/freshne
 import {
   PROVIDER_DISPLAY_NAMES,
   PROVIDER_ORDER,
+  accountDisplayLabel,
   providerCardDomId,
   providerKey,
   subscriptionSeriesDisplayLabel,
@@ -28,6 +29,17 @@ import { Fold, tableFoldSummary } from "./Fold";
 import { CountdownText } from "./ResetRail";
 import { SeriesTable } from "./SeriesTable";
 import { TextRow } from "./UnifiedUsageCard";
+
+// The subscriptions surfaces, split across the views (2026-09-14) but kept
+// in one module because they share the provider grouping, the freshness
+// chain and the window renderer:
+//
+//   - SubscriptionHistoryCharts — the two unified utilization charts and
+//     their fold tables (History view);
+//   - SubscriptionProviderDetail — the per-provider cards behind a fold
+//     (Now view, below the capacity summary and burn), which the reset
+//     chips' #subscription-card-<provider> links reveal;
+//   - SubscriptionRawLedgerFold — the raw observation ledger (Diagnostics).
 
 // The freshness threshold chain the provider cards badge against, shared
 // with the reset rail so a chip and its card agree on what "current" means.
@@ -353,11 +365,12 @@ function SubscriptionWindow({ row }: { row: any }) {
   const metadataParts: string[] = [];
   if (hasQuotaValue(row.harness)) metadataParts.push(`Harness: ${String(row.harness)}`);
   // Two accounts on one provider share harness and quota name; the account
-  // index is the only thing that tells their windows apart.
+  // label ("Claude 2") is the only thing that tells their windows apart, and
+  // it is the same label the capacity summary and the rail use.
   const accountCount = Number(row.provider_account_count);
   const accountIndex = Number(row.provider_account_index);
   if (Number.isSafeInteger(accountCount) && accountCount > 1) {
-    metadataParts.push(`Account ${Number.isSafeInteger(accountIndex) ? accountIndex : "?"} of ${accountCount}`);
+    metadataParts.push(`${accountDisplayLabel(row)} · account ${Number.isSafeInteger(accountIndex) ? accountIndex : "?"} of ${accountCount}`);
   }
   if (hasQuotaValue(row.quota_scope)) metadataParts.push(`Scope: ${String(row.quota_scope)}`);
   metadataParts.push(`Unit: ${displayUnit || "unavailable"}`);
@@ -489,7 +502,7 @@ function ProviderCard({ group, thresholdSeconds }: { group: ProviderGroup; thres
   });
 
   return (
-    <article className="subscription-provider-card" id={providerCardDomId(group.key)}>
+    <article className="subscription-provider-card" id={providerCardDomId(group.key)} tabIndex={-1}>
       <div className="subscription-provider-header">
         <div className="subscription-provider-title">
           <h3>{readableProviderName(group)}</h3>
@@ -517,7 +530,7 @@ function ProviderCard({ group, thresholdSeconds }: { group: ProviderGroup; thres
 
 function PlaceholderProviderCard({ providerId, displayName }: { providerId: string; displayName: string }) {
   return (
-    <article className="subscription-provider-card" id={providerCardDomId(providerId)}>
+    <article className="subscription-provider-card" id={providerCardDomId(providerId)} tabIndex={-1}>
       <div className="subscription-provider-header">
         <div className="subscription-provider-title">
           <h3>{displayName}</h3>
@@ -530,17 +543,24 @@ function PlaceholderProviderCard({ providerId, displayName }: { providerId: stri
   );
 }
 
-// ── The card ────────────────────────────────────────────────────────────
+// ── Shared state derivations ────────────────────────────────────────────
 
-export function SubscriptionsCard({ palette, subs }: { palette: Palette; subs: SubsPanelState }) {
+function subscriptionRows(subs: SubsPanelState): any[] {
+  const data = subs.data;
+  return data && Array.isArray(data.latest) ? data.latest : [];
+}
+
+function subscriptionStatusMessage(subs: SubsPanelState): string | null {
+  return subs.loading ? "Loading subscription observations…" : subs.notice;
+}
+
+// ── History view: the two unified utilization charts ────────────────────
+
+export function SubscriptionHistoryCharts({ palette, subs }: { palette: Palette; subs: SubsPanelState }) {
   const data = subs.data;
   const viewportWidth = useViewportWidth();
-  const rows: any[] = data && Array.isArray(data.latest) ? data.latest : [];
   const freshness = (data && data.freshness) || {};
-
-  const statusMessage = subs.loading
-    ? "Loading subscription observations…"
-    : subs.notice;
+  const statusMessage = subscriptionStatusMessage(subs);
   const contentVisible = !subs.loading && (Boolean(data) || subs.placeholder);
 
   // Charts hidden while observations are stale/empty (honest quota meters,
@@ -591,54 +611,16 @@ export function SubscriptionsCard({ palette, subs }: { palette: Palette; subs: S
     ? timeSeries.unified_five_hour
     : {};
 
-  // Provider grouping: the rail chips anchor to the provider cards, so both
-  // resolve the same canonical group key (item 13).
-  const groups = useMemo(() => {
-    if (subs.placeholder || !data) return null;
-    const providerGroups = new Map<string, ProviderGroup>();
-    const ensureProviderGroup = (provider: unknown): ProviderGroup => {
-      const rawProvider = String(provider || "unknown").trim() || "unknown";
-      const key = providerKey(rawProvider);
-      if (!providerGroups.has(key)) {
-        providerGroups.set(key, { key, providerIds: new Set(), rows: [] });
-      }
-      const group = providerGroups.get(key)!;
-      group.providerIds.add(rawProvider);
-      return group;
-    };
-    PROVIDER_ORDER.forEach((provider) => ensureProviderGroup(provider));
-    rows.forEach((row) => {
-      ensureProviderGroup(row.provider).rows.push(row);
-    });
-    return Array.from(providerGroups.values()).sort((left, right) => {
-      const leftIndex = PROVIDER_ORDER.indexOf(left.key);
-      const rightIndex = PROVIDER_ORDER.indexOf(right.key);
-      const leftRank = leftIndex === -1 ? PROVIDER_ORDER.length : leftIndex;
-      const rightRank = rightIndex === -1 ? PROVIDER_ORDER.length : rightIndex;
-      if (leftRank !== rightRank) return leftRank - rightRank;
-      const displayOrder = readableProviderName(left).localeCompare(
-        readableProviderName(right), undefined, { sensitivity: "variant" },
-      );
-      if (displayOrder !== 0) return displayOrder;
-      return left.key < right.key ? -1 : left.key > right.key ? 1 : 0;
-    });
-  }, [subs.placeholder, data, rows]);
-
-  const thresholdSeconds = subscriptionThresholdSeconds(freshness);
-
-  const rawSummary = tableFoldSummary({ rows: rows.length, singular: "observation" });
-
   return (
     <section className="card" aria-labelledby="subscriptionsTitle">
       <div className="card-header">
         <div className="card-title">
-          <h2 id="subscriptionsTitle">Subscriptions</h2>
+          <h2 id="subscriptionsTitle">Subscription quota history</h2>
           <p className="caption">Provider quota windows, authority, reset times, and observation freshness; normalized utilization charts compare percentages only — never tokens or dollars.</p>
-          <p className="caption">Usage events above, subscription quota observations here, and billing facts below are separate record classes. No quota estimate is a billing fact.</p>
         </div>
       </div>
-      <div id="subscriptionsState" className="empty-state" hidden={!statusMessage}>{statusMessage || ""}</div>
-      <div id="subscriptionsContent" hidden={!contentVisible}>
+      <div id="subscriptionsHistoryState" className="empty-state" hidden={!statusMessage}>{statusMessage || ""}</div>
+      <div id="subscriptionsHistoryContent" hidden={!contentVisible}>
         <section className="subscription-quota-history" aria-label="Unified subscription quota history">
           <div className="subscription-unified-history-grid">
             <SubscriptionHistoryCard
@@ -690,15 +672,107 @@ export function SubscriptionsCard({ palette, subs }: { palette: Palette; subs: S
             />
           </div>
         </section>
-        <div id="subscriptionProviderGrid" className="subscription-provider-grid">
-          {subs.placeholder || !groups
-            ? Object.entries(PROVIDER_DISPLAY_NAMES).map(([providerId, displayName]) => (
-              <PlaceholderProviderCard key={providerId} providerId={providerId} displayName={displayName} />
-            ))
-            : groups.map((group) => (
-              <ProviderCard key={group.key} group={group} thresholdSeconds={thresholdSeconds} />
-            ))}
+      </div>
+    </section>
+  );
+}
+
+// ── Now view: per-provider detail behind a fold ─────────────────────────
+
+export function SubscriptionProviderDetail({ subs, revealToken = 0 }: { subs: SubsPanelState; revealToken?: number }) {
+  const data = subs.data;
+  const rows = subscriptionRows(subs);
+  const freshness = (data && data.freshness) || {};
+  const statusMessage = subscriptionStatusMessage(subs);
+  const contentVisible = !subs.loading && (Boolean(data) || subs.placeholder);
+
+  // Provider grouping: the rail chips anchor to the provider cards, so both
+  // resolve the same canonical group key (item 13).
+  const groups = useMemo(() => {
+    if (subs.placeholder || !data) return null;
+    const providerGroups = new Map<string, ProviderGroup>();
+    const ensureProviderGroup = (provider: unknown): ProviderGroup => {
+      const rawProvider = String(provider || "unknown").trim() || "unknown";
+      const key = providerKey(rawProvider);
+      if (!providerGroups.has(key)) {
+        providerGroups.set(key, { key, providerIds: new Set(), rows: [] });
+      }
+      const group = providerGroups.get(key)!;
+      group.providerIds.add(rawProvider);
+      return group;
+    };
+    PROVIDER_ORDER.forEach((provider) => ensureProviderGroup(provider));
+    rows.forEach((row) => {
+      ensureProviderGroup(row.provider).rows.push(row);
+    });
+    return Array.from(providerGroups.values()).sort((left, right) => {
+      const leftIndex = PROVIDER_ORDER.indexOf(left.key);
+      const rightIndex = PROVIDER_ORDER.indexOf(right.key);
+      const leftRank = leftIndex === -1 ? PROVIDER_ORDER.length : leftIndex;
+      const rightRank = rightIndex === -1 ? PROVIDER_ORDER.length : rightIndex;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      const displayOrder = readableProviderName(left).localeCompare(
+        readableProviderName(right), undefined, { sensitivity: "variant" },
+      );
+      if (displayOrder !== 0) return displayOrder;
+      return left.key < right.key ? -1 : left.key > right.key ? 1 : 0;
+    });
+  }, [subs.placeholder, data, rows]);
+
+  const thresholdSeconds = subscriptionThresholdSeconds(freshness);
+  const providerCount = groups ? groups.length : Object.keys(PROVIDER_DISPLAY_NAMES).length;
+  const detailSummary = `${providerCount} providers · ${tableFoldSummary({ rows: rows.length, singular: "window" })}`;
+
+  return (
+    <section className="card" aria-labelledby="subscriptionDetailTitle">
+      <div className="card-header">
+        <div className="card-title">
+          <h2 id="subscriptionDetailTitle">Subscriptions by provider</h2>
+          <p className="caption">Every provider’s quota windows with authority, reset times and observation freshness — the detail behind the capacity summary above.</p>
+          <p className="caption">Usage events (History), subscription quota observations (here), and billing facts (Accounting) are separate record classes. No quota estimate is a billing fact.</p>
         </div>
+      </div>
+      <div id="subscriptionsState" className="empty-state" hidden={!statusMessage}>{statusMessage || ""}</div>
+      <div id="subscriptionsContent" hidden={!contentVisible}>
+        <Fold
+          foldKey="subscriptionProviderDetail"
+          label="Per-provider subscription detail"
+          summary={detailSummary}
+          revealToken={revealToken}
+        >
+          <div id="subscriptionProviderGrid" className="subscription-provider-grid">
+            {subs.placeholder || !groups
+              ? Object.entries(PROVIDER_DISPLAY_NAMES).map(([providerId, displayName]) => (
+                <PlaceholderProviderCard key={providerId} providerId={providerId} displayName={displayName} />
+              ))
+              : groups.map((group) => (
+                <ProviderCard key={group.key} group={group} thresholdSeconds={thresholdSeconds} />
+              ))}
+          </div>
+        </Fold>
+      </div>
+    </section>
+  );
+}
+
+// ── Diagnostics view: the raw observation ledger ────────────────────────
+
+export function SubscriptionRawLedgerFold({ subs }: { subs: SubsPanelState }) {
+  const rows = subscriptionRows(subs);
+  const statusMessage = subscriptionStatusMessage(subs);
+  const contentVisible = !subs.loading && (Boolean(subs.data) || subs.placeholder);
+  const rawSummary = tableFoldSummary({ rows: rows.length, singular: "observation" });
+
+  return (
+    <section className="card" aria-labelledby="subscriptionsRawTitle">
+      <div className="card-header">
+        <div className="card-title">
+          <h2 id="subscriptionsRawTitle">Raw quota observations</h2>
+          <p className="caption">The latest observation per provider window exactly as the ledger holds it — the evidence behind every capacity row; these are not usage events or billing facts.</p>
+        </div>
+      </div>
+      <div id="subscriptionsRawState" className="empty-state" hidden={!statusMessage}>{statusMessage || ""}</div>
+      <div id="subscriptionsRawContent" hidden={!contentVisible}>
         <Fold foldKey="subscriptionsRaw" label="Raw quota observation ledger" summary={rawSummary} colsToggle>
           <div className="table-wrap">
             <table className="tier-quota">

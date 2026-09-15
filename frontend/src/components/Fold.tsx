@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { chartConstructor } from "../lib/chart";
 import { useFoldState } from "../hooks/useFoldState";
 import { compactIntFormat, intFormat } from "../lib/format";
@@ -54,13 +54,24 @@ interface FoldProps {
   summary: string;
   headingLevel?: 3 | 4;
   colsToggle?: boolean;
+  // A counter the owner bumps to reveal the body (a deep link into a card
+  // inside the fold). Zero/undefined never opens anything; the preference
+  // is not written — a link revealing a card is not the reader's choice
+  // to keep it open.
+  revealToken?: number;
   children: ReactNode;
 }
 
-export function Fold({ foldKey, label, summary, headingLevel = 3, colsToggle = false, children }: FoldProps) {
-  const { open, toggleOpen, allCols, toggleCols } = useFoldState(foldKey);
+export function Fold({ foldKey, label, summary, headingLevel = 3, colsToggle = false, revealToken = 0, children }: FoldProps) {
+  const { open, toggleOpen, reveal, allCols, toggleCols } = useFoldState(foldKey);
   const sectionRef = useRef<HTMLElement | null>(null);
   const Heading = headingLevel === 4 ? "h4" : "h3";
+
+  useEffect(() => {
+    if (revealToken > 0) reveal();
+    // reveal is stable for the fold's lifetime; only the token drives this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealToken]);
 
   const onToggle = () => {
     const willOpen = !open;

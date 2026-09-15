@@ -213,6 +213,38 @@ h1 {
   margin-top: 16px;
 }
 
+/* Phone briefs (second fix pass 2026-09-14): on a phone the hero subtitle
+ * and the capacity caption sit behind a native <details>, one tap from
+ * their full text, so the first capacity account lands on the first
+ * screen. Rendered only below the phone breakpoint (the components branch
+ * on viewport width); desktop never sees them. */
+.hero-brief,
+.card-brief {
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 8px;
+}
+
+.hero-brief > summary,
+.card-brief > summary {
+  cursor: pointer;
+  width: fit-content;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.hero-brief[open] > summary,
+.card-brief[open] > summary {
+  margin-bottom: 6px;
+}
+
+.hero-brief .subtitle,
+.card-brief .caption {
+  margin-top: 0;
+}
+
 /* Ops digest (keeper polish round 2026-08-30, item 2): the top hero's
  * right half answers "does anything need me?" — ledger freshness,
  * soonest reset, week list-price estimate, substitution watch. The
@@ -1142,7 +1174,8 @@ tbody tr:hover {
 }
 
 .subscription-badge.stale,
-.subscription-badge.confidence-estimated {
+.subscription-badge.confidence-estimated,
+.subscription-badge.confidence-partial {
   color: var(--warning);
   border-color: color-mix(in srgb, var(--warning) 52%, transparent);
   background: color-mix(in srgb, var(--warning) 12%, transparent);
@@ -1242,6 +1275,262 @@ tbody tr:hover {
   padding: 12px 0;
 }
 
+/* -- view nav (2026-09-14): four hash-routed views on one compact bar.
+ * Real links; aria-current="page" is the selected state the style draws.
+ * Wraps rather than overflows so a 390px phone never scrolls the root
+ * sideways. -- */
+.view-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 4px;
+}
+
+.view-nav-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.view-nav-link {
+  display: inline-block;
+  padding: 7px 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--panel-soft) 70%, transparent);
+}
+
+.view-nav-link:hover {
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.view-nav-link:focus-visible {
+  outline: 2px solid var(--gc-role-structure);
+  outline-offset: 2px;
+}
+
+.view-nav a[aria-current="page"] {
+  color: var(--bg);
+  background: var(--text);
+  border-color: var(--text);
+}
+
+.view-nav .toolbar {
+  margin: 0;
+}
+
+/* -- capacity by account (2026-09-14): one row per provider account, the
+ * binding window first. Structure only; the state roles ride the same
+ * ok/warning/danger tokens the rail chips use. -- */
+.capacity-list {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.capacity-account {
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-soft) 70%, transparent);
+  overflow: hidden;
+}
+
+.capacity-account.state-exhausted { border-left-color: var(--danger); }
+.capacity-account.state-constrained { border-left-color: var(--warning); }
+.capacity-account.state-available { border-left-color: var(--ok); }
+.capacity-account.state-stale,
+.capacity-account.state-unknown { border-left-color: var(--muted-2); }
+
+.capacity-account-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.capacity-account-label {
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+
+.capacity-state {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--line-soft);
+  color: var(--muted);
+}
+
+.capacity-state.state-exhausted {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.capacity-state.state-constrained {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+.capacity-state.state-available {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.capacity-headline,
+.capacity-note {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.capacity-windows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.capacity-window {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.capacity-window.is-at-cap {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.capacity-window.is-stale {
+  opacity: 0.68;
+  border-style: dashed;
+}
+
+.capacity-window-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 8px;
+  font-size: 0.8rem;
+}
+
+.capacity-window-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.capacity-window-kind {
+  color: var(--muted-2);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+}
+
+.capacity-window-remaining {
+  font-size: 1.02rem;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.capacity-window.kind-balance .capacity-window-remaining,
+.capacity-window.kind-tool .capacity-window-remaining {
+  font-variant-numeric: tabular-nums;
+}
+
+.capacity-meter {
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 35%, transparent);
+  overflow: hidden;
+}
+
+.capacity-meter-fill {
+  height: 100%;
+  background: var(--weekly);
+}
+
+.capacity-window.is-at-cap .capacity-meter-fill {
+  background: var(--danger);
+}
+
+.capacity-window-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.capacity-stale-text {
+  color: var(--warning);
+}
+
+.capacity-projection {
+  color: var(--text);
+}
+
+/* -- diagnostics (2026-09-14): freshness, coverage and evidence blocks.
+ * Tables inherit the estate table-wrap. -- */
+.diagnostics-block {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.diagnostics-block h3 {
+  margin-bottom: 6px;
+}
+
+.diagnostics-table {
+  min-width: 560px;
+}
+
+.diagnostics-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.diagnostics-table tr.role-violation :is(th, td) {
+  color: var(--danger);
+}
+
 .color-token { color: var(--token); }
 .negative { color: var(--danger); }
 .neutral { color: var(--muted); }
@@ -1263,8 +1552,60 @@ tbody tr:hover {
     border-radius: 6px;
   }
 
+  /* Compact phone header (second fix pass 2026-09-14): the first capacity
+   * account must sit inside the first 844px screen. Tighter panel padding,
+   * a smaller title, and the four digest tiles two abreast instead of a
+   * single stack; every column is minmax(0, …) so nothing widens the root. */
+  .title-panel {
+    padding: 14px 14px 12px;
+  }
+
+  .ops-hero {
+    gap: 10px;
+  }
+
+  .ops-hero h1 {
+    font-size: 1.7rem;
+  }
+
+  .eyebrow {
+    margin-bottom: 4px;
+    font-size: 0.68rem;
+  }
+
+  .gc-switcher-mount {
+    margin-top: 6px;
+  }
+
   .ops-digest {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .digest-item {
+    padding: 7px 8px;
+    gap: 3px;
+  }
+
+  .digest-value {
+    font-size: 0.92rem;
+  }
+
+  .digest-note {
+    font-size: 0.7rem;
+    line-height: 1.3;
+  }
+
+  .card {
+    padding: 12px;
+  }
+
+  .card-header {
+    margin-bottom: 8px;
+  }
+
+  .capacity-list {
+    margin-top: 8px;
   }
 
   .subscription-provider-grid {
@@ -1307,6 +1648,25 @@ tbody tr:hover {
   .direct-labels {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  /* 390px phone: one window per line, nav wraps, nothing pushes the root
+   * wider than the viewport. */
+  .capacity-windows {
+    grid-template-columns: 1fr;
+  }
+
+  .capacity-account {
+    padding: 10px 11px;
+  }
+
+  .view-nav {
+    padding: 4px 0;
+  }
+
+  .view-nav-link {
+    padding: 6px 10px;
+    font-size: 0.8rem;
   }
 }
 
@@ -1542,6 +1902,16 @@ html[data-gc-shape="slanted"] *::after {
 
 .burn-projected td:last-child {
   font-variant-numeric: tabular-nums;
+}
+
+/* Projection claims (2026-09-14): a stale sample and a non-applicable
+ * balance read quieter than a live forecast. */
+.burn-stale td:last-child {
+  color: var(--warning);
+}
+
+.burn-not-applicable td:last-child {
+  color: var(--muted-2);
 }
 
 /* -- rulings per dollar (2026-09-10): keeper ratifications per ISO week
