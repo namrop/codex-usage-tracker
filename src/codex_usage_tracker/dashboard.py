@@ -2552,6 +2552,78 @@ def create_app(
             )
         )
 
+    @app.route("/api/weekly-utilization")
+    def api_weekly_utilization():
+        """Percent of each primary weekly allowance used now and left unused
+        at observed resets (keeper request 2026-09-14). Semantics live in
+        ``weekly_utilization``; this route owns the bounded private read,
+        the inclusive-now cut and the 168h account roster."""
+        # Imported here: the pure module reuses this module's quota helpers,
+        # so a top-level import would be circular.
+        from .weekly_utilization import (
+            WEEKS_DEFAULT,
+            WEEKS_MAX,
+            WEEKS_MIN,
+            build_weekly_utilization,
+            weekly_lookback_days,
+        )
+
+        if not resolved_quota_ledger:
+            return jsonify({"error": "quota ledger is not configured"}), 404
+        weeks_text = request.args.get("weeks")
+        try:
+            weeks = WEEKS_DEFAULT if weeks_text is None else int(weeks_text)
+        except ValueError:
+            return jsonify({"error": "weeks must be an integer"}), 400
+        if not WEEKS_MIN <= weeks <= WEEKS_MAX:
+            return jsonify({"error": f"weeks must be between {WEEKS_MIN} and {WEEKS_MAX}"}), 400
+        if not Path(resolved_quota_ledger).expanduser().exists():
+            return jsonify({"error": "quota ledger is not available"}), 404
+        generated_at = datetime.now(timezone.utc)
+        cutoff = generated_at - timedelta(days=weekly_lookback_days(weeks))
+        roster_cutoff = _floor_to_bucket(generated_at) - timedelta(hours=_ACCOUNT_ROSTER_HOURS)
+        try:
+            query_before = generated_at + timedelta(microseconds=1)
+        except OverflowError:
+            query_before = generated_at
+        try:
+            rows = _private_facts(
+                resolved_quota_ledger,
+                fact_type="quota_observation_v1",
+                filters={},
+                cutoff=min(cutoff, roster_cutoff),
+                before=query_before,
+                order="desc",
+            )
+        except UnsupportedLedgerSuffix:
+            return jsonify({"error": "unsupported ledger suffix"}), 400
+        except PrivateLedgerQueryTooLarge:
+            return jsonify({"error": "ledger query exceeds private API row limit"}), 413
+        except (MalformedLedgerError, ValidationError, IdentityConflictError):
+            return jsonify({"error": "configured private ledger is unavailable"}), 503
+        rows = _drop_retired_spark_rows(rows)
+        rows.sort(key=_quota_observation_order_key, reverse=True)
+        generated_at_key = _datetime_rfc3339_order_key(generated_at)
+        # Inclusive-now, same rule as /api/subscriptions: no future-dated
+        # fact reaches the roster or the projection.
+        rows = [
+            row
+            for row in rows
+            if (key := _rfc3339_order_key(row.get("observed_at"))) is not None
+            and (generated_at_key is None or key <= generated_at_key)
+        ]
+        roster_rows = [
+            row for row in rows if _rfc3339_order_key(row.get("observed_at"))[0] >= roster_cutoff
+        ]
+        return jsonify(
+            build_weekly_utilization(
+                rows,
+                generated_at=generated_at,
+                weeks=weeks,
+                account_indexes=_quota_account_ordinals(_latest_rows_per_identity(roster_rows)),
+            )
+        )
+
     @app.route("/api/searches")
     def api_searches():
         """Web search/extract calls per backend per day, with rate limits.

@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { formatTimestamp } from "../lib/format";
 import { staleLaneSuffix, type Freshness } from "../lib/freshness";
 import { whenThemeReady } from "../lib/palette";
+import { isWeeklyUtilizationPayload, type WeeklyUtilizationPayload } from "../lib/weeklyUtilization";
 
-// One hydrate cycle = the four private-panel loaders (unified usage,
-// subscriptions, billing, provider status feeds), exactly as the pre-React
-// inline script ran them. Each loader owns its panel's failure text; the
-// refresh button state only tracks the cycle. Refresh runs every 60 seconds
-// while the tab is visible, and again whenever the tab becomes visible.
+// One hydrate cycle = the private-panel loaders (unified usage,
+// subscriptions, billing, provider status feeds, weekly allowance use),
+// exactly as the pre-React inline script ran them. Each loader owns its
+// panel's failure text; the refresh button state only tracks the cycle.
+// Refresh runs every 60 seconds while the tab is visible, and again
+// whenever the tab becomes visible.
 
 export interface UnifiedPanelState {
   data: any | null;
@@ -40,6 +42,12 @@ export interface BillingPanelState {
   contentVisible: boolean;
 }
 
+export interface WeeklyPanelState {
+  data: WeeklyUtilizationPayload | null;
+  message: string | null;
+  contentVisible: boolean;
+}
+
 export interface DashboardState {
   unified: UnifiedPanelState;
   // The digest mirrors freshness even when the panel falls back to a
@@ -51,6 +59,7 @@ export interface DashboardState {
   burn: BurnPanelState;
   billing: BillingPanelState;
   rulings: RulingsPanelState;
+  weekly: WeeklyPanelState;
   providerStatusFeeds: Record<string, any> | null;
   refreshing: boolean;
 }
@@ -64,6 +73,7 @@ const INITIAL_STATE: DashboardState = {
   burn: { data: null, message: "Loading window burn rate…", contentVisible: false },
   billing: { data: null, message: "Loading billing facts…", contentVisible: false },
   rulings: { data: null, message: "Loading rulings per dollar…", contentVisible: false },
+  weekly: { data: null, message: "Loading weekly allowance use…", contentVisible: false },
   providerStatusFeeds: null,
   refreshing: false,
 };
@@ -276,6 +286,35 @@ async function loadRulings(set: Set): Promise<void> {
   }
 }
 
+async function loadWeeklyUtilization(set: Set): Promise<void> {
+  // Weekly allowance use (shared contract 2026-09-14). One bounded read at
+  // the default four completed windows; the panel and the Now strip share
+  // this slot so switching views never refetches. A 404 is the backend's
+  // "safe missing/unconfigured source" answer and reads as such — never as
+  // a zero; a malformed body fails the same way a bad status does.
+  try {
+    const response = await fetch("/api/weekly-utilization?weeks=4", { signal: AbortSignal.timeout(30000) });
+    if (response.status === 404) {
+      set((prev) => ({
+        ...prev,
+        weekly: { data: null, message: "Weekly allowance use is not configured on this dashboard.", contentVisible: false },
+      }));
+      return;
+    }
+    if (!response.ok) throw new Error("unavailable");
+    const data = await response.json();
+    if (!isWeeklyUtilizationPayload(data)) throw new Error("malformed");
+    set((prev) => ({ ...prev, weekly: { data, message: null, contentVisible: true } }));
+  } catch (error) {
+    set((prev) => {
+      if (prev.weekly.contentVisible) {
+        return { ...prev, weekly: { ...prev.weekly, message: "Refresh failed — showing last good data." } };
+      }
+      return { ...prev, weekly: { data: null, message: "Weekly allowance use unavailable.", contentVisible: false } };
+    });
+  }
+}
+
 async function loadProviderStatusFeeds(set: Set): Promise<void> {
   try {
     const response = await fetch("/api/provider-status", { signal: AbortSignal.timeout(15000) });
@@ -303,6 +342,7 @@ export function useDashboardData(): { state: DashboardState; refresh: () => void
         loadBurn(setState),
         loadBilling(setState),
         loadRulings(setState),
+        loadWeeklyUtilization(setState),
         loadProviderStatusFeeds(setState),
       ]);
     } finally {

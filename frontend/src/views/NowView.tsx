@@ -5,6 +5,7 @@ import { CapacityCard } from "../components/CapacityCard";
 import { ProviderStatus } from "../components/ProviderStatus";
 import { ResetRail, type ResetChipModel } from "../components/ResetRail";
 import { SubscriptionProviderDetail } from "../components/SubscriptionsCard";
+import { WeeklyUtilizationSummary } from "../components/WeeklyUtilizationCard";
 
 // Now (the default view): what can I use right now, how fast is it going,
 // when does it come back, and is the provider up — in that order, with the
@@ -25,6 +26,7 @@ export function NowView({ state, palette, resetChips, thresholdSeconds, revealTo
     <>
       <CapacityCard subs={state.subs} burn={state.burn} thresholdSeconds={thresholdSeconds} />
       <BurnRateCard burn={state.burn} />
+      <WeeklyUtilizationSummary weekly={state.weekly} />
       <section className="card" aria-labelledby="nowHealthTitle">
         <div className="card-header">
           <div className="card-title">

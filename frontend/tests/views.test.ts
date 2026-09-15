@@ -82,6 +82,11 @@ describe("parseViewHash", () => {
     assert.equal(viewForAnchor("capacityTitle"), "now");
   });
 
+  it("routes the weekly allowance deep link to History with the panel id as its anchor", () => {
+    assert.deepEqual(parseViewHash("#weeklyUtilization"), { view: "history", anchor: "weeklyUtilization" });
+    assert.equal(viewForAnchor("weeklyUtilizationTitle"), "history");
+  });
+
   it("falls back to Now with no anchor for an unknown hash", () => {
     assert.deepEqual(parseViewHash("#nonsense"), { view: "now", anchor: null });
     assert.deepEqual(parseViewHash("#%E2%9C%93"), { view: "now", anchor: null });

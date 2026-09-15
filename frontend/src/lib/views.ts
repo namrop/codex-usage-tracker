@@ -43,6 +43,9 @@ const ANCHOR_PREFIXES: readonly [string, ViewId][] = Object.freeze([
   ["burn", "now"],
   ["resetRail", "now"],
   ["providerStatus", "now"],
+  // Weekly allowance use (2026-09-14): the Now strip links here; the panel
+  // is the first card on History and carries id="weeklyUtilization".
+  ["weeklyUtilization", "history"],
   ["subscriptionUnified", "history"],
   ["modelToken", "history"],
   ["tokenComposition", "history"],

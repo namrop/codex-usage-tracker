@@ -4,10 +4,12 @@ import type { QuotaRow } from "../lib/quota";
 import type { ResetChipModel } from "../components/ResetRail";
 import { SubscriptionHistoryCharts } from "../components/SubscriptionsCard";
 import { UnifiedUsageCard } from "../components/UnifiedUsageCard";
+import { WeeklyUtilizationCard } from "../components/WeeklyUtilizationCard";
 
-// History: every chart and table the long page carried — seven-day
-// throughput donuts, tokens by model, token composition, cache hit rate,
-// the harness and provider/model folds, and the two unified quota
+// History: the weekly allowance use panel first (2026-09-14: "how much am I
+// leaving on the table"), then every chart and table the long page carried
+// — seven-day throughput donuts, tokens by model, token composition, cache
+// hit rate, the harness and provider/model folds, and the two unified quota
 // utilization charts with their fold tables. Nothing was dropped; it just
 // no longer sits ahead of the capacity summary.
 
@@ -19,6 +21,7 @@ export function HistoryView({ state, palette, quotaLatest, resetChips }: {
 }) {
   return (
     <>
+      <WeeklyUtilizationCard weekly={state.weekly} />
       <UnifiedUsageCard
         palette={palette}
         unified={state.unified}

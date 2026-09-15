@@ -1535,6 +1535,253 @@ tbody tr:hover {
 .negative { color: var(--danger); }
 .neutral { color: var(--muted); }
 
+/* -- weekly allowance use (2026-09-14): the History panel (mode switch,
+ * aggregate headline, per-provider used/remaining bars, expandable detail)
+ * and the Now strip. Structure and tokens only; the bar fill is the same
+ * weekly series token the quota charts draw, estimated bars hatch it, and
+ * nothing here is a state colour — an unused allowance is not an alarm. -- */
+.weekly-card,
+.weekly-summary-card {
+  min-width: 0;
+}
+
+.weekly-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.weekly-mode button {
+  padding: 6px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.weekly-mode button:hover {
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.weekly-mode button:focus-visible {
+  outline: 2px solid var(--gc-role-structure);
+  outline-offset: 2px;
+}
+
+.weekly-mode button[aria-pressed="true"] {
+  color: var(--bg);
+  background: var(--text);
+  border-color: var(--text);
+}
+
+.weekly-headline {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 4px 16px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.weekly-headline-value {
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.weekly-headline-complement {
+  color: var(--muted);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.weekly-coverage {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.weekly-providers {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.weekly-provider {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.weekly-provider-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 10px;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.weekly-provider-coverage {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.weekly-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 35%, transparent);
+  overflow: hidden;
+}
+
+.weekly-bar-fill {
+  height: 100%;
+  background: var(--weekly);
+}
+
+.weekly-provider.is-estimated .weekly-bar-fill {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--weekly) 0 6px,
+    color-mix(in srgb, var(--weekly) 55%, transparent) 6px 10px
+  );
+}
+
+.weekly-provider.is-empty .weekly-bar {
+  border: 1px dashed var(--line-soft);
+  background: transparent;
+}
+
+.weekly-bar-labels {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 10px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.weekly-detail {
+  margin-top: 14px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.weekly-detail > summary {
+  cursor: pointer;
+  width: fit-content;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.weekly-detail[open] > summary {
+  margin-bottom: 8px;
+}
+
+.weekly-detail .table-wrap {
+  margin-top: 6px;
+}
+
+.weekly-table {
+  min-width: 720px;
+}
+
+.weekly-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.weekly-table tr.role-model-cap :is(th, td) {
+  color: var(--muted);
+}
+
+.weekly-table tr.weekly-cycle :is(th, td) {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.weekly-table tr.weekly-cycle th {
+  padding-left: 22px;
+  font-weight: 400;
+}
+
+.weekly-table tr.is-excluded :is(th, td) {
+  opacity: 0.75;
+}
+
+.weekly-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.weekly-notes {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.weekly-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 8px 0 0;
+}
+
+.weekly-strip > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  align-content: start;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-soft) 70%, transparent);
+}
+
+.weekly-strip dt {
+  color: var(--muted-2);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.weekly-strip dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.weekly-strip dd strong {
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.weekly-strip dd.caption {
+  font-size: 0.8rem;
+}
+
 @media (max-width: 1100px) {
   .ops-hero,
   .window-pair {
@@ -1658,6 +1905,20 @@ tbody tr:hover {
 
   .capacity-account {
     padding: 10px 11px;
+  }
+
+  /* Weekly allowance use: headline stacks, the two Now tiles stack, the
+   * detail table scrolls inside its own wrap rather than widening the root. */
+  .weekly-headline {
+    grid-template-columns: 1fr;
+  }
+
+  .weekly-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .weekly-headline-value {
+    font-size: 1.6rem;
   }
 
   .view-nav {
