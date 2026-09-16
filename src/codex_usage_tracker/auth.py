@@ -42,6 +42,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .hermes_home import resolve_hermes_home
+
 LOGGER = logging.getLogger(__name__)
 
 BASE_URL = "https://chatgpt.com"
@@ -54,21 +56,18 @@ TOKEN_EXPIRY_SKEW_SECONDS = 60
 def _resolve_auth_file() -> Path:
     """Resolve Codex OAuth token storage across Hermes layouts.
 
-    Legacy desktop installs store auth at ``~/.hermes/auth.json``. Hermes
-    profiles and Sol primary use ``HERMES_HOME`` directly, with auth at
-    ``$HERMES_HOME/auth.json``. ``CODEX_USAGE_AUTH_FILE`` is a narrow escape
-    hatch for supervised deployments that need an explicit path.
+    ``CODEX_USAGE_AUTH_FILE`` is a narrow escape hatch for supervised
+    deployments that need an explicit path, and wins outright. Otherwise the
+    file is ``auth.json`` under the shared Hermes home — ``HERMES_HOME``, else
+    the Sol canonical root when it exists, else ``~/.hermes``. See
+    ``hermes_home`` for why the Sol step is not a plain ``~/.hermes`` default.
     """
 
     explicit = os.environ.get("CODEX_USAGE_AUTH_FILE")
     if explicit:
         return Path(explicit).expanduser()
 
-    hermes_home = os.environ.get("HERMES_HOME")
-    if hermes_home:
-        return Path(hermes_home).expanduser() / "auth.json"
-
-    return Path.home() / ".hermes" / "auth.json"
+    return resolve_hermes_home() / "auth.json"
 
 
 def _read_auth_file() -> Optional[Dict[str, Any]]:

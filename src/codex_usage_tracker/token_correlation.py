@@ -9,21 +9,23 @@ import os
 import sqlite3
 from typing import Any, Dict, Iterable, List, Optional
 
-
-DEFAULT_HERMES_STATE_DB = "~/.hermes/state.db"
+from .hermes_home import resolve_hermes_home
 
 
 def resolve_state_db_path(cli_value: Optional[str] = None) -> str:
-    """Resolve the Hermes session database path used for token correlation."""
+    """Resolve the Hermes session database path used for token correlation.
+
+    An explicit path — CLI flag, then ``HERMES_STATE_DB_PATH`` — wins. Otherwise
+    ``state.db`` sits in the shared Hermes home, the same one ``auth.py`` reads
+    ``auth.json`` from, so correlation can never describe a different install
+    than the credentials it correlates against. See ``hermes_home``.
+    """
     if cli_value:
         return cli_value
     env_value = os.environ.get("HERMES_STATE_DB_PATH")
     if env_value:
         return env_value
-    hermes_home = os.environ.get("HERMES_HOME")
-    if hermes_home:
-        return str(Path(hermes_home).expanduser() / "state.db")
-    return DEFAULT_HERMES_STATE_DB
+    return str(resolve_hermes_home() / "state.db")
 
 
 def _parse_ts(raw: Any) -> Optional[datetime]:

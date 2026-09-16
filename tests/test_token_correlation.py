@@ -27,11 +27,33 @@ def test_resolve_state_db_path_uses_explicit_env_then_hermes_home(tmp_path, monk
     assert resolve_state_db_path("/cli/state.db") == "/cli/state.db"
 
 
-def test_resolve_state_db_path_falls_back_to_legacy_home(monkeypatch):
+def test_resolve_state_db_path_falls_back_to_legacy_home(tmp_path, monkeypatch):
     monkeypatch.delenv("HERMES_HOME", raising=False)
     monkeypatch.delenv("HERMES_STATE_DB_PATH", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr("codex_usage_tracker.hermes_home._sol_primary_present", lambda: False)
 
-    assert resolve_state_db_path() == "~/.hermes/state.db"
+    assert resolve_state_db_path() == str(tmp_path / "home" / ".hermes" / "state.db")
+
+
+def test_resolve_state_db_path_follows_the_sol_primary_route(tmp_path, monkeypatch):
+    # Same policy as auth.json: on Sol the canonical root wins over ``~/.hermes``.
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.delenv("HERMES_STATE_DB_PATH", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr("codex_usage_tracker.hermes_home._sol_primary_present", lambda: True)
+
+    assert resolve_state_db_path() == "/var/lib/hermes/primary/state.db"
+
+
+def test_explicit_state_db_env_overrides_the_sol_primary_route(tmp_path, monkeypatch):
+    explicit = tmp_path / "custom-state.db"
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("HERMES_STATE_DB_PATH", str(explicit))
+    monkeypatch.setattr("codex_usage_tracker.hermes_home._sol_primary_present", lambda: True)
+
+    assert resolve_state_db_path() == str(explicit)
+    assert resolve_state_db_path("/cli/state.db") == "/cli/state.db"
 
 
 def _make_event_state_db(path):

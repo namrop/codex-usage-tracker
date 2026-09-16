@@ -7,10 +7,12 @@ explicit interchange format.
 
 ## What it does
 
-- Loads Codex credentials **read-only** from `~/.hermes/auth.json` (or
-  `$HERMES_HOME/auth.json`) and fetches `/backend-api/wham/usage` from
-  `chatgpt.com`. It never refreshes or writes the token — see
-  [Credential ownership](#credential-ownership).
+- Loads Codex credentials **read-only** from `$HERMES_HOME/auth.json` — on Sol
+  that is `/var/lib/hermes/primary/auth.json`, which is also the no-env route
+  there — and fetches `/backend-api/wham/usage` from `chatgpt.com`. On a host
+  without that root it falls back to `~/.hermes/auth.json`. It never refreshes
+  or writes the token — see [Credential ownership](#credential-ownership) and
+  [Where Hermes state is read from](#where-hermes-state-is-read-from).
 - Preserves the legacy Codex JSONL snapshot daemon and public-safe projection.
 - Collects usage from Hermes, Claude Code, and OpenCode plus quota/account
   observations from Codex, Claude Code, Kimi Code, OpenRouter, DeepSeek, and
@@ -78,6 +80,33 @@ status`, and re-authorize with `hermes auth add openai-codex` if needed.
 Full incident:
 `07_systems/hermes/incidents/hermes_codex_oauth_dual_uncoordinated_refreshers_auth_store_write_race_incident_2026-08-15.md`
 in the Atrium canon.
+
+## Where Hermes state is read from
+
+`auth.json` and the token-correlation `state.db` resolve through one policy
+(`codex_usage_tracker/hermes_home.py`), so the two always describe the same
+Hermes install:
+
+1. **`HERMES_HOME`** — the explicit route, and the only way to address a Hermes
+   profile. Both production service wrappers export it; on Sol they set
+   `HERMES_HOME=/var/lib/hermes/primary`.
+2. **`/var/lib/hermes/primary`** when that directory actually exists — the Sol
+   canonical home, used when no env var is set. The check is a stat of that
+   absolute path, not a guess from `$HOME`, so it identifies the real Sol
+   install and nothing else. Without this step an unwrapped invocation on Sol
+   (an ad-hoc CLI run, a cron entry inheriting no environment) resolved to
+   `~/.hermes`, which on Sol is a **stale non-canonical copy** belonging to no
+   live gateway.
+3. **`~/.hermes`** — the portable fallback. On any host that is not a Sol
+   primary install (legacy desktop layouts included) this is still the default,
+   unchanged.
+
+Two explicit overrides sit in front of that resolution and keep their priority:
+
+- `CODEX_USAGE_AUTH_FILE` — a full path to `auth.json`, for supervised
+  deployments. Beats everything above, including `HERMES_HOME`.
+- `HERMES_STATE_DB_PATH` (and the `--state-db` flag, which beats it) — a full
+  path to the Hermes session database.
 
 ## Install
 
