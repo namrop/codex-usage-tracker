@@ -277,9 +277,40 @@ def test_reasoning_is_not_double_billed_on_astra_long_context():
     assert with_reasoning["estimate_usd"] == output_only["estimate_usd"] == "75.00"
 
 
-def test_glm_flash_is_not_given_an_invented_rate():
-    """glm-5.3-flash has no published rate; it must fall to the documented,
-    conservative-high zai default rather than a made-up flash price."""
+def test_glm_flash_carries_its_published_rate_not_a_stand_in():
+    """SUPERSEDED 2026-09-24. This test previously asserted the opposite: that
+    glm-5.3-flash had no published rate and must fall to the conservative-high
+    zai default. Z.ai does publish one, on its own pricing page, and the
+    stand-in was overstating flash traffic by ~8.9x. The discipline the old
+    test protected is unchanged — never invent a rate — but the honest way to
+    satisfy it here is the published number, not a family fallback.
+    """
     zai = LIST_PRICES["zai"]
-    assert "glm-5.3-flash" not in zai["models"]
-    assert zai["default"] == zai["models"]["glm-5.3"]
+    assert zai["models"]["glm-5.3-flash"] == {
+        "input": "0.15", "output": "0.50", "cache_read": "0.03", "cache_write": "0",
+    }
+    # And the stand-in is gone, so a FUTURE Z.ai model surfaces as coverage
+    # instead of silently pricing at the GLM-5.3 rate.
+    assert zai["default"] is None
+
+
+def test_no_paid_provider_keeps_a_rate_bearing_default():
+    """The invariant the 2026-09-24 audit settled on.
+
+    A provider default cannot distinguish an unlisted sibling from a foreign
+    model. The 'deepseek' label was carrying ~119M tokens of gpt-5.5 plus
+    Gemini and local-mlx traffic, every token of it priced silently at
+    DeepSeek rates. So a default is now permitted only where it is $0 — local
+    inference, where there is no rate to get wrong.
+    """
+    for provider, entry in LIST_PRICES.items():
+        default = entry.get("default")
+        if default is None:
+            continue
+        rates = {k: v for k, v in default.items() if k != "long"}
+        is_free = all(str(v) in ("0", "0.0", "0.00") for v in rates.values())
+        assert is_free or provider == "anthropic", (
+            f"{provider} keeps a rate-bearing default ({rates}); it will price "
+            f"unlisted AND foreign models silently. Either give the models real "
+            f"entries or set default=None so they surface as coverage."
+        )

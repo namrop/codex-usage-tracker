@@ -372,48 +372,115 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
         },
         "default": None,
     },
-    # Z.ai list: GLM-5.3 $1.40/$4.40, cached input $0.26 (storage currently
-    # free).
+    # Z.ai. All rates read 2026-09-24 from Z.ai's OWN pricing page,
+    # https://docs.z.ai/guides/overview/pricing ("All prices are in USD"),
+    # fetched directly from its markdown endpoint rather than through an
+    # aggregator — an aggregator's resale price is not the provider's list
+    # price. The pre-existing GLM-5.3 figures were confirmed unchanged.
     #
-    # DOCUMENTED ASSUMPTION (re-stated 2026-09-06): glm-5.3-flash has no
-    # published rate in the checked sources. Rather than invent a "flash"
-    # discount, it falls to the zai default, which is the full GLM-5.3 rate —
-    # deliberately conservative-high, so the estimate over-states rather than
-    # under-states flash traffic. Replace with a published flash rate when
-    # one is verified; do not guess a multiplier.
+    # "Cached Input Storage" is published as "Limited-time Free", so
+    # cache_write 0 here is Z.ai's stated current position rather than a
+    # missing lookup. It is TIME-LIMITED by Z.ai's own wording — recheck.
+    #
+    # PROVIDER DEFAULT REMOVED 2026-09-24. It existed solely as a
+    # conservative-high stand-in for glm-5.3-flash — which turns out to be
+    # published, at $0.15/$0.50/$0.03. The stand-in was overstating flash
+    # traffic by ~8.9x (112.7M tokens in the trailing 14 days). With flash and
+    # 5.2 both carrying real entries, a default could now only serve to
+    # silently price some FUTURE Z.ai model, which is the exact failure this
+    # table exists to prevent. New ids surface as coverage and wake the
+    # nightly price-coverage job instead.
     "zai": {
         "models": {
             "glm-5.3": {"input": "1.40", "output": "4.40", "cache_read": "0.26", "cache_write": "0"},
-        },
-        "default": {"input": "1.40", "output": "4.40", "cache_read": "0.26", "cache_write": "0"},
-    },
-    # OpenCode Go is a subscription (no per-token bill); these are the
-    # underlying model's list rates (same as the zai glm-5.3 entry) used to
-    # estimate quota consumption. qwen3.7-max stays unpriced until a rate is
-    # known — no provider default, so it surfaces as coverage.
-    "opencode-go": {
-        "models": {
-            "glm-5.3": {"input": "1.40", "output": "4.40", "cache_read": "0.26", "cache_write": "0"},
+            "glm-5.3-flash": {"input": "0.15", "output": "0.50", "cache_read": "0.03", "cache_write": "0"},
+            # 653M tokens of historical traffic, and still published by Z.ai
+            # at the same rates as 5.3.
+            "glm-5.2": {"input": "1.40", "output": "4.40", "cache_read": "0.26", "cache_write": "0"},
         },
         "default": None,
     },
-    # Moonshot list: K3 $3/$15, cache-hit input $0.30.
+    # OpenCode Go: a $10/month subscription with NO per-token bill, where
+    # included usage is metered as a monthly DOLLAR allowance per model
+    # (GLM-5.3 $15/mo; the 5-hour window is 20% of it, the weekly 50%).
+    #
+    # CORRECTED 2026-09-24. The previous comment called these "the underlying
+    # model's list rates", i.e. borrowed from Z.ai. They are not borrowed:
+    # OpenCode publishes its OWN per-token table for the Go plan at
+    # https://opencode.ai/docs/go ("Token prices are per 1M tokens"), verified
+    # against the docs source in the sst/opencode repo on 2026-09-24. The
+    # figures happen to equal Z.ai's GLM list rates, but the source of record
+    # for an opencode-go label is now OpenCode itself.
+    #
+    # cache_write is printed as "-" on that table, i.e. NOT published.
+    # Recorded as 0, a written-down understatement rather than a verified
+    # zero. No provider default: an unlisted Go model surfaces as coverage.
+    "opencode-go": {
+        "models": {
+            "glm-5.3": {"input": "1.40", "output": "4.40", "cache_read": "0.26", "cache_write": "0"},
+            # 18.8M tokens of historical traffic that was previously unpriced.
+            "glm-5.2": {"input": "1.40", "output": "4.40", "cache_read": "0.26", "cache_write": "0"},
+        },
+        "default": None,
+    },
+    # Moonshot / Kimi. The 'kimi-coding' label is Kimi Code, a MEMBERSHIP
+    # product (Plus $19/mo through Ultra $199/mo) that publishes quota
+    # allowances only and no per-token rate card — so exactly as with the
+    # Codex and Claude Max lanes, Moonshot's pay-as-you-go API card is the
+    # correct counterfactual for what this traffic would otherwise cost.
+    #
+    # Rates read 2026-09-24 from https://platform.kimi.ai/docs/pricing/chat.
+    # The pre-existing $3 / $15 / $0.30 figures were confirmed correct.
+    #
+    # cache_write ADDED 2026-09-24 at $3.00. Moonshot bills a one-time
+    # per-token cache WRITE, tiered by TTL: $3.00 at the default 5-minute TTL
+    # and $6.00 at one hour. This table has no TTL dimension, so it records
+    # the default tier, and 1-hour-TTL traffic is consequently understated 2x
+    # on writes. Cache hits within the TTL bill only the $0.30 cached-input
+    # rate and renew the entry; there is no ongoing storage rent.
+    #
+    # PROVENANCE NOTE, because it nearly cost us the number: this page's own
+    # .md export and a plain fetch both return a 4-column table with the two
+    # Cache Write columns MISSING. The full 7-column table is only visible in
+    # a rendered browser session, which is where these figures came from,
+    # cross-checked against the RMB card on platform.kimi.com (¥20 at 5min,
+    # ¥40 at 1h). Do NOT "correct" this back to 0 from the .md export.
+    #
+    # No effect on any current estimate: the ledger records ZERO cache-write
+    # tokens on this provider to date. It is recorded so that when that
+    # changes, the change is priced.
+    #
+    # PROVIDER DEFAULT REMOVED 2026-09-24: both served ids are explicit now,
+    # and the published siblings (k2.7-code $0.95/$4.00, k2.6 $0.95/$4.00) are
+    # CHEAPER than K3 — so a K3-rate default would overstate them, and worse,
+    # would silently price any foreign model arriving under this label.
     "kimi-coding": {
         "models": {
-            "k3": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "0"},
-            "kimi-k3": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "0"},
+            "k3": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.00"},
+            "kimi-k3": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.00"},
         },
-        "default": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "0"},
+        "default": None,
     },
-    # DeepSeek list: v4-pro $0.95/$4.00, v4-flash $0.14/$0.28. Cache-hit
-    # rate not found in the checked sources — ASSUMED 10% of input, the
-    # provider convention; verify.
+    # DeepSeek list: v4-pro $0.95/$4.00, v4-flash $0.14/$0.28. Cache-hit rate
+    # not found in the checked sources — ASSUMED 10% of input, the provider
+    # convention; verify. This is the last surviving INFERRED rate in the
+    # table and it should not be here. It survives only because the provider
+    # has no current traffic. Replace it with a figure published by DeepSeek,
+    # or delete these models and let them surface as coverage.
+    #
+    # PROVIDER DEFAULT REMOVED 2026-09-24, and this one was not hypothetical:
+    # the ledger holds ~119M tokens of gpt-5.5, plus gemini-3.5-flash,
+    # gpt-5.4 and a local mlx model, all recorded under a 'deepseek' provider
+    # label. That default silently priced OpenAI and Google traffic at
+    # DeepSeek rates. A provider default cannot distinguish an unlisted
+    # sibling from a foreign model, which is why only $0 local defaults
+    # remain sanctioned.
     "deepseek": {
         "models": {
             "deepseek-v4-pro": {"input": "0.95", "output": "4.00", "cache_read": "0.095", "cache_write": "0"},
             "deepseek-v4-flash": {"input": "0.14", "output": "0.28", "cache_read": "0.014", "cache_write": "0"},
         },
-        "default": {"input": "0.95", "output": "4.00", "cache_read": "0.095", "cache_write": "0"},
+        "default": None,
     },
     # Local inference is $0 by definition, and saying so beats "unpriced".
     "custom:gemma-4-moe-it": {
@@ -560,10 +627,25 @@ def accumulate_price_bucket(
     from a model's aggregate, which would be wrong in both directions (many
     short requests summing past the threshold, or one long request diluted by
     short ones).
+
+    Model identity resolves reported -> requested -> ``model`` -> unknown.
+    That last fallback was ADDED 2026-09-24 and is not cosmetic: the canonical
+    ledger names the requested id ``model_requested``, but the Hermes usage
+    sidecar names it ``model``, and there is no ``model_requested`` column
+    there at all. Every sidecar row whose provider did not echo an identity
+    was therefore bucketing as ``unknown`` and dropping out of pricing while
+    holding a perfectly good model id — ~950M tokens in a 14-day window.
+    Reported identity still wins where present; this only rescues rows that
+    would otherwise have been discarded.
     """
     key = (
         str(row.get("provider") or "unknown"),
-        str(row.get("model_reported") or row.get("model_requested") or "unknown"),
+        str(
+            row.get("model_reported")
+            or row.get("model_requested")
+            or row.get("model")
+            or "unknown"
+        ),
         request_context_basis(row),
     )
     bucket = buckets.setdefault(

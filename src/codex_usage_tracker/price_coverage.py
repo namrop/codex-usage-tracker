@@ -69,19 +69,23 @@ UNATTRIBUTED_PROVIDERS = frozenset({"unknown", ""})
 
 # Provider defaults that exist on purpose. A ``default`` classification on
 # any provider NOT in this set is reported as a defect rather than accepted.
+#
+# NARROWED 2026-09-24 to a single rule: **a provider default is sanctioned
+# only when it is $0.** The previous set also sanctioned zai, kimi-coding and
+# deepseek on the reasoning that an unlisted sibling would price at a
+# conservative-high family rate. That reasoning does not survive contact with
+# the ledger: a default cannot tell an unlisted sibling from a foreign model,
+# and the 'deepseek' label turned out to carry ~119M tokens of gpt-5.5 plus
+# Gemini and local-mlx traffic, all of which priced silently at DeepSeek
+# rates. Those three defaults have been removed from the rate table itself;
+# any remaining default hit on a priced provider is now reported as a defect.
 SANCTIONED_DEFAULT_PROVIDERS = frozenset({
-    # Documented in list_pricing: glm-5.3-flash has no published rate, so it
-    # falls to the full GLM-5.3 rate — deliberately conservative-high.
-    "zai",
     # Local inference is $0 by definition, so a $0 default can never be a
-    # silent misprice: there is no rate to get wrong.
+    # silent misprice: there is no rate to get wrong, and a new local model
+    # needs no lookup.
     "custom:gemma-4-moe-it",
     "custom:omlx",
     "custom:minicpm5",
-    # Published single-tier lists where an unlisted sibling is a reasonable
-    # conservative read, per the table's own comments.
-    "kimi-coding",
-    "deepseek",
 })
 
 DEFAULT_WINDOW_DAYS = 14

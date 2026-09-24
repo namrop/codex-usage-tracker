@@ -48,7 +48,9 @@ def test_unknown_provider_is_unpriced():
 
 
 def test_provider_default_classifies_default():
-    assert classify("zai", "glm-5.3-flash") == "default"
+    # Uses a $0 local provider: after the 2026-09-24 audit, local inference is
+    # the only place a provider default still exists on purpose.
+    assert classify("custom:omlx", "some-unlisted-local-model") == "default"
 
 
 # ── proxy aliasing ────────────────────────────────────────────────────────
@@ -134,8 +136,34 @@ def test_unsanctioned_provider_default_is_reported_as_a_defect():
 
 
 def test_sanctioned_default_is_not_a_defect():
-    report = coverage_report([_pair("zai", "glm-5.3-flash")])
+    # Was written against zai/glm-5.3-flash, which now has a real entry — so
+    # it was passing as "exact" and no longer exercised the sanction at all.
+    report = coverage_report([_pair("custom:omlx", "some-unlisted-local-model")])
+    assert report["rows"][0]["classification"] == "default"
     assert report["actionable"] == []
+
+
+def test_foreign_model_under_a_provider_label_is_no_longer_priced_silently():
+    """The concrete defect that narrowed the sanctioned set.
+
+    ~119M tokens of gpt-5.5 sat in the ledger under a 'deepseek' provider
+    label and priced at DeepSeek's v4-pro rate because that provider kept a
+    default. It must now surface as coverage instead.
+    """
+    assert classify("deepseek", "gpt-5.5") == "unpriced"
+    report = coverage_report([_pair("deepseek", "gpt-5.5")])
+    assert len(report["actionable"]) == 1
+
+
+def test_published_rates_reached_the_providers_that_serve_them():
+    """Keeper directive 2026-09-24: price the models used from the providers
+    used. Each of these carries real traffic under that exact label."""
+    for provider, model in (
+        ("zai", "glm-5.3"), ("zai", "glm-5.3-flash"), ("zai", "glm-5.2"),
+        ("opencode-go", "glm-5.3"), ("opencode-go", "glm-5.2"),
+        ("kimi-coding", "k3"), ("kimi-coding", "kimi-k3"),
+    ):
+        assert classify(provider, model) == "exact", f"{provider}/{model}"
 
 
 def test_local_zero_dollar_providers_are_covered():
@@ -217,3 +245,41 @@ def test_window_excludes_older_traffic(ledger):
     con.close()
     assert observed_pairs(path, window_days=14) == []
     assert len(observed_pairs(path, window_days=90)) == 1
+
+
+# ── bucket identity ───────────────────────────────────────────────────────
+
+def test_price_bucket_falls_back_to_the_sidecars_model_column():
+    """The canonical ledger calls the requested id ``model_requested``; the
+    Hermes sidecar calls it ``model`` and has no ``model_requested`` column.
+    Without the third fallback every sidecar row lacking a provider-echoed
+    identity bucketed as ``unknown`` and silently left the estimate.
+    """
+    from codex_usage_tracker.list_pricing import (
+        accumulate_price_bucket, finalize_price_buckets, estimate_list_price,
+    )
+    buckets = {}
+    accumulate_price_bucket(buckets, {
+        "provider": "zai", "model": "glm-5.3", "model_reported": None,
+        "input_tokens": 1_000_000, "output_tokens": 0,
+        "cache_read_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 0,
+    })
+    rows = finalize_price_buckets(buckets)
+    assert rows[0]["model"] == "glm-5.3"
+    result = estimate_list_price(rows)
+    assert result["estimate_usd"] == "1.40"
+    assert result["unpriced_providers"] == []
+
+
+def test_reported_identity_still_wins_over_the_fallback():
+    from codex_usage_tracker.list_pricing import (
+        accumulate_price_bucket, finalize_price_buckets,
+    )
+    buckets = {}
+    accumulate_price_bucket(buckets, {
+        "provider": "zai", "model": "requested-id",
+        "model_reported": "reported-id",
+        "input_tokens": 10, "output_tokens": 1,
+        "cache_read_tokens": 0, "cache_write_tokens": 0, "reasoning_tokens": 0,
+    })
+    assert finalize_price_buckets(buckets)[0]["model"] == "reported-id"
