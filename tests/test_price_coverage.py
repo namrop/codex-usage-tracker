@@ -1,0 +1,219 @@
+"""Price-coverage detection: which observed (provider, model) pairs the rate
+table cannot price, and which it prices only via a provider default.
+
+The monitor-stability tests are the load-bearing ones. The nightly job uses
+``monitor_lines`` as a cron ``monitor_script`` wake gate: identical output
+suppresses the agent run entirely. If volumes ever leak into that output the
+job wakes every night and the design is silently defeated while still
+appearing to work.
+"""
+
+import sqlite3
+
+import pytest
+
+from codex_usage_tracker.list_pricing import (
+    LIST_PRICES,
+    estimate_list_price,
+    resolve_rate_provider,
+)
+from codex_usage_tracker.price_coverage import (
+    ACKNOWLEDGED_UNPRICED,
+    build_report,
+    classify,
+    coverage_report,
+    monitor_lines,
+    observed_pairs,
+)
+
+
+def _pair(provider, model, calls=1, tokens=1000):
+    return {"provider": provider, "model": model, "calls": calls, "tokens": tokens}
+
+
+# ── classification ────────────────────────────────────────────────────────
+
+def test_exact_entry_classifies_exact():
+    assert classify("anthropic", "claude-opus-5") == "exact"
+
+
+def test_no_entry_and_no_default_is_unpriced_not_guessed():
+    """openai keeps default=None precisely so a new id surfaces as coverage."""
+    assert LIST_PRICES["openai"]["default"] is None
+    assert classify("openai", "gpt-99-imaginary") == "unpriced"
+
+
+def test_unknown_provider_is_unpriced():
+    assert classify("provider-that-does-not-exist", "anything") == "unpriced"
+
+
+def test_provider_default_classifies_default():
+    assert classify("zai", "glm-5.3-flash") == "default"
+
+
+# ── proxy aliasing ────────────────────────────────────────────────────────
+
+def test_meridian_claude_traffic_resolves_to_anthropic_rates():
+    """The lane carries real Anthropic models under a local proxy label.
+
+    Before this alias existed the entire Claude lane priced as nothing.
+    """
+    assert resolve_rate_provider("custom:meridian-yugen", "claude-opus-5") == "anthropic"
+    assert classify("custom:meridian-primary", "claude-opus-5") == "exact"
+
+
+def test_meridian_priced_identically_to_direct_anthropic():
+    tokens = dict(input_tokens=1_000_000, output_tokens=100_000)
+    direct = estimate_list_price([
+        {"provider": "anthropic", "model": "claude-opus-5",
+         "cache_read_tokens": 0, "cache_write_tokens": 0,
+         "total_tokens": 1_100_000, **tokens}])
+    proxied = estimate_list_price([
+        {"provider": "custom:meridian-yugen", "model": "claude-opus-5",
+         "cache_read_tokens": 0, "cache_write_tokens": 0,
+         "total_tokens": 1_100_000, **tokens}])
+    assert direct["estimate_usd"] == proxied["estimate_usd"]
+    assert proxied["unpriced_providers"] == []
+
+
+def test_alias_never_borrows_the_target_providers_default():
+    """The load-bearing restriction.
+
+    The Meridian lanes carry a few non-Claude ids from routed auxiliary
+    calls. A plain provider-level alias would have inherited Anthropic's
+    conservative-high Fable default and priced GPT traffic at $10/$50 — a
+    fabricated number, which is the exact failure this table exists to stop.
+    """
+    assert LIST_PRICES["anthropic"]["default"] is not None, (
+        "precondition: anthropic keeps a default, so the alias must not "
+        "expose it to non-Claude models"
+    )
+    assert resolve_rate_provider("custom:meridian-yugen", "gpt-5.5") == (
+        "custom:meridian-yugen"
+    )
+    assert classify("custom:meridian-yugen", "gpt-5.5") == "unpriced"
+
+
+def test_new_claude_model_on_meridian_is_unpriced_until_given_an_entry():
+    """This is the nightly job's wake signal, not a regression."""
+    assert classify("custom:meridian-yugen", "claude-future-6") == "unpriced"
+
+
+def test_bare_custom_provider_is_not_aliased():
+    """``custom`` carries both Claude and GPT ids, so it cannot be aliased."""
+    assert resolve_rate_provider("custom", "claude-opus-5") == "custom"
+    assert classify("custom", "claude-opus-5") == "unpriced"
+
+
+# ── actionable vs acknowledged ────────────────────────────────────────────
+
+def test_unattributed_provider_is_acknowledged_never_actionable():
+    """Contract rule: unattributed beats misattributed."""
+    report = coverage_report([_pair("unknown", "glm-5.3")])
+    assert report["actionable"] == []
+    assert len(report["acknowledged"]) == 1
+
+
+def test_acknowledged_pairs_are_excluded_from_actionable():
+    provider, model = next(iter(ACKNOWLEDGED_UNPRICED))
+    report = coverage_report([_pair(provider, model)])
+    assert report["actionable"] == []
+    assert report["acknowledged"][0]["acknowledged_reason"]
+
+
+def test_unsanctioned_provider_default_is_reported_as_a_defect():
+    """A default hit outside the sanctioned set is silent pricing.
+
+    It is technically "priced", which is exactly why it must still be
+    actionable — the number is produced without anyone having looked it up.
+    """
+    report = coverage_report([_pair("anthropic", "claude-99-experimental")])
+    assert len(report["actionable"]) == 1
+    assert report["actionable"][0]["classification"] == "default"
+    assert "unsanctioned" in report["actionable"][0]["defect"]
+
+
+def test_sanctioned_default_is_not_a_defect():
+    report = coverage_report([_pair("zai", "glm-5.3-flash")])
+    assert report["actionable"] == []
+
+
+def test_local_zero_dollar_providers_are_covered():
+    for provider in ("custom:omlx", "custom:minicpm5", "custom:gemma-4-moe-it"):
+        assert classify(provider, "any-local-model") == "default"
+        assert coverage_report([_pair(provider, "any-local-model")])["actionable"] == []
+
+
+# ── monitor stability ─────────────────────────────────────────────────────
+
+def test_monitor_output_excludes_volumes_so_it_only_moves_on_real_change():
+    """If token counts leaked in, the agent would wake every single night."""
+    quiet = monitor_lines(coverage_report([_pair("openai", "gpt-99", tokens=5)]))
+    busy = monitor_lines(coverage_report([_pair("openai", "gpt-99", tokens=5_000_000_000)]))
+    assert quiet == busy
+    assert "5" not in quiet.replace("gpt-99", "")
+
+
+def test_monitor_output_is_order_independent():
+    a = monitor_lines(coverage_report([_pair("openai", "gpt-a"), _pair("openai", "gpt-b")]))
+    b = monitor_lines(coverage_report([_pair("openai", "gpt-b"), _pair("openai", "gpt-a")]))
+    assert a == b
+
+
+def test_monitor_output_changes_when_a_new_gap_appears():
+    before = monitor_lines(coverage_report([_pair("openai", "gpt-a")]))
+    after = monitor_lines(coverage_report([_pair("openai", "gpt-a"), _pair("openai", "gpt-b")]))
+    assert before != after
+
+
+def test_monitor_says_so_when_there_is_nothing_to_do():
+    assert "no actionable gaps" in monitor_lines(
+        coverage_report([_pair("anthropic", "claude-opus-5")]))
+
+
+# ── ledger reads ──────────────────────────────────────────────────────────
+
+def test_absent_ledger_is_zero_rows_not_an_error(tmp_path):
+    """Bootstrap is lazy by contract: no file and no traffic are the same."""
+    assert observed_pairs(tmp_path / "nope.db") == []
+    assert build_report(tmp_path / "nope.db")["actionable"] == []
+
+
+@pytest.fixture
+def ledger(tmp_path):
+    path = tmp_path / "usage_events.db"
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE usage_events (timestamp REAL, provider TEXT, model TEXT, "
+        "model_reported TEXT, input_tokens INT, output_tokens INT, "
+        "cache_read_tokens INT, cache_write_tokens INT)"
+    )
+    con.commit()
+    return path, con
+
+
+def test_observed_pairs_prefers_reported_identity_but_keeps_requested_only_rows(ledger):
+    path, con = ledger
+    con.execute(
+        "INSERT INTO usage_events VALUES (strftime('%s','now'), 'openai-codex', "
+        "'requested-id', 'reported-id', 10, 1, 0, 0)")
+    # A row that never carried a reported id must NOT be dropped: dropping it
+    # would understate coverage gaps, which is the one thing this must not do.
+    con.execute(
+        "INSERT INTO usage_events VALUES (strftime('%s','now'), 'openai-codex', "
+        "'requested-only', NULL, 10, 1, 0, 0)")
+    con.commit()
+    con.close()
+    models = {row["model"] for row in observed_pairs(path)}
+    assert models == {"reported-id", "requested-only"}
+
+
+def test_window_excludes_older_traffic(ledger):
+    path, con = ledger
+    con.execute(
+        "INSERT INTO usage_events VALUES (strftime('%s','now') - 40*86400, "
+        "'openai-codex', 'ancient', 'ancient', 10, 1, 0, 0)")
+    con.commit()
+    con.close()
+    assert observed_pairs(path, window_days=14) == []
+    assert len(observed_pairs(path, window_days=90)) == 1

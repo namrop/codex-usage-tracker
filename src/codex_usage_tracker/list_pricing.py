@@ -64,13 +64,73 @@ LONG_CONTEXT_PROMPT_TOKENS = 272_000
 # verified for that model. Their traffic prices at the short rate and the
 # estimate reports the affected tokens, so the understatement is visible
 # instead of being hidden behind a borrowed threshold.
-LONG_CONTEXT_UNVERIFIED: frozenset[tuple[str, str]] = frozenset()
+#
+# 2026-09-24 widens the meaning slightly, in the same spirit: grok-4.7's
+# threshold IS verified — it is simply 200,000 tokens, not the single global
+# 272,000 above. A model whose real cliff the global constant cannot express
+# belongs here for exactly the same reason as an unverified one: applying the
+# wrong boundary misprices in both directions, and a reported understatement
+# beats a confident wrong number. The durable fix is a per-model threshold.
+LONG_CONTEXT_UNVERIFIED: frozenset[tuple[str, str]] = frozenset({
+    ("openrouter", "x-ai/grok-4.7"),
+})
 
 # Which service tier every estimate assumes. Batch/Flex (0.5x) and
 # Fast/Priority (2x) are not modeled because the ledger does not record the
 # tier; the estimate carries this marker so no consumer can read it as an
 # actual-rate figure.
 RATE_BASIS = "standard"
+
+
+# Providers whose traffic IS another provider's models behind a local proxy
+# label. Meridian is a loopback Anthropic-Messages bridge onto Claude Max
+# subscriptions, so its models are Anthropic's and Anthropic's published
+# rates are the correct list-price counterfactual for them.
+#
+# Added 2026-09-24 after a coverage audit found that ~1.3B tokens of Claude
+# traffic in 14 days priced as NOTHING: every Claude call arrives labelled
+# ``custom:meridian-yugen`` / ``custom:meridian-primary``, and no such
+# provider key existed here, so the whole lane fell out of the estimate as
+# unpriced coverage. Aliasing beats copying the anthropic rate table under
+# more keys, which would drift the moment one copy is edited.
+#
+# Bare ``custom`` is deliberately NOT aliased: that label carries both Claude
+# and GPT model ids (residue of an older route), so a provider-level alias
+# would misprice half of it. It stays coverage until its rows carry a
+# specific provider.
+PROVIDER_RATE_ALIASES: Dict[str, str] = {
+    "custom:meridian-yugen": "anthropic",
+    "custom:meridian-primary": "anthropic",
+}
+
+
+def resolve_rate_provider(provider: str, model: str = "") -> str:
+    """Map a transport/proxy provider label onto its rate-table provider.
+
+    Identity for anything unaliased, so an unknown provider still resolves to
+    unpriced coverage rather than borrowing a neighbour's rates.
+
+    An alias applies ONLY when the target provider carries an EXACT entry for
+    this model. That restriction is load-bearing, not caution: a plain
+    provider-level alias would also inherit the target's ``default``, and the
+    Meridian lanes carry a few non-Claude ids (``gpt-5.5``, ``gpt-6-sol`` —
+    residue of routed auxiliary calls). Aliasing those wholesale would have
+    priced GPT traffic at Anthropic's conservative-high Fable default, which
+    is precisely the silent-fabrication failure this table exists to avoid.
+    Unmatched models fall through to their own provider and surface as
+    coverage, which is the honest answer.
+
+    Consequence worth stating: a NEW Claude model reaching Meridian is
+    unpriced until it gets a real entry. That is the intended wake signal for
+    the nightly price-coverage job, not a regression.
+    """
+    target = PROVIDER_RATE_ALIASES.get(provider)
+    if target is None:
+        return provider
+    entry = LIST_PRICES.get(target)
+    if entry and entry["models"].get(model) is not None:
+        return target
+    return provider
 
 
 def request_context_basis(row: Mapping[str, Any]) -> str:
@@ -105,6 +165,17 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
             # follows the Fable-tier 1.25x-input convention used for
             # claude-fable-5 above.
             "claude-fable-5-1": {"input": "10", "output": "50", "cache_read": "0.25", "cache_write": "12.50"},
+            # claude-opus-5-5: released 2026-09-22 with a price cut against
+            # Opus 5 — input and output both -20% ($5→$4, $25→$20) and the
+            # cache READ rate -60% ($0.50→$0.20), which is the one that
+            # matters most here: long agentic runs are 90%+ cache reads.
+            # All four rates read from platform.claude.com/docs/en/about-claude/pricing
+            # on 2026-09-24 (agent-sourced; the page's own prose confirms the
+            # $0.20 read as 0.05x input). No long-context tier: Anthropic
+            # prices the full 1M window at standard rates from the
+            # 4.6-generation onward, so this entry deliberately has no nested
+            # "long" table.
+            "claude-opus-5-5": {"input": "4", "output": "20", "cache_read": "0.20", "cache_write": "5.00"},
             "claude-opus-5": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},
             "claude-opus-4-8": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},
             "claude-opus-4-6": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},
@@ -142,6 +213,25 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
     # read as an actual cost of zero.
     "openai": {
         "models": {
+            # GPT-6 Sol and Luna, released 2026-09-22 at roughly half their
+            # GPT-5.6 equivalents. Rates read 2026-09-24 from each model's own
+            # page (developers.openai.com/api/docs/models/<id>) AND the master
+            # rate card (/api/docs/pricing); both surfaces agree.
+            #
+            # The long tier is uniform across the current OpenAI family: a
+            # prompt over 272,000 input tokens reprices the ENTIRE request at
+            # 2x input / 2x cached input / 2x cache write / 1.5x output. Each
+            # threshold below was confirmed on that model's OWN page — none is
+            # borrowed from a sibling, which matters because a wrong threshold
+            # silently misprices in both directions.
+            "gpt-6-sol": {
+                "input": "2", "output": "10", "cache_read": "0.20", "cache_write": "2.50",
+                "long": {"input": "4", "output": "15", "cache_read": "0.40", "cache_write": "5"},
+            },
+            "gpt-6-luna": {
+                "input": "0.10", "output": "0.50", "cache_read": "0.01", "cache_write": "0.125",
+                "long": {"input": "0.20", "output": "0.75", "cache_read": "0.02", "cache_write": "0.25"},
+            },
             "gpt-6-astra": {
                 "input": "10", "output": "50", "cache_read": "1.00", "cache_write": "12.50",
                 "long": {"input": "20", "output": "75", "cache_read": "2.00", "cache_write": "25"},
@@ -152,17 +242,63 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
                     "input": "8", "output": "30", "cache_read": "0.80", "cache_write": "10",
                 },
             },
-            "gpt-5.5": {"input": "5", "output": "30", "cache_read": "0.50", "cache_write": "0"},
-            "gpt-5.6-terra": {"input": "2", "output": "12", "cache_read": "0.20", "cache_write": "0"},
-            "gpt-5.6-luna": {"input": "0.20", "output": "1.20", "cache_read": "0.02", "cache_write": "0"},
+            # gpt-5.5 bills NO separate cache write — the rate card prints "-"
+            # in that column for both short and long context, so 0 is a
+            # statement of fact here rather than a missing lookup.
+            "gpt-5.5": {
+                "input": "5", "output": "30", "cache_read": "0.50", "cache_write": "0",
+                "long": {"input": "10", "output": "45", "cache_read": "1.00", "cache_write": "0"},
+            },
+            # CORRECTED 2026-09-24: terra and luna previously carried
+            # cache_write "0", which understated every cached-write token on
+            # those models. Unlike gpt-5.5 they DO bill cache writes — both
+            # model pages state the 1.25x-uncached-input rule and the rate
+            # card prints explicit dollar figures ($2.50 and $0.25). Their
+            # long tiers were also absent and are added here.
+            "gpt-5.6-terra": {
+                "input": "2", "output": "12", "cache_read": "0.20", "cache_write": "2.50",
+                "long": {"input": "4", "output": "18", "cache_read": "0.40", "cache_write": "5"},
+            },
+            "gpt-5.6-luna": {
+                "input": "0.20", "output": "1.20", "cache_read": "0.02", "cache_write": "0.25",
+                "long": {"input": "0.40", "output": "1.80", "cache_read": "0.04", "cache_write": "0.50"},
+            },
         },
         "default": None,
     },
     # The Codex meter carries the same published rates for the models the
     # Codex lane actually runs. Subscription-included traffic still records
     # $0 ACTUAL; this table only estimates what it would have cost.
+    #
+    # This block DUPLICATES openai's rates rather than aliasing to it, and the
+    # duplication is deliberate: a public-API tariff is not proof of the same
+    # cliff in the Codex subscription/credit channel, so the two tables must
+    # stay independently editable if they ever diverge. Keep them in sync by
+    # hand until a divergence is actually observed.
     "openai-codex": {
         "models": {
+            # Added 2026-09-24. gpt-5.6-terra was the single largest coverage
+            # gap in the ledger — 1.007 BILLION tokens over 14 days priced as
+            # nothing, because the model existed in the "openai" block but had
+            # never been added here, and this provider correctly has no
+            # default to fall back on. Same published rates and 272K long-tier
+            # threshold as the openai entries above, read 2026-09-24.
+            "gpt-6-sol": {
+                "input": "2", "output": "10", "cache_read": "0.20", "cache_write": "2.50",
+                "long": {"input": "4", "output": "15", "cache_read": "0.40", "cache_write": "5"},
+            },
+            "gpt-6-luna": {
+                "input": "0.10", "output": "0.50", "cache_read": "0.01", "cache_write": "0.125",
+                "long": {"input": "0.20", "output": "0.75", "cache_read": "0.02", "cache_write": "0.25"},
+            },
+            "gpt-5.6-terra": {
+                "input": "2", "output": "12", "cache_read": "0.20", "cache_write": "2.50",
+                "long": {"input": "4", "output": "18", "cache_read": "0.40", "cache_write": "5"},
+            },
+            "gpt-5.6-luna": {
+                "input": "0.20", "output": "1.20", "cache_read": "0.02", "cache_write": "0.25",
+                "long": {"input": "0.40", "output": "1.80", "cache_read": "0.04", "cache_write": "0.50"},
+            },
             "gpt-6-astra": {
                 "input": "10", "output": "50", "cache_read": "1.00", "cache_write": "12.50",
                 "long": {"input": "20", "output": "75", "cache_read": "2.00", "cache_write": "25"},
@@ -173,7 +309,66 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
                     "input": "8", "output": "30", "cache_read": "0.80", "cache_write": "10",
                 },
             },
-            "gpt-5.5": {"input": "5", "output": "30", "cache_read": "0.50", "cache_write": "0"},
+            "gpt-5.5": {
+                "input": "5", "output": "30", "cache_read": "0.50", "cache_write": "0",
+                "long": {"input": "10", "output": "45", "cache_read": "1.00", "cache_write": "0"},
+            },
+        },
+        "default": None,
+    },
+    # OpenRouter, added 2026-09-24. Unlike every other provider in this table
+    # these are REAL METERED ROUTES — not subscription-included traffic whose
+    # $0 actual cost this table counterfactually reprices. An OpenRouter
+    # estimate is an actual-bill estimate, so its accuracy matters more.
+    #
+    # Rates converted from the public catalog (openrouter.ai/api/v1/models,
+    # read 2026-09-24), which publishes per-TOKEN decimals; these are x1e6.
+    #
+    # CAVEAT, structural and unavoidable: OpenRouter routes across multiple
+    # upstream endpoints per model at DIFFERENT prices, and the ledger does
+    # not record which endpoint served a request. The figures below are the
+    # catalog's canonical/default price. Observed spread at read time:
+    # minimax-m3 up to 2.5x canonical (13 endpoints), gpt-6-astra 2x (a $5/$25
+    # endpoint and a $20/$100 one both exist), gemini-3.8-flash up to 1.8x,
+    # gpt-6-sol ~10%. Treat an OpenRouter estimate as a central figure with
+    # real dispersion, not a precise bill.
+    #
+    # No provider default, for the same reason openai has none: a new
+    # OpenRouter id (there are 459) must surface as coverage rather than
+    # borrow an unrelated model's rate.
+    "openrouter": {
+        "models": {
+            # The 272K long-context override is published in the catalog for
+            # both GPT-6 routes and matches OpenAI's own documented threshold
+            # and multipliers — independent cross-confirmation.
+            "openai/gpt-6-sol": {
+                "input": "2", "output": "10", "cache_read": "0.20", "cache_write": "2.50",
+                "long": {"input": "4", "output": "15", "cache_read": "0.40", "cache_write": "5"},
+            },
+            "openai/gpt-6-astra": {
+                "input": "10", "output": "50", "cache_read": "1.00", "cache_write": "12.50",
+                "long": {"input": "20", "output": "75", "cache_read": "2.00", "cache_write": "25"},
+            },
+            # cache_write ABSENT from the catalog for the four models below —
+            # the ``input_cache_write`` key is simply not present on the model
+            # or any endpoint. Recorded as 0, which is a KNOWN UNDERSTATEMENT
+            # of cached-write tokens rather than a verified zero. Not inferred
+            # from a 1.25x convention: that would be a fabricated rate, and an
+            # understatement that is written down beats a guess that is not.
+            #
+            # grok-4.7 publishes a long tier at 200,000 tokens, NOT the 272,000
+            # this module's global LONG_CONTEXT_PROMPT_TOKENS encodes. It is
+            # therefore given NO nested "long" table — attaching one would fire
+            # it at the wrong boundary and misprice in both directions — and is
+            # listed in LONG_CONTEXT_UNVERIFIED so the resulting understatement
+            # is reported. The proper fix is a per-model threshold; that is a
+            # schema change, deliberately not smuggled in here.
+            "x-ai/grok-4.7": {"input": "1.60", "output": "4.80", "cache_read": "0.40", "cache_write": "0"},
+            "minimax/minimax-m3": {"input": "0.30", "output": "1.20", "cache_read": "0.06", "cache_write": "0"},
+            "xiaomi/mimo-v2.6-pro": {"input": "0.435", "output": "0.87", "cache_read": "0.0036", "cache_write": "0"},
+            "meta/muse-spark-1.3": {"input": "1.25", "output": "4.25", "cache_read": "0.15", "cache_write": "0"},
+            "google/gemini-3.8-flash": {"input": "0.75", "output": "3.75", "cache_read": "0.075", "cache_write": "0.0417"},
+            "qwen/qwen3.8-max-0902": {"input": "2", "output": "6", "cache_read": "0.25", "cache_write": "2.50"},
         },
         "default": None,
     },
@@ -225,6 +420,25 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
         "models": {},
         "default": {"input": "0", "output": "0", "cache_read": "0", "cache_write": "0"},
     },
+    # The other local endpoints, added 2026-09-24 from a coverage audit that
+    # found them reporting as unpriced gaps. Same rationale as the entry
+    # above: these run on Luis's own hardware (Acubens oMLX and the llama.cpp
+    # lane), so the marginal token cost is zero and a $0 default is a
+    # STATEMENT rather than a guess. A $0 provider default is safe in a way a
+    # priced one is not — a new local model needs no rate lookup, because
+    # every model served from local hardware is $0.
+    #
+    # Note this is list-price coverage only. Electricity and the amortised
+    # hardware are real costs; they are simply not per-token costs and have
+    # never been in this table's scope.
+    "custom:omlx": {
+        "models": {},
+        "default": {"input": "0", "output": "0", "cache_read": "0", "cache_write": "0"},
+    },
+    "custom:minicpm5": {
+        "models": {},
+        "default": {"input": "0", "output": "0", "cache_read": "0", "cache_write": "0"},
+    },
 }
 
 
@@ -238,7 +452,7 @@ def _rates_with_context(
     reads ``"standard"`` — the caller must not report long-context billing
     that did not happen.
     """
-    entry = LIST_PRICES.get(provider)
+    entry = LIST_PRICES.get(resolve_rate_provider(provider, model))
     if entry is None:
         return None, "standard"
     rates = entry["models"].get(model)
