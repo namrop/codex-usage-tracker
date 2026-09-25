@@ -85,6 +85,9 @@ export interface CapacityWindow {
 
 export interface CapacityAccount {
   key: string;
+  // Five-hour windows left out because a weekly or monthly cap of this
+  // account is spent (see spentLongCap).
+  hiddenFiveHour: number;
   provider: string;
   label: string;
   accountIndex: number;
@@ -355,6 +358,70 @@ export function deriveCapacityWindow(row: any, options: CapacityOptions, canonic
   };
 }
 
+// When to show five-hour windows. Keeper, 2026-09-25 (Discord unified usage
+// ledger thread, msg 1553031185041461300): "I think we need more
+// intelligence about when to show 5 hour cards. They are not useful if the
+// weekly or monthly cap is hit, across all providers". An account whose
+// fresh general weekly or monthly window is at its cap shows no five-hour
+// window on the Now view (capacity, burn rate, reset rail, provider detail)
+// until that cap resets or its reading goes stale. A model-specific cap
+// (Claude's Fable week) or a tool quota (Z.AI's monthly web search) does not
+// stop the account, so it hides nothing. The History charts and the raw
+// observation ledger keep every window.
+const LONG_CAP_NAMES: ReadonlySet<string> = new Set(["week", "seven_day", "month"]);
+
+export function isFiveHourQuotaName(name: unknown): boolean {
+  const value = String(name || "");
+  return value === "five_hour" || value.startsWith("five_hour_");
+}
+
+// The account key every per-account surface shares ("kimi-k3-coding:1").
+// Works for subscriptions `latest` rows and quota-burn series alike.
+export function quotaAccountKey(row: { provider?: unknown; provider_canonical?: unknown; provider_account_index?: unknown }): string {
+  const index = Number(row.provider_account_index);
+  return `${quotaRowProviderKey(row) || "unknown"}:${Number.isSafeInteger(index) && index >= 1 ? index : 1}`;
+}
+
+// The spent weekly or monthly cap that makes this account's five-hour
+// windows moot, or null.
+export function spentLongCap(windows: CapacityWindow[]): CapacityWindow | null {
+  return windows.find((window) => (
+    !window.stale && window.kind === "model" && LONG_CAP_NAMES.has(window.quotaName) && window.atCap
+  )) || null;
+}
+
+// Account key → the spent cap's display name, for every account whose
+// five-hour windows are hidden.
+export function fiveHourHiddenAccounts(
+  rows: QuotaRow[] | undefined | null,
+  options: Pick<CapacityOptions, "now" | "maxAgeSeconds">,
+): Map<string, string> {
+  const byAccount = new Map<string, CapacityWindow[]>();
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    if (!row) return;
+    const key = quotaAccountKey(row);
+    const index = Number(key.slice(key.lastIndexOf(":") + 1));
+    const window = deriveCapacityWindow(row, options, quotaRowProviderKey(row) || "unknown", index);
+    if (!byAccount.has(key)) byAccount.set(key, []);
+    byAccount.get(key)!.push(window);
+  });
+  const hidden = new Map<string, string>();
+  byAccount.forEach((windows, key) => {
+    const cap = spentLongCap(windows);
+    if (cap) hidden.set(key, cap.displayName);
+  });
+  return hidden;
+}
+
+// True for a five-hour row or series of an account in `hidden`.
+export function hidesFiveHour(
+  hidden: ReadonlyMap<string, string> | null | undefined,
+  row: { quota_name?: unknown; provider?: unknown; provider_canonical?: unknown; provider_account_index?: unknown } | null | undefined,
+): boolean {
+  if (!hidden || !hidden.size || !row) return false;
+  return isFiveHourQuotaName(row.quota_name) && hidden.has(quotaAccountKey(row));
+}
+
 const STATE_RANK: Record<CapacityState, number> = {
   exhausted: 0,
   constrained: 1,
@@ -540,11 +607,15 @@ export function deriveCapacityAccounts(rows: QuotaRow[] | undefined | null, opti
   });
 
   const accounts: CapacityAccount[] = Array.from(grouped.entries()).map(([key, group]) => {
-    const windows = group.rows.map((row) => deriveCapacityWindow(row, options, group.provider, group.accountIndex));
+    const derived = group.rows.map((row) => deriveCapacityWindow(row, options, group.provider, group.accountIndex));
+    const windows = spentLongCap(derived)
+      ? derived.filter((window) => !isFiveHourQuotaName(window.quotaName))
+      : derived;
     const { state, binding, headline, note } = accountState(windows);
     const observedTimes = windows.map((window) => window.observedAt).filter((value): value is number => value !== null);
     return {
       key,
+      hiddenFiveHour: derived.length - windows.length,
       provider: group.provider,
       label: group.label,
       accountIndex: group.accountIndex,

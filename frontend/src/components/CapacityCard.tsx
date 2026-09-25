@@ -172,7 +172,7 @@ export function CapacityCard({ subs, burn, thresholdSeconds }: {
 
   const caption = (
     <p className="caption">
-      One row per provider account: the window that binds, what remains in that window’s own units, when it resets, and how sure the reading is. Percentages are each account’s own cap and are never combined across providers; balances are amounts, not percentages; a model-specific cap, a tool quota or a key allowance at its limit constrains that model, tool or key without exhausting the account.
+      One row per provider account: the window that binds, what remains in that window’s own units, when it resets, and how sure the reading is. Percentages are each account’s own cap and are never combined across providers; balances are amounts, not percentages; a model-specific cap, a tool quota or a key allowance at its limit constrains that model, tool or key without exhausting the account. While an account’s weekly or monthly cap is used up, its five-hour window is not shown.
     </p>
   );
 

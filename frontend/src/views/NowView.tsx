@@ -13,19 +13,20 @@ import { WeeklyUtilizationSummary } from "../components/WeeklyUtilizationCard";
 // charts live on History. Views render as fragments so every card stays a
 // direct child of the shell (the glass class and its observer key on that).
 
-export function NowView({ state, palette, resetChips, thresholdSeconds, revealToken }: {
+export function NowView({ state, palette, resetChips, thresholdSeconds, revealToken, hiddenFiveHour }: {
   state: DashboardState;
   palette: Palette;
   resetChips: ResetChipModel[];
   thresholdSeconds: number;
   revealToken: number;
+  hiddenFiveHour?: ReadonlyMap<string, string>;
 }) {
   const unifiedData = state.unified.data;
   const timeSeries = unifiedData ? unifiedData.time_series : null;
   return (
     <>
       <CapacityCard subs={state.subs} burn={state.burn} thresholdSeconds={thresholdSeconds} />
-      <BurnRateCard burn={state.burn} />
+      <BurnRateCard burn={state.burn} hiddenFiveHour={hiddenFiveHour} />
       <WeeklyUtilizationSummary weekly={state.weekly} />
       <section className="card" aria-labelledby="nowHealthTitle">
         <div className="card-header">
@@ -62,7 +63,7 @@ export function NowView({ state, palette, resetChips, thresholdSeconds, revealTo
           </section>
         </div>
       </section>
-      <SubscriptionProviderDetail subs={state.subs} revealToken={revealToken} />
+      <SubscriptionProviderDetail subs={state.subs} revealToken={revealToken} hiddenFiveHour={hiddenFiveHour} />
     </>
   );
 }

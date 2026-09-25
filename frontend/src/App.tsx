@@ -6,6 +6,8 @@ import { usePalette } from "./hooks/usePalette";
 import { GlassPanels } from "./components/GlassPanels";
 import { OpsHero } from "./components/OpsHero";
 import { deriveResetChips } from "./components/ResetRail";
+import { fiveHourHiddenAccounts, hidesFiveHour } from "./lib/capacity";
+import type { QuotaRow } from "./lib/quota";
 import { subscriptionThresholdSeconds } from "./components/SubscriptionsCard";
 import { ViewNav } from "./components/ViewNav";
 import { domRevealCandidate, scheduleReveal } from "./lib/reveal";
@@ -110,12 +112,20 @@ export default function App() {
     : undefined;
   const subsFreshness = state.subs.data ? state.subs.data.freshness : null;
   const thresholdSeconds = subscriptionThresholdSeconds(subsFreshness || {});
+  // Accounts whose five-hour windows are hidden because a weekly or monthly
+  // cap is spent (lib/capacity.ts spentLongCap, keeper msg
+  // 1553031185041461300). The rail, burn rate and provider detail read it;
+  // the capacity card applies the same rule itself.
+  const hiddenFiveHour = useMemo(
+    () => fiveHourHiddenAccounts(quotaLatest || [], { now: Date.now(), maxAgeSeconds: thresholdSeconds }),
+    [quotaLatest, thresholdSeconds],
+  );
   const resetChips = useMemo(
-    () => deriveResetChips(quotaLatest || [], {
+    () => deriveResetChips((quotaLatest || []).filter((row: QuotaRow) => !hidesFiveHour(hiddenFiveHour, row)), {
       now: Date.now(),
       maxAgeSeconds: thresholdSeconds,
     }),
-    [quotaLatest, thresholdSeconds],
+    [quotaLatest, thresholdSeconds, hiddenFiveHour],
   );
 
   // Reveal a deep-linked card once its view and fold have rendered. The
@@ -155,6 +165,7 @@ export default function App() {
           resetChips={resetChips}
           thresholdSeconds={thresholdSeconds}
           revealToken={revealToken}
+          hiddenFiveHour={hiddenFiveHour}
         />
       )}
       {view === "history" && (

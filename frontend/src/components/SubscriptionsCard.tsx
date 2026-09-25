@@ -4,6 +4,7 @@ import { LINE_SMOOTHING, subscriptionQuotaChartOptions, type ChartConfig } from 
 import { formatTimestamp } from "../lib/format";
 import { heartbeatStatus, staleLaneSuffix, type Freshness } from "../lib/freshness";
 import { wholePointLabel } from "../lib/nativePercent";
+import { hidesFiveHour } from "../lib/capacity";
 import {
   PROVIDER_DISPLAY_NAMES,
   PROVIDER_ORDER,
@@ -687,9 +688,17 @@ export function SubscriptionHistoryCharts({ palette, subs }: { palette: Palette;
 
 // ── Now view: per-provider detail behind a fold ─────────────────────────
 
-export function SubscriptionProviderDetail({ subs, revealToken = 0 }: { subs: SubsPanelState; revealToken?: number }) {
+export function SubscriptionProviderDetail({ subs, revealToken = 0, hiddenFiveHour }: {
+  subs: SubsPanelState;
+  revealToken?: number;
+  hiddenFiveHour?: ReadonlyMap<string, string>;
+}) {
   const data = subs.data;
-  const rows = subscriptionRows(subs);
+  const allRows = subscriptionRows(subs);
+  const rows = useMemo(
+    () => allRows.filter((row) => !hidesFiveHour(hiddenFiveHour, row)),
+    [allRows, hiddenFiveHour],
+  );
   const freshness = (data && data.freshness) || {};
   const statusMessage = subscriptionStatusMessage(subs);
   const contentVisible = !subs.loading && (Boolean(data) || subs.placeholder);
@@ -736,7 +745,7 @@ export function SubscriptionProviderDetail({ subs, revealToken = 0 }: { subs: Su
       <div className="card-header">
         <div className="card-title">
           <h2 id="subscriptionDetailTitle">Subscriptions by provider</h2>
-          <p className="caption">Every provider’s quota windows with authority, reset times and observation freshness — the detail behind the capacity summary above.</p>
+          <p className="caption">Every provider’s quota windows with authority, reset times and observation freshness — the detail behind the capacity summary above. An account’s five-hour window is left out while its weekly or monthly cap is used up; the raw ledger on Diagnostics keeps it.</p>
           <p className="caption">Usage events (History), subscription quota observations (here), and billing facts (Accounting) are separate record classes. No quota estimate is a billing fact.</p>
         </div>
       </div>

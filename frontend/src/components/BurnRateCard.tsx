@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { BurnPanelState } from "../hooks/useDashboardData";
 import { burnRowClass, deriveBurnRows, projectionText } from "../lib/burn";
 import { formatTimestamp } from "../lib/format";
+import { hidesFiveHour } from "../lib/capacity";
 
 // Burn panel (2026-09-02, keeper-approved from the Claude session-limit burn
 // analysis; widened 2026-09-14): every per-account quota window the ledger
@@ -40,10 +41,12 @@ function countdown(seconds: number | null): string {
   return `${hours}h ${rest ? `${rest}m` : ""}`.trim();
 }
 
-export function BurnRateCard({ burn }: { burn: BurnPanelState }) {
+export function BurnRateCard({ burn, hiddenFiveHour }: { burn: BurnPanelState; hiddenFiveHour?: ReadonlyMap<string, string> }) {
   const rows = useMemo(
-    () => (Array.isArray(burn.data?.series) ? deriveBurnRows(burn.data.series) : []),
-    [burn.data],
+    () => (Array.isArray(burn.data?.series)
+      ? deriveBurnRows(burn.data.series.filter((series: any) => !hidesFiveHour(hiddenFiveHour, series)))
+      : []),
+    [burn.data, hiddenFiveHour],
   );
 
   return (
@@ -52,7 +55,7 @@ export function BurnRateCard({ burn }: { burn: BurnPanelState }) {
         <div className="card-title">
           <h2 id="burnTitle">Window burn rate</h2>
           <p className="caption">
-            Every per-account quota window the ledger samples — five-hour and weekly model windows, model-specific caps, monthly tool quotas and account balances — with its used-percent trajectory, its burn rate at the observed active-use rate, and a projection that never extends past the window’s own reset; balances carry no forecast and say so.
+            Every per-account quota window the ledger samples — five-hour and weekly model windows, model-specific caps, monthly tool quotas and account balances — with its used-percent trajectory (an account’s five-hour window is left out while its weekly or monthly cap is used up), its burn rate at the observed active-use rate, and a projection that never extends past the window’s own reset; balances carry no forecast and say so.
           </p>
         </div>
       </div>
