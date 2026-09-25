@@ -35,12 +35,27 @@ export const SUBSCRIPTION_PROVIDER_SHORT_LABELS: Readonly<Record<string, string>
   "kimi-k3-coding": "Kimi K3",
 });
 
+// One name per provider (keeper-approved UI review item 5, Discord unified
+// usage ledger thread msg 1553037883747598450, 2026-09-25): every surface
+// says "Codex", "Claude", "Z.AI", "Kimi K3", "OpenCode Go". The API keeps its
+// longer labels; the page shows these. The long forms (OpenAI / Codex,
+// Anthropic / Claude, Z.AI / GLM, Kimi K3 Coding) are retired from display.
 export const PROVIDER_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze({
-  "openai-codex": "OpenAI / Codex",
-  anthropic: "Anthropic / Claude",
+  "openai-codex": "Codex",
+  anthropic: "Claude",
   "opencode-go": "OpenCode Go",
-  "z-ai-glm": "Z.AI / GLM",
-  "kimi-k3-coding": "Kimi K3 Coding",
+  "z-ai-glm": "Z.AI",
+  "kimi-k3-coding": "Kimi K3",
+});
+
+// Names for providers that are not subscriptions. The three acubens model
+// servers (oMLX, the Gemma MoE lane on oMLX, llama.cpp MiniCPM) pool as one
+// provider, "local-acubens", through the alias table below.
+export const OTHER_PROVIDER_NAMES: Readonly<Record<string, string>> = Object.freeze({
+  deepseek: "DeepSeek",
+  openrouter: "OpenRouter",
+  moa: "MoA council",
+  "local-acubens": "Local (acubens)",
 });
 
 // Byte-identical to the server's _QUOTA_PROVIDER_ALIASES (a test parses it as
@@ -69,11 +84,24 @@ export const PROVIDER_ALIASES: Readonly<Record<string, string>> = Object.freeze(
   "moonshot-ai": "kimi-k3-coding",
   "custom:meridian-primary": "anthropic",
   "custom:meridian-yugen": "anthropic",
+  "custom:omlx": "local-acubens",
+  "custom:gemma-4-moe-it": "local-acubens",
+  "custom:minicpm5": "local-acubens",
 });
 
 export const PROVIDER_ORDER: readonly string[] = Object.freeze([
   "openai-codex", "anthropic", "opencode-go", "z-ai-glm", "kimi-k3-coding",
 ]);
+
+// The display name for any provider id, raw ("zai", "kimi-coding",
+// "custom:omlx") or canonical ("z-ai-glm"). Accounts are not named here; see
+// accountDisplayLabel for "Claude 1" / "Claude 2".
+export function providerDisplayName(provider: unknown): string {
+  const canonical = providerKey(provider);
+  return SUBSCRIPTION_PROVIDER_SHORT_LABELS[canonical]
+    || OTHER_PROVIDER_NAMES[canonical]
+    || canonical;
+}
 
 export function providerKey(provider: unknown): string {
   const rawProvider = String(provider || "unknown").trim() || "unknown";
@@ -133,6 +161,7 @@ export function accountDisplayLabel(
     : providerKey(row && row.provider);
   const short = SUBSCRIPTION_PROVIDER_SHORT_LABELS[canonical]
     || PROVIDER_DISPLAY_NAMES[canonical]
+    || OTHER_PROVIDER_NAMES[canonical]
     || canonical
     || "unknown";
   const count = Number(row && row.provider_account_count);

@@ -20,7 +20,7 @@ import {
 } from "../lib/format";
 import { useViewportWidth } from "../hooks/useViewportWidth";
 import { cededLanes, type Freshness } from "../lib/freshness";
-import { subscriptionUnifiedProviderColor } from "../lib/providers";
+import { providerDisplayName, subscriptionUnifiedProviderColor } from "../lib/providers";
 import { QUOTA_FIVE_HOUR_NAMES, QUOTA_WEEKLY_NAMES, type QuotaRow } from "../lib/quota";
 import { ChartCanvas } from "./ChartCanvas";
 import { DirectLabels, type DirectLabelRow } from "./DirectLabels";
@@ -99,7 +99,18 @@ function modelTokenModel(
   if (!timeSeries || !Array.isArray(timeSeries.bucket_starts)) return null;
   const { labels, tooltipTitles, viewportWidth, wording } = frame;
   const bucketCount = timeSeries.bucket_starts.length;
-  const allModels: any[] = Array.isArray(timeSeries.model_series) ? [...timeSeries.model_series] : [];
+  // "glm-5.3 · zai" reads "glm-5.3 · Z.AI" (one name per provider, UI review
+  // item 5); Claude series already name the account ("· Claude 1").
+  const allModels: any[] = Array.isArray(timeSeries.model_series)
+    ? timeSeries.model_series.map((row: any) => {
+      const provider = String(row.provider || "");
+      const suffix = ` · ${provider}`;
+      const label = String(row.label || "");
+      return provider && label.endsWith(suffix)
+        ? { ...row, label: `${label.slice(0, -suffix.length)} · ${providerDisplayName(provider)}` }
+        : row;
+    })
+    : [];
   // Series the API itself had to group to stay bounded; it rides along at the
   // end of both views and already names itself as a grouping.
   const apiOther = timeSeries.other_model_series || null;
@@ -349,6 +360,12 @@ function ChartSection({ sectionId, titleId, title, caption, controls, canvasId, 
       </Fold>
     </section>
   );
+}
+
+function listPriceText(value: unknown): string {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  return `$${amount.toLocaleString([], { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function UnifiedUsageCard({ palette, unified, freshness, donutFive, quotaLatest, resetChips }: {
@@ -603,17 +620,25 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, quota
           <div className="table-wrap">
             <table className="tier-provider-model">
               <thead>
-                <tr><th>Provider</th><th>Model</th><th>API</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>Estimated USD</th><th>Actual USD</th></tr>
+                <tr><th>Provider</th><th>Model</th><th>API</th><th>Events</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Reasoning</th><th>Total</th><th>List price USD</th><th>Estimated USD</th><th>Actual USD</th></tr>
               </thead>
               <tbody id="providerModelUsageBody">
                 {providerModelRows.map((row, index) => (
                   <TextRow
                     key={`${row.provider_label || row.provider}-${row.model}-${index}`}
                     values={[
-                      // "Claude 1" / "Claude 2" for Anthropic rows (the account); raw label otherwise.
-                      row.provider_label || row.provider, row.model, formatApiModes(row.api_modes), row.events, row.input_tokens,
+                      // "Claude 1" / "Claude 2" for Anthropic rows (the account); the
+                      // page's one provider name otherwise (UI review item 5).
+                      row.provider_account_index != null || String(row.provider_label || "").startsWith("Claude")
+                        ? row.provider_label
+                        : providerDisplayName(row.provider),
+                      row.model, formatApiModes(row.api_modes), row.events, row.input_tokens,
                       row.cache_read_tokens, row.cache_write_tokens, row.output_tokens, row.reasoning_tokens,
-                      row.total_tokens, row.estimated_cost_usd, row.actual_cost_usd,
+                      row.total_tokens,
+                      // List-price equivalent of this row (UI review item 6); "unpriced"
+                      // when no rate covers any of its tokens, never $0.
+                      Number(row.list_price_priced_share) > 0 ? listPriceText(row.list_price_usd) : "unpriced",
+                      row.estimated_cost_usd, row.actual_cost_usd,
                     ]}
                   />
                 ))}

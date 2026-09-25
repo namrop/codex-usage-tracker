@@ -23,7 +23,6 @@ export function HistoryView({ state, palette, quotaLatest, resetChips }: {
   return (
     <>
       <WeeklyUtilizationCard weekly={state.weekly} />
-      <GoUsageCard goUsage={state.goUsage} />
       <UnifiedUsageCard
         palette={palette}
         unified={state.unified}
@@ -33,6 +32,9 @@ export function HistoryView({ state, palette, quotaLatest, resetChips }: {
         resetChips={resetChips}
       />
       <SubscriptionHistoryCharts palette={palette} subs={state.subs} />
+      {/* The OpenCode Go explainer sits last (keeper-approved UI review item
+          9, 2026-09-25): Go's monthly cap is spent and it carries no traffic. */}
+      <GoUsageCard goUsage={state.goUsage} />
     </>
   );
 }

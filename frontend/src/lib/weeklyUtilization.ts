@@ -1,5 +1,5 @@
 import { WHOLE_POINT_LABEL, isWholePointNative, nativePercentText } from "./nativePercent";
-import { PROVIDER_DISPLAY_NAMES, PROVIDER_ORDER } from "./providers";
+import { PROVIDER_ORDER, providerDisplayName } from "./providers";
 
 // Weekly allowance utilization (keeper request 2026-09-14: "what percentage
 // of my weekly windows I am using ... aggregate, and per provider"). The
@@ -247,7 +247,9 @@ export function weeklyProviderRows(summary: WeeklySummary, mode: WeeklyMode, win
       const native = wholePoint ? nativeWindows[0].current : null;
       return {
         provider: entry.provider,
-        label: entry.label || PROVIDER_DISPLAY_NAMES[entry.provider] || entry.provider,
+        // One name per provider (UI review item 5): the page's short name,
+        // not the API's longer label.
+        label: providerDisplayName(entry.provider) || entry.label || entry.provider,
         usedPct: pctNumber(entry.used_pct),
         complementPct: pctNumber(entry.remaining_pct),
         usedText: native ? nativePercentText(entry.used_pct, native) : pctText(entry.used_pct),

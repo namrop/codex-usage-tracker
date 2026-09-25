@@ -44,7 +44,9 @@ describe("accountDisplayLabel", () => {
     assert.equal(accountDisplayLabel({ provider: "anthropic", provider_account_index: 1, provider_account_count: 1 }), "Claude");
     assert.equal(accountDisplayLabel({ provider: "claude", provider_account_index: 2, provider_account_count: 2 }), "Claude 2", "raw aliases resolve");
     assert.equal(accountDisplayLabel({ provider: "z-ai", provider_canonical: "z-ai-glm" }), "Z.AI");
-    assert.equal(accountDisplayLabel({ provider: "openrouter" }), "openrouter", "an unmapped provider keeps its id");
+    // OpenRouter has had a display name since the 2026-09-25 UI review (item 5).
+    assert.equal(accountDisplayLabel({ provider: "openrouter" }), "OpenRouter");
+    assert.equal(accountDisplayLabel({ provider: "acme-ai" }), "acme-ai", "an unmapped provider keeps its id");
     assert.equal(accountDisplayLabel(null), "unknown");
   });
 });

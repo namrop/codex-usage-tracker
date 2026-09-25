@@ -212,6 +212,9 @@ _QUOTA_PROVIDER_ALIASES = {
     # 2026-09-25, msg 1552986099343818813); see _usage_provider_identity.
     "custom:meridian-primary": "anthropic",
     "custom:meridian-yugen": "anthropic",
+    "custom:omlx": "local-acubens",
+    "custom:gemma-4-moe-it": "local-acubens",
+    "custom:minicpm5": "local-acubens",
 }
 _QuotaAccountIdentity: TypeAlias = tuple[bool, str]
 _QuotaSeriesIdentity: TypeAlias = tuple[

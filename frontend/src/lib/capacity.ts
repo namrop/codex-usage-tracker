@@ -78,6 +78,11 @@ export interface CapacityWindow {
   staleReason: "observation_stale" | "reset_passed_since_observation" | null;
   resetAt: number | null;
   weekly: boolean;
+  // How much of a weekly window's length has already gone, 0-100, for a
+  // weekly window with a future reset; null otherwise. The capacity meter
+  // draws it as a pace mark beside the used share (keeper-approved UI review
+  // item 3, msg 1553037883747598450, 2026-09-25).
+  elapsedPct: number | null;
   // At its cap (percent/count windows) or empty (balances).
   atCap: boolean;
   projection: CapacityProjection | null;
@@ -116,6 +121,7 @@ export interface CapacityOptions {
 // acts on it.
 export const NEAR_LIMIT_PCT = 90;
 
+const WEEK_MS = 7 * 24 * 3600 * 1000;
 const BALANCE_UNITS: ReadonlySet<string> = new Set(["usd", "credits"]);
 const BALANCE_WINDOW_KINDS: ReadonlySet<string> = new Set(["lifetime", "unknown"]);
 const TOOL_UNITS: ReadonlySet<string> = new Set(["requests", "searches", "calls"]);
@@ -326,6 +332,16 @@ export function deriveCapacityWindow(row: any, options: CapacityOptions, canonic
   }
 
   const base = split ? split.base : quotaName;
+  const weekly = QUOTA_WEEKLY_NAMES.has(quotaName) || QUOTA_WEEKLY_NAMES.has(base);
+  let elapsedPct: number | null = null;
+  if (weekly && kind !== "balance" && resetAt !== null && resetAt > options.now) {
+    // The provider's own window start when it reports one, else the reset
+    // minus one week.
+    const reportedStart = Date.parse(String(row.window_started_at || ""));
+    const start = Number.isFinite(reportedStart) && reportedStart < resetAt ? reportedStart : resetAt - WEEK_MS;
+    const length = resetAt - start;
+    if (length > 0) elapsedPct = Math.max(0, Math.min(100, ((options.now - start) / length) * 100));
+  }
   const providerState = row.provider_state === null || row.provider_state === undefined || row.provider_state === ""
     ? null
     : String(row.provider_state);
@@ -352,7 +368,8 @@ export function deriveCapacityWindow(row: any, options: CapacityOptions, canonic
     stale: staleReason !== null,
     staleReason,
     resetAt,
-    weekly: QUOTA_WEEKLY_NAMES.has(quotaName) || QUOTA_WEEKLY_NAMES.has(base),
+    weekly,
+    elapsedPct,
     atCap,
     projection: findProjection(row, canonical, accountIndex, options.burnSeries),
   };
@@ -554,6 +571,26 @@ function accountState(windows: CapacityWindow[]): {
       note: balance ? `${windowSummary(balance)} remains; only this key's allowance is spent.` : null,
     };
   }
+  // A key cannot spend more than the account holds. When the balance is
+  // smaller than what the key allowance says is left, the balance binds
+  // (keeper-approved UI review item 2, 2026-09-25: OpenRouter read
+  // "Available" on a 50-credit allowance while holding 0.27 credits). It is
+  // "constrained" when the provider reports how much of its credit is spent
+  // and that share is in the same near-cap band as any window.
+  const heldBalance = fresh.find((window) => window.kind === "balance" && window.remainingValue !== null);
+  const openAllowance = fresh.find((window) => window.kind === "allowance" && window.remainingValue !== null);
+  if (
+    heldBalance && openAllowance
+    && (heldBalance.remainingValue as number) < (openAllowance.remainingValue as number)
+  ) {
+    const spentPct = balanceSpentPct(heldBalance);
+    return {
+      state: spentPct !== null && spentPct >= NEAR_LIMIT_PCT ? "constrained" : "available",
+      binding: heldBalance,
+      headline: `${heldBalance.remainingText} — less than the key allowance (${openAllowance.remainingText}), so the balance is what can be spent.`,
+      note: null,
+    };
+  }
   if (busiestGeneral && busiestGeneral.usedPct !== null && busiestGeneral.usedPct >= NEAR_LIMIT_PCT) {
     return {
       state: "constrained",
@@ -569,6 +606,15 @@ function accountState(windows: CapacityWindow[]): {
     headline: `${windowSummary(binding)}.`,
     note: null,
   };
+}
+
+// Share of a balance's credit already spent, when the provider reports both
+// the spend and the total (OpenRouter: used 304.73 of 305); null otherwise.
+export function balanceSpentPct(window: CapacityWindow): number | null {
+  if (window.kind !== "balance" || window.usedValue === null || window.limitValue === null || window.limitValue <= 0) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, (window.usedValue / window.limitValue) * 100));
 }
 
 function orderWindows(windows: CapacityWindow[], binding: CapacityWindow | null): CapacityWindow[] {
@@ -652,4 +698,94 @@ export function capacityStateLabel(state: CapacityState): string {
     default:
       return "Unknown";
   }
+}
+
+
+// ── Room right now (keeper-approved UI review item 4, 2026-09-25) ───────────
+// One line above the account rows: which accounts have room and how much,
+// which are low, which are out and until when. Built only from the account
+// states above; it asserts nothing the rows do not.
+
+export interface CapacityRoom {
+  room: string[];
+  low: string[];
+  out: string[];
+  stale: string[];
+}
+
+// "3:08 PM" today, "Sat 10:45 PM" within the week, "Oct 8" beyond.
+export function shortWhen(at: number, now: number): string {
+  const moment = new Date(at);
+  const today = new Date(now);
+  const time = moment.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (moment.toDateString() === today.toDateString()) return time;
+  if (at - now < 6 * 24 * 3600 * 1000) {
+    return `${moment.toLocaleDateString([], { weekday: "short" })} ${time}`;
+  }
+  return moment.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function roomAmount(window: CapacityWindow): string {
+  return window.remainingText.replace(/ balance$/, "");
+}
+
+export function capacityRoom(
+  accounts: CapacityAccount[],
+  now: number,
+  when: (at: number, now: number) => string = shortWhen,
+): CapacityRoom {
+  const percentRoom: { text: string; left: number }[] = [];
+  const amountRoom: string[] = [];
+  const low: string[] = [];
+  const out: string[] = [];
+  const stale: string[] = [];
+  for (const account of accounts) {
+    const binding = account.binding;
+    if (account.state === "stale" || account.state === "unknown" || !binding) {
+      stale.push(account.label);
+      continue;
+    }
+    const resets = binding.resetAt !== null && binding.resetAt > now ? binding.resetAt : null;
+    if (account.state === "exhausted") {
+      if (binding.kind === "balance") out.push(`${account.label} (no balance)`);
+      else out.push(resets !== null ? `${account.label} until ${when(resets, now)}` : account.label);
+      continue;
+    }
+    if (account.state === "constrained") {
+      if (binding.kind === "balance") {
+        low.push(`${account.label} ${roomAmount(binding)} left`);
+      } else if (binding.kind === "model_specific") {
+        low.push(`${account.label} ${binding.modelTag || "model"} capped${resets !== null ? ` until ${when(resets, now)}` : ""}`);
+      } else if (binding.kind === "tool") {
+        low.push(`${account.label} ${binding.displayName} used up`);
+      } else if (binding.kind === "allowance") {
+        low.push(`${account.label} key allowance spent`);
+      } else {
+        const projection = binding.projection;
+        const runsOut = projection && projection.status === "projected_before_reset" && projection.exhaustionAt
+          ? Date.parse(projection.exhaustionAt)
+          : NaN;
+        const left = binding.usedPct !== null ? `${Math.max(0, 100 - binding.usedPct).toFixed(0)}% left` : binding.remainingText;
+        if (Number.isFinite(runsOut) && runsOut > now) {
+          low.push(`${account.label} runs out ~${when(runsOut, now)}${resets !== null ? `, resets ${when(resets, now)}` : ""}`);
+        } else {
+          low.push(`${account.label} ${left}${resets !== null ? `, resets ${when(resets, now)}` : ""}`);
+        }
+      }
+      continue;
+    }
+    // Available: what is left of the binding window (the tightest general
+    // window, or the balance for balance-only accounts).
+    if (binding.kind === "balance") {
+      amountRoom.push(`${account.label} ${roomAmount(binding)}`);
+    } else if (binding.usedPct !== null) {
+      const left = Math.max(0, 100 - binding.usedPct);
+      const suffix = binding.weekly ? "" : ` (${binding.displayName})`;
+      percentRoom.push({ text: `${account.label} ${left.toFixed(0)}%${suffix}`, left });
+    } else {
+      amountRoom.push(`${account.label} ${binding.remainingText}`);
+    }
+  }
+  percentRoom.sort((left, right) => right.left - left.left);
+  return { room: [...percentRoom.map((entry) => entry.text), ...amountRoom], low, out, stale };
 }

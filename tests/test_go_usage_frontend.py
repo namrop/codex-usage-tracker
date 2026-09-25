@@ -76,12 +76,15 @@ def test_loader_lives_in_the_dashboard_hook_with_the_estate_failure_law():
         assert "fetch(" not in _src(view), view
 
 
-def test_history_places_the_go_card_right_after_the_weekly_panel():
+def test_history_places_the_go_card_last():
+    # Moved from right after the weekly panel to the end of History by the
+    # keeper-approved UI review (item 9, msg 1553037883747598450, 2026-09-25).
     history = _src("views/HistoryView.tsx")
     weekly_at = history.index("<WeeklyUtilizationCard")
-    go_at = history.index("<GoUsageCard")
     unified_at = history.index("<UnifiedUsageCard")
-    assert weekly_at < go_at < unified_at
+    charts_at = history.index("<SubscriptionHistoryCharts")
+    go_at = history.index("<GoUsageCard")
+    assert weekly_at < unified_at < charts_at < go_at
     assert "goUsage={state.goUsage}" in history
     views = _src("lib/views.ts")
     assert re.search(r'\["goUsage",\s*"history"\]', views)

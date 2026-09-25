@@ -1,6 +1,6 @@
 import type { Palette } from "../lib/palette";
 import { compactIntFormat } from "../lib/format";
-import { subscriptionUnifiedProviderColor } from "../lib/providers";
+import { providerDisplayName, subscriptionUnifiedProviderColor } from "../lib/providers";
 import { quotaPercentFor, quotaRowProviderKey, type QuotaRow } from "../lib/quota";
 
 // Window throughput donut (keeper-ratified flow rework, akasan 2026-08-30).
@@ -99,13 +99,13 @@ export function Donut({ svgId, legendId, summaryId, legendAriaLabel, payload, qu
     const detail = quota
       ? ` ${share}% of window tokens · ${cachedShare}% cached · ${quota.pct.toFixed(0)}% of ${windowNoun} used${quota.accounts > 1 ? " (worst account)" : ""}`
       : ` ${share}% of window tokens · ${cachedShare}% cached`;
-    legendRows.push({ key: `${canonical}-${index}`, color, provider: String(row.provider), detail });
+    legendRows.push({ key: `${canonical}-${index}`, color, provider: providerDisplayName(row.provider_canonical || row.provider), detail });
   });
 
   const combined = minorRows.reduce((sum, row) => sum + Number(row.total_tokens), 0);
   const combinedPct = ((combined / windowTotal) * 100).toFixed(2);
   const minorNames = minorRows
-    .map((row) => `${row.provider} ${((Number(row.total_tokens) / windowTotal) * 100).toFixed(2)}%`)
+    .map((row) => `${providerDisplayName(row.provider_canonical || row.provider)} ${((Number(row.total_tokens) / windowTotal) * 100).toFixed(2)}%`)
     .join(", ");
 
   return (

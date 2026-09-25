@@ -1485,6 +1485,33 @@ tbody tr:hover {
   background: var(--weekly);
 }
 
+/* Pace mark (UI review item 3, 2026-09-25): share of the week gone. The
+   meter keeps overflow hidden, so the mark is a thin full-height bar. */
+.capacity-meter {
+  position: relative;
+}
+
+.capacity-meter-pace {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  opacity: 0.75;
+}
+
+.capacity-pace {
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+
+.capacity-room {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+
 .capacity-window.is-at-cap .capacity-meter-fill {
   background: var(--danger);
 }

@@ -1,6 +1,6 @@
 import type { Palette } from "../lib/palette";
 import { bucketMinutesOf, formatUtcHour, intFormat } from "../lib/format";
-import { subscriptionUnifiedProviderColor } from "../lib/providers";
+import { providerDisplayName, subscriptionUnifiedProviderColor } from "../lib/providers";
 import { quotaRowProviderKey } from "../lib/quota";
 
 // Provider API status strip · 48 hours: provider status-feed badges over
@@ -128,7 +128,7 @@ export function ProviderStatus({ timeSeries, feeds, palette, loading }: {
   const shown = ranked.filter((entry) => entry.row.provider !== "unknown" && entry.windowEvents >= 10);
   const folded = ranked.filter((entry) => entry.row.provider === "unknown" || entry.windowEvents < 10);
   const foldedNames = folded
-    .map((entry) => `${entry.row.provider} (${intFormat(entry.windowEvents)} calls, ${intFormat(entry.windowErrors)} errors)`)
+    .map((entry) => `${providerDisplayName(entry.row.provider_canonical || entry.row.provider)} (${intFormat(entry.windowEvents)} calls, ${intFormat(entry.windowErrors)} errors)`)
     .join(", ");
   // The summary reads the same 48-cell window the strip draws — never the
   // seven-day totals the series also carries.
@@ -173,14 +173,14 @@ export function ProviderStatus({ timeSeries, feeds, palette, loading }: {
                   className="swatch-dot"
                   style={{ background: subscriptionUnifiedProviderColor(palette, { provider: row.provider_canonical }, index) }}
                 />
-                <span>{row.provider}</span>
+                <span>{providerDisplayName(row.provider_canonical || row.provider)}</span>
                 <ProviderStatusBadge feedEntry={feedEntry} />
               </div>
               <div
                 className="status-cells"
                 role="img"
                 aria-label={
-                  `${row.provider}: ${intFormat(entry.windowEvents)} calls, ${intFormat(entry.windowErrors)} errors over the last ${CELLS} complete UTC hours` +
+                  `${providerDisplayName(row.provider_canonical || row.provider)}: ${intFormat(entry.windowEvents)} calls, ${intFormat(entry.windowErrors)} errors over the last ${CELLS} complete UTC hours` +
                   (entry.windowErrors && row.dominant_error_class ? `; dominant error ${row.dominant_error_class}` : "")
                 }
               >

@@ -490,14 +490,23 @@ def test_prebuilt_answer_matches_the_live_route_but_its_clock(ledger, quota_ledg
     usage_cache.refresh_quota(quota_ledger, redis_socket)
     renderer, serving = _apps(ledger, quota_ledger, monkeypatch, redis_socket)
     prebuilt_views.render_once(renderer, redis_socket)
+    def drop_clock(value):
+        # Every field that is "now" or "seconds since" ticks between the two
+        # reads; a second boundary made this test flaky (seen 2026-09-25 on
+        # /api/unified-usage?hours=5). Everything else must match exactly.
+        if isinstance(value, dict):
+            return {
+                key: drop_clock(item) for key, item in value.items()
+                if key not in ("generated_at", "as_of") and not key.endswith("age_seconds")
+            }
+        if isinstance(value, list):
+            return [drop_clock(item) for item in value]
+        return value
+
     for view in prebuilt_views.VIEWS:
         built = serving.test_client().get(view).get_json()
         live = renderer.test_client().get(view).get_json()
-        for payload in (built, live):
-            payload.pop("generated_at", None)
-            (payload.get("window") or {}).pop("as_of", None)
-            (payload.get("native") or {}).pop("age_seconds", None)
-        assert built == live, view
+        assert drop_clock(built) == drop_clock(live), view
 
 
 def test_an_old_or_missing_answer_hands_back_to_the_route(ledger, quota_ledger, redis_socket, monkeypatch):

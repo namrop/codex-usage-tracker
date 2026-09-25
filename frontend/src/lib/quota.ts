@@ -146,7 +146,7 @@ export function missingQuotaMessage(rows: any, period: string): string {
   const missing = rows.map((row) => {
     const label = String((row && (row.label || row.provider)) || "Unknown provider");
     if (period === "five-hour" && row && row.provider === "openai-codex") {
-      return "OpenAI / Codex reports no comparable five-hour quota; weekly data is not substituted";
+      return "Codex reports no comparable five-hour quota; weekly data is not substituted";
     }
     const status = String((row && row.status) || "status unavailable").replace(/[-_]+/g, " ");
     return `${label} (${status})`;

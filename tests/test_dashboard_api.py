@@ -321,11 +321,12 @@ def test_subscription_provider_overview_and_raw_observation_details_exist(tmp_pa
     assert "<th>Observed</th><th>Confidence</th>" in card
     providers = frontend_surfaces.source("lib/providers.ts")
     for display_name in (
-        "OpenAI / Codex",
-        "Anthropic / Claude",
+        # Short display names since the 2026-09-25 UI review (item 5).
+        "\"openai-codex\": \"Codex\"",
+        "anthropic: \"Claude\"",
         "OpenCode Go",
-        "Z.AI / GLM",
-        "Kimi K3 Coding",
+        "\"z-ai-glm\": \"Z.AI\"",
+        "\"kimi-k3-coding\": \"Kimi K3\"",
     ):
         assert display_name in providers
     # The record-class doctrine names the views now (2026-09-14) instead of
@@ -773,11 +774,12 @@ def test_subscription_unavailable_path_renders_expected_provider_placeholders():
 
     assert "PlaceholderProviderCard" in card
     for display_name in (
-        "OpenAI / Codex",
-        "Anthropic / Claude",
+        # Short display names since the 2026-09-25 UI review (item 5).
+        "\"openai-codex\": \"Codex\"",
+        "anthropic: \"Claude\"",
         "OpenCode Go",
-        "Z.AI / GLM",
-        "Kimi K3 Coding",
+        "\"z-ai-glm\": \"Z.AI\"",
+        "\"kimi-k3-coding\": \"Kimi K3\"",
     ):
         assert display_name in providers_src
     assert '"Unknown freshness"' in card
@@ -923,6 +925,11 @@ def test_quota_provider_aliases_are_the_complete_explicit_allowlist():
         "moonshot-ai": "kimi-k3-coding",
         "custom:meridian-primary": "anthropic",
         "custom:meridian-yugen": "anthropic",
+        # The three acubens model servers pool as one provider (UI review
+        # item 5, keeper msg 1553037883747598450).
+        "custom:omlx": "local-acubens",
+        "custom:gemma-4-moe-it": "local-acubens",
+        "custom:minicpm5": "local-acubens",
     }
 
 
@@ -2205,7 +2212,7 @@ def test_subscription_quota_history_html_is_accessible_bounded_and_confidence_ex
     assert 'fetch("/api/subscriptions?days=30&history=0")' not in joined
     assert "Historical contract only" not in joined
     assert "No comparable primary weekly-equivalent data:" in quota_src
-    assert "OpenAI / Codex reports no comparable five-hour quota" in quota_src
+    assert "Codex reports no comparable five-hour quota" in quota_src
     assert "quotaConfidenceDash" in quota_src
     assert 'status === "exact" ? [] : [7, 5]' in quota_src
     assert "spanGaps: false" in card

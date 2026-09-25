@@ -171,7 +171,9 @@ describe("weeklyProviderRows", () => {
     const rows = weeklyProviderRows(PAYLOAD.current, "current");
     assert.deepEqual(rows.map((row) => row.provider), ["anthropic", "opencode-go", "kimi-k3-coding"]);
     const claude = rows[0];
-    assert.equal(claude.label, "Anthropic / Claude");
+    // The page's one name for the provider (UI review item 5, 2026-09-25),
+    // not the API's longer label.
+    assert.equal(claude.label, "Claude");
     assert.equal(claude.usedPct, 45);
     assert.equal(claude.complementPct, 55);
     assert.equal(claude.usedText, "45.0%");

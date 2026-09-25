@@ -5,6 +5,7 @@ import { useViewportWidth } from "../hooks/useViewportWidth";
 import { projectionText } from "../lib/burn";
 import {
   ageText,
+  capacityRoom,
   capacityStateLabel,
   confidenceText,
   deriveCapacityAccounts,
@@ -71,7 +72,17 @@ function WindowChip({ window, now }: { window: CapacityWindow; now: number }) {
           aria-valuenow={Number(window.usedPct.toFixed(1))}
         >
           <div className="capacity-meter-fill" style={{ width: `${window.usedPct}%` }} />
+          {window.elapsedPct !== null && !window.stale && (
+            // Pace mark: how much of the week has gone. Used share past the
+            // mark means ahead of an even pace.
+            <div className="capacity-meter-pace" style={{ left: `${window.elapsedPct}%` }} aria-hidden="true" />
+          )}
         </div>
+      )}
+      {window.usedPct !== null && window.elapsedPct !== null && !window.stale && (
+        <span className="capacity-pace">
+          {`${window.usedPct.toFixed(0)}% used · ${window.elapsedPct.toFixed(0)}% of the week gone`}
+        </span>
       )}
       <div className="capacity-window-meta">
         <span className={`subscription-badge confidence-${window.confidence}`}>{confidenceText(window)}</span>
@@ -158,21 +169,22 @@ export function CapacityCard({ subs, burn, thresholdSeconds }: {
   } else if (!accounts.length) {
     message = "No quota observations are recorded, so no account capacity can be shown.";
   }
-  const exhausted = accounts.filter((account) => account.state === "exhausted").length;
-  const constrained = accounts.filter((account) => account.state === "constrained").length;
-  const stale = accounts.filter((account) => account.state === "stale").length;
-  const summaryParts: string[] = [];
-  if (accounts.length) {
-    summaryParts.push(`${accounts.length} account${accounts.length === 1 ? "" : "s"}`);
-    if (exhausted) summaryParts.push(`${exhausted} exhausted`);
-    if (constrained) summaryParts.push(`${constrained} constrained`);
-    if (stale) summaryParts.push(`${stale} stale`);
-    summaryParts.push("binding window first");
-  }
+  // The room line (keeper-approved UI review item 4, 2026-09-25) replaces
+  // the old count line: who has room and how much, who is low, who is out
+  // and until when.
+  const room = useMemo(() => capacityRoom(accounts, now), [accounts, now]);
+  const roomParts: { key: string; label: string; items: string[] }[] = accounts.length
+    ? [
+      { key: "room", label: "Room", items: room.room },
+      { key: "low", label: "Low", items: room.low },
+      { key: "out", label: "Out", items: room.out },
+      { key: "stale", label: "No fresh reading", items: room.stale },
+    ].filter((part) => part.items.length)
+    : [];
 
   const caption = (
     <p className="caption">
-      One row per provider account: the window that binds, what remains in that window’s own units, when it resets, and how sure the reading is. Percentages are each account’s own cap and are never combined across providers; balances are amounts, not percentages; a model-specific cap, a tool quota or a key allowance at its limit constrains that model, tool or key without exhausting the account. While an account’s weekly or monthly cap is used up, its five-hour window is not shown.
+      One row per provider account: the window that binds, what remains in that window’s own units, when it resets, and how sure the reading is. The line above the rows sums it up: room left in each account’s tightest limit, accounts running low, and accounts that are out until a reset. On a weekly bar, the thin mark shows how much of the week has gone. Percentages are each account’s own cap and are never combined across providers; balances are amounts, not percentages; a model-specific cap, a tool quota or a key allowance at its limit constrains that model, tool or key without exhausting the account. While an account’s weekly or monthly cap is used up, its five-hour window is not shown.
     </p>
   );
 
@@ -193,8 +205,12 @@ export function CapacityCard({ subs, burn, thresholdSeconds }: {
       {subs.notice && !subs.loading && rows ? (
         <p className="lane-notice" id="capacityNotice">{subs.notice}</p>
       ) : null}
-      <p id="capacitySummary" className="chart-summary" aria-live="polite" hidden={!summaryParts.length}>
-        {summaryParts.join(" · ")}
+      <p id="capacitySummary" className="chart-summary capacity-room" aria-live="polite" hidden={!roomParts.length}>
+        {roomParts.map((part) => (
+          <span key={part.key} className={`capacity-room-part room-${part.key}`}>
+            <strong>{`${part.label}:`}</strong>{` ${part.items.join(" · ")}`}
+          </span>
+        ))}
       </p>
       <ul id="capacityAccounts" className="capacity-list" hidden={Boolean(message)}>
         {accounts.map((account) => (
