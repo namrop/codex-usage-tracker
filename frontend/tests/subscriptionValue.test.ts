@@ -28,8 +28,8 @@ const FEES = {
       fee_per_week: "46.67", fee_per_month: "202.90", currency: "USD", charged_at: "2026-09-03T00:00:00Z",
       billing_period_end: "2026-10-03T00:00:00Z", period_current: true },
     { subscription: "codex", provider: "openai-codex", provider_account_index: null, label: "Codex", plan: "ChatGPT Pro",
-      fee_per_week: "46.15", fee_per_month: "200.00", currency: "USD", charged_at: "2026-09-10T00:00:00Z",
-      billing_period_end: null, period_current: null },
+      fee_per_week: "46.15", fee_per_month: "200.00", currency: "USD", fee_source: "stated", stated_at: "2026-09-25T00:00:00Z",
+      charged_at: null, billing_period_end: null, period_current: null },
     { subscription: "opencode-go", provider: "opencode-go", provider_account_index: null, label: "OpenCode Go", plan: "OpenCode Go",
       fee_per_week: "2.31", fee_per_month: "10.00", currency: "USD", charged_at: "2026-09-08T00:00:00Z",
       billing_period_end: "2026-09-08T00:00:00Z", period_current: false },
@@ -56,5 +56,15 @@ describe("subscription value", () => {
     // Without the unified window there is no list-price side at all.
     assert.equal(deriveSubscriptionValue(FEES, null)[0].listPriceWeek, null);
     assert.equal(money(1392.315), "$1,392.32");
+  });
+
+  it("marks a stated fee (keeper msg 1553054862856556656) and keeps receipts as receipts", () => {
+    const byKey = new Map(deriveSubscriptionValue(FEES, UNIFIED).map((row) => [row.key, row]));
+    const codex = byKey.get("codex")!;
+    assert.equal(codex.feeSource, "stated");
+    assert.equal(codex.chargedAt, null);
+    assert.equal(codex.statedAt, "2026-09-25T00:00:00Z");
+    assert.equal(codex.multiple!.toFixed(1), "44.7");
+    assert.equal(byKey.get("claude-1")!.feeSource, "receipt");
   });
 });

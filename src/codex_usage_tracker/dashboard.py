@@ -65,6 +65,7 @@ from . import prebuilt_views, usage_cache
 
 
 DEFAULT_ATRIUM_ROOT = "/Users/luisramirez/Digital_Workspace"
+SUBSCRIPTION_RECEIPTS_MANIFEST = "07_systems/ai_usage_tracker/billing/ai_subscription_receipts.jsonl"
 DEFAULT_LEDGER_RELATIVE_PATH = "12_runtime/ledgers/codex_usage/codex_usage_ledger.jsonl"
 QUOTA_RESPONSE_FIELDS = (
     "harness",
@@ -3226,7 +3227,7 @@ def create_app(
         receipts manifest imports (keeper msg 1553037883747598450, 2026-09-25):
         the latest plan charge per subscription with its weekly and monthly
         equivalents, and the last 31 days of overage, top-ups and one-offs."""
-        from .subscription_fees import summarize
+        from .subscription_fees import ManifestError, read_stated_rates, summarize
 
         if not resolved_billing_ledger:
             return jsonify({"error": "billing ledger is not configured"}), 404
@@ -3251,7 +3252,20 @@ def create_app(
             return jsonify({"error": "ledger query exceeds private API row limit"}), 413
         except (MalformedLedgerError, ValidationError, IdentityConflictError):
             return jsonify({"error": "configured private ledger is unavailable"}), 503
-        payload = summarize(rows, now=now, other_since=now - timedelta(days=31))
+        # Stated rates (keeper msg 1553054862856556656) are not billing facts;
+        # they are read from the receipts manifest itself.
+        manifest = os.environ.get("AI_SUBSCRIPTION_RECEIPTS_MANIFEST") or (
+            f"{atrium_root.rstrip('/')}/{SUBSCRIPTION_RECEIPTS_MANIFEST}"
+        )
+        try:
+            stated_rates = read_stated_rates(manifest)
+            stated_read = "ok"
+        except FileNotFoundError:
+            stated_rates, stated_read = [], "no manifest"
+        except (OSError, ManifestError) as exc:
+            stated_rates, stated_read = [], f"unreadable: {exc}"
+        payload = summarize(rows, now=now, other_since=now - timedelta(days=31), stated_rates=stated_rates)
+        payload["stated_rates_read"] = stated_read
         payload["window"] = {"days": days, "other_charges_days": 31}
         payload["generated_at"] = now.isoformat().replace("+00:00", "Z")
         return jsonify(payload)

@@ -5,6 +5,8 @@
 // manifest via /api/subscription-fees); the list-price side is the unified
 // usage window's own per-row estimate. Both are over the same seven days, so
 // nothing is extrapolated. List price is a comparison figure, never a bill.
+// A "stated" fee is the rate Luis gave for a subscription whose charges are not
+// in his mail (msg 1553054862856556656, ChatGPT Pro); it has no charge date.
 
 export interface SubscriptionValueRow {
   key: string;
@@ -13,6 +15,8 @@ export interface SubscriptionValueRow {
   feePerMonth: number;
   feePerWeek: number;
   currency: string;
+  feeSource: "receipt" | "stated";
+  statedAt: string | null;
   chargedAt: string | null;
   periodEnd: string | null;
   periodCurrent: boolean | null;
@@ -65,6 +69,8 @@ export function deriveSubscriptionValue(fees: any, unified: any): SubscriptionVa
       feePerMonth: num(row.fee_per_month) || 0,
       feePerWeek,
       currency: String(row.currency || "USD"),
+      feeSource: row.fee_source === "stated" ? "stated" : "receipt",
+      statedAt: row.stated_at ? String(row.stated_at) : null,
       chargedAt: row.charged_at ? String(row.charged_at) : null,
       periodEnd: row.billing_period_end ? String(row.billing_period_end) : null,
       periodCurrent: row.period_current === true ? true : row.period_current === false ? false : null,

@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,8 @@ from codex_usage_tracker.subscription_fees import (
     fact_from_entry,
     parse_description_code,
     read_manifest,
+    read_stated_rates,
+    stated_rate_from_entry,
     summarize,
 )
 
@@ -134,3 +137,69 @@ def test_cli_billing_import_dry_run_then_write(tmp_path):
     bad.write_text('{"subscription": "codex"}\n')
     failed = subprocess.run([*base[:5], str(bad), "--billing-ledger", str(ledger)], capture_output=True, text=True)
     assert failed.returncode == 2 and "line 1" in failed.stderr
+
+
+# Keeper, 2026-09-25, msg 1553054862856556656: "chatgpt pro is $200/month, it's
+# on another card that is my mother's". A stated rate is his figure for a fee
+# whose charges are not in his mail: never a billing fact, still the card's fee.
+STATED_CODEX = {"subscription": "codex", "kind": "stated_rate", "plan": "ChatGPT Pro", "amount": "200.00",
+                "currency": "USD", "per": "month", "stated_at": _day(0), "evidence": "keeper msg"}
+
+
+def test_a_stated_rate_is_the_fee_but_never_a_billing_fact(tmp_path, monkeypatch):
+    manifest = tmp_path / "receipts.jsonl"
+    kimi = {"receipt_id": "2345-1754", "subscription": "kimi", "kind": "plan", "plan": "Allegro",
+            "charged_at": _day(-20), "amount": "99.00", "currency": "USD"}
+    manifest.write_text("\n".join(json.dumps(entry) for entry in (kimi, STATED_CODEX)) + "\n")
+    facts = read_manifest(manifest)
+    assert [fact["provider"] for fact in facts] == ["kimi-k3-coding"]
+    assert [rate["subscription"] for rate in read_stated_rates(manifest)] == ["codex"]
+
+    ledger = tmp_path / "billing.sqlite3"
+    append_sqlite_facts(ledger, facts, fact_type="billing_fact_v1")
+    monkeypatch.setenv("AI_SUBSCRIPTION_RECEIPTS_MANIFEST", str(manifest))
+    client = create_app(billing_ledger=str(ledger)).test_client()
+    data = client.get("/api/subscription-fees").get_json()
+    assert data["stated_rates_read"] == "ok"
+    subs = {row["subscription"]: row for row in data["subscriptions"]}
+    codex = subs["codex"]
+    assert (codex["fee_source"], codex["fee_per_month"], codex["fee_per_week"]) == ("stated", "200.00", "46.15")
+    assert codex["charged_at"] is None and codex["period_current"] is None and codex["plan"] == "ChatGPT Pro"
+    assert subs["kimi"]["fee_source"] == "receipt"
+    # The billing ledger and its totals hold only the posted charge.
+    billing = client.get("/api/billing?days=90").get_json()
+    assert len(billing["transactions"]) == 1 and Decimal(billing["totals_by_currency"][0]["amount"]) == Decimal("99")
+
+
+def test_the_newer_of_a_stated_rate_and_a_receipt_wins():
+    now = datetime.now(timezone.utc)
+    receipt = fact_from_entry({"subscription": "codex", "kind": "plan", "plan": "ChatGPT Pro", "charged_at": _day(-3),
+                               "amount": "200.00"})
+    older = stated_rate_from_entry({**STATED_CODEX, "amount": "20.00", "stated_at": _day(-10)})
+    newer = stated_rate_from_entry({**STATED_CODEX, "amount": "250.00", "stated_at": _day(0)})
+    [row] = summarize([receipt], now=now, stated_rates=[older])["subscriptions"]
+    assert (row["fee_source"], row["amount"]) == ("receipt", "200.00")
+    [row] = summarize([receipt], now=now, stated_rates=[older, newer])["subscriptions"]
+    assert (row["fee_source"], row["amount"]) == ("stated", "250.00")
+
+
+@pytest.mark.parametrize("change, fragment", [
+    ({"subscription": "netflix"}, "unknown subscription"),
+    ({"per": "week"}, "per: month"),
+    ({"amount": "-5"}, "cannot be negative"),
+    ({"stated_at": None}, "stated_at is missing"),
+])
+def test_bad_stated_rates_are_rejected(change, fragment):
+    with pytest.raises(ManifestError) as excinfo:
+        stated_rate_from_entry({**STATED_CODEX, **change})
+    assert fragment in str(excinfo.value)
+
+
+def test_no_manifest_means_no_stated_rates(tmp_path, monkeypatch):
+    monkeypatch.delenv("AI_SUBSCRIPTION_RECEIPTS_MANIFEST", raising=False)
+    ledger = tmp_path / "billing.sqlite3"
+    append_sqlite_facts(ledger, read_manifest(_manifest(tmp_path)), fact_type="billing_fact_v1")
+    data = create_app(atrium_root=str(tmp_path), billing_ledger=str(ledger)).test_client().get(
+        "/api/subscription-fees").get_json()
+    assert data["stated_rates_read"] == "no manifest"
+    assert all(row["fee_source"] == "receipt" for row in data["subscriptions"])

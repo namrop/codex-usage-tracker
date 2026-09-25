@@ -18,7 +18,7 @@ export function SubscriptionValueCard({ fees, unified }: { fees: SubscriptionFee
         <div className="card-title">
           <h2 id="subscriptionValueTitle">Subscriptions · what you pay vs list price</h2>
           <p className="caption">
-            Each subscription’s fee from its latest receipt, next to what the last seven days of its traffic would have cost at API list prices. List price is a comparison figure, not a bill; the fee is what was actually charged.
+            Each subscription’s fee from its latest receipt, next to what the last seven days of its traffic would have cost at API list prices. Where no charge is in your mail, the fee is the rate you gave. List price is a comparison figure, not a bill.
           </p>
         </div>
       </div>
@@ -44,7 +44,7 @@ export function SubscriptionValueCard({ fees, unified }: { fees: SubscriptionFee
                     money(row.feePerWeek, row.currency),
                     money(row.listPriceWeek),
                     row.multiple === null ? "—" : `${row.multiple.toFixed(1)}×`,
-                    formatTimestamp(row.chargedAt),
+                    row.feeSource === "stated" ? "none in mail · rate you gave" : formatTimestamp(row.chargedAt),
                     row.periodEnd
                       ? `${formatTimestamp(row.periodEnd)}${row.periodCurrent === false ? " · no later charge recorded" : ""}`
                       : "—",

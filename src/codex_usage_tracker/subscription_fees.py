@@ -7,8 +7,15 @@ subscription. The monthly fees should be in my emails."
 The source of truth is a receipts manifest in the Atrium (one JSON object per
 line, each a charge read off a receipt email). ``billing-import`` turns it into
 ``billing_fact_v1`` facts; ``/api/subscription-fees`` reads them back per
-subscription. Only charges that actually posted belong in the manifest: a rate
-reconstructed by arithmetic is not a billing fact.
+subscription. A rate reconstructed by arithmetic never goes in.
+
+A ``stated_rate`` line is the rate Luis gave himself for a subscription whose
+charges are not in his mail (keeper, 2026-09-25, msg 1553054862856556656:
+"chatgpt pro is $200/month, it's on another card that is my mother's"). It is
+not a charge: ``billing-import`` skips it, so it never enters the billing
+ledger or its totals. ``/api/subscription-fees`` reads it straight from the
+manifest and uses it as the fee when it is newer than the latest plan charge
+(or there is none), marked ``fee_source: "stated"``.
 
 Manifest line::
 
@@ -45,6 +52,7 @@ SUBSCRIPTIONS: dict[str, tuple[str, int | None, str]] = {
 # plan (Claude extra usage). topup: prepaid credit. proration / one_time:
 # charges that are not the recurring rate. refund: money back (negative).
 KINDS = frozenset({"plan", "overage", "topup", "proration", "one_time", "refund"})
+STATED_RATE = "stated_rate"
 
 
 class ManifestError(ValueError):
@@ -124,8 +132,7 @@ def fact_from_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
     return fact
 
 
-def read_manifest(path: str | Path) -> list[dict[str, Any]]:
-    facts: list[dict[str, Any]] = []
+def _manifest_entries(path: str | Path) -> Iterable[tuple[int, dict[str, Any]]]:
     for number, line in enumerate(Path(path).expanduser().read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip() or line.lstrip().startswith("//"):
             continue
@@ -133,11 +140,56 @@ def read_manifest(path: str | Path) -> list[dict[str, Any]]:
             entry = json.loads(line)
         except json.JSONDecodeError as exc:
             raise ManifestError(f"line {number}: not JSON ({exc.msg})") from exc
+        if not isinstance(entry, dict):
+            raise ManifestError(f"line {number}: not a JSON object")
+        yield number, entry
+
+
+def read_manifest(path: str | Path) -> list[dict[str, Any]]:
+    """The manifest's charges as billing facts. Stated rates are not charges
+    and are skipped (see ``read_stated_rates``)."""
+    facts: list[dict[str, Any]] = []
+    for number, entry in _manifest_entries(path):
+        if entry.get("kind") == STATED_RATE:
+            continue
         try:
             facts.append(fact_from_entry(entry))
         except ManifestError as exc:
             raise ManifestError(f"line {number}: {exc}") from exc
     return facts
+
+
+def stated_rate_from_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
+    subscription = str(entry.get("subscription") or "")
+    if subscription not in SUBSCRIPTIONS:
+        raise ManifestError(f"unknown subscription {subscription!r}")
+    if entry.get("per") != "month":
+        raise ManifestError("a stated rate must say per: month")
+    try:
+        amount = Decimal(str(entry.get("amount")))
+    except (InvalidOperation, TypeError) as exc:
+        raise ManifestError(f"amount is not a number: {entry.get('amount')!r}") from exc
+    if amount < 0:
+        raise ManifestError("a stated rate cannot be negative")
+    return {
+        "subscription": subscription,
+        "plan": str(entry.get("plan") or "") or None,
+        "amount": str(amount),
+        "currency": str(entry.get("currency") or "USD").upper(),
+        "stated_at": _timestamp(entry.get("stated_at"), "stated_at"),
+    }
+
+
+def read_stated_rates(path: str | Path) -> list[dict[str, Any]]:
+    rates: list[dict[str, Any]] = []
+    for number, entry in _manifest_entries(path):
+        if entry.get("kind") != STATED_RATE:
+            continue
+        try:
+            rates.append(stated_rate_from_entry(entry))
+        except ManifestError as exc:
+            raise ManifestError(f"line {number}: {exc}") from exc
+    return rates
 
 
 def _period_days(row: Mapping[str, Any]) -> float | None:
@@ -155,11 +207,16 @@ def _period_days(row: Mapping[str, Any]) -> float | None:
 
 
 def summarize(
-    rows: Iterable[Mapping[str, Any]], *, now: datetime, other_since: datetime | None = None,
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    now: datetime,
+    other_since: datetime | None = None,
+    stated_rates: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Per subscription: the latest plan charge and its weekly equivalent, plus
     every overage, top-up, proration, one-time charge and refund in the rows
-    (since ``other_since`` when given)."""
+    (since ``other_since`` when given). A stated rate newer than the latest
+    plan charge, or for a subscription with none, is the fee instead."""
     since = other_since.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if other_since else ""
     latest: dict[str, Mapping[str, Any]] = {}
     other: list[dict[str, Any]] = []
@@ -182,9 +239,36 @@ def summarize(
                 "amount": str(row.get("amount")),
                 "currency": row.get("currency"),
             })
+    stated: dict[str, Mapping[str, Any]] = {}
+    for rate in stated_rates:
+        current = stated.get(rate["subscription"])
+        if current is None or str(rate["stated_at"]) > str(current["stated_at"]):
+            stated[rate["subscription"]] = rate
     subscriptions: list[dict[str, Any]] = []
     for key, (provider, index, label) in SUBSCRIPTIONS.items():
         row = latest.get(key)
+        rate = stated.get(key)
+        if rate is not None and (row is None or str(rate["stated_at"]) > str(row["occurred_at"])):
+            amount = Decimal(str(rate["amount"]))
+            subscriptions.append({
+                "subscription": key,
+                "provider": provider,
+                "provider_account_index": index,
+                "label": label,
+                "plan": rate.get("plan"),
+                "amount": str(amount),
+                "currency": rate.get("currency"),
+                "fee_source": "stated",
+                "stated_at": rate["stated_at"],
+                "charged_at": None,
+                "billing_period_start": None,
+                "billing_period_end": None,
+                "period_days": None,
+                "fee_per_week": str((amount * Decimal(12) / Decimal(52)).quantize(Decimal("0.01"))),
+                "fee_per_month": str(amount.quantize(Decimal("0.01"))),
+                "period_current": None,
+            })
+            continue
         if row is None:
             continue
         amount = Decimal(str(row["amount"]))
@@ -211,6 +295,7 @@ def summarize(
             "plan": parse_description_code(row["description_code"])[2] or None,  # type: ignore[index]
             "amount": str(amount),
             "currency": row.get("currency"),
+            "fee_source": "receipt",
             "charged_at": row.get("occurred_at"),
             "billing_period_start": row.get("billing_period_start"),
             "billing_period_end": end,
