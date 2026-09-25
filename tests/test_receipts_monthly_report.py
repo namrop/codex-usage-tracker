@@ -31,3 +31,8 @@ def test_each_finding_is_one_line():
     assert lines[2].startswith("- Needs a look: Kimi K3 $199.00, 2026-10-02") and lines[2].endswith("Not recorded.")
     assert lines[3] == "- No rebill in mail: OpenCode Go (last charge Sep 8, expected around Oct 8)."
     assert lines[4] == "- Mail sync yugen-harborlight: 1 message(s) not fetched"
+
+
+def test_a_catch_up_commit_is_reported():
+    report = format_report({"added": []}, commit="def5678", problems=[])
+    assert report.splitlines()[1] == "- Committed receipts file changes an earlier run left uncommitted. Canon def5678."

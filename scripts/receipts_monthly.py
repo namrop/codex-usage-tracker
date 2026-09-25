@@ -28,7 +28,9 @@ MAILROOM = Path("/srv/pharos/repos/oasis-mailroom")
 CANON = Path("/srv/pharos/atrium/canon")
 MANIFEST_REL = "07_systems/ai_usage_tracker/billing/ai_subscription_receipts.jsonl"
 BILLING_LEDGER = "/home/luis/.local/state/codex-usage-tracker/billing_facts.sqlite3"
-GIT = "/run/current-system/sw/bin/git"
+# The canon root is root-owned while .git is luis's: name it safe for this
+# call rather than depending on whichever HOME's gitconfig the scheduler has.
+GIT = ["/run/current-system/sw/bin/git", "-c", f"safe.directory={CANON}"]
 QUERY = "newer_than:45d subject:receipt"
 ACCOUNTS = ("personal-gmail", "yugen-harborlight")
 LABELS = {
@@ -53,6 +55,8 @@ def format_report(scan: Mapping[str, Any], *, commit: str | None, problems: list
                    for e in added]
         lines.append(f"Added {len(added)} charge{'s' if len(added) != 1 else ''} to the receipts file: " + " · ".join(charges)
                      + (f". Canon {commit}." if commit else "."))
+    elif commit:
+        lines.append(f"Committed receipts file changes an earlier run left uncommitted. Canon {commit}.")
     for row in scan.get("needs_look") or []:
         amount = f" ${row['amount']}" if row.get("amount") else ""
         lines.append(f"Needs a look: {LABELS.get(row['vendor'], row['vendor'])}{amount}, {row.get('received')} "
@@ -70,14 +74,24 @@ def _run(command: list[str], *, cwd: Path, timeout: int) -> subprocess.Completed
     return subprocess.run(command, cwd=str(cwd), capture_output=True, text=True, timeout=timeout)
 
 
+def _manifest_dirty() -> bool:
+    result = _run([*GIT, "status", "--porcelain", "--", MANIFEST_REL], cwd=CANON, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(f"git status failed: {result.stderr.strip()[-300:]}")
+    return bool(result.stdout.strip())
+
+
 def _commit_manifest(count: int) -> str:
     message = (f"ai usage: {count} subscription charge{'s' if count != 1 else ''} from receipt mail "
-               f"(monthly receipts job, keeper msg 1553058626350874726)")
-    _run([GIT, "add", "--", MANIFEST_REL], cwd=CANON, timeout=120).check_returncode()
+               f"(monthly receipts job, keeper msg 1553058626350874726)") if count else (
+        "ai usage: receipts file changes an earlier run left uncommitted (monthly receipts job)")
+    added = _run([*GIT, "add", "--", MANIFEST_REL], cwd=CANON, timeout=120)
+    if added.returncode != 0:
+        raise RuntimeError(f"git add failed: {added.stderr.strip()[-300:]}")
     for attempt in range(3):
-        result = _run([GIT, "commit", "-q", "--only", "-m", message, "--", MANIFEST_REL], cwd=CANON, timeout=300)
+        result = _run([*GIT, "commit", "-q", "--only", "-m", message, "--", MANIFEST_REL], cwd=CANON, timeout=300)
         if result.returncode == 0:
-            return _run([GIT, "rev-parse", "--short", "HEAD"], cwd=CANON, timeout=30).stdout.strip()
+            return _run([*GIT, "rev-parse", "--short", "HEAD"], cwd=CANON, timeout=30).stdout.strip()
         if "index.lock" not in (result.stderr + result.stdout) or attempt == 2:
             raise RuntimeError(f"canon commit failed: {(result.stderr or result.stdout).strip()[-300:]}")
         time.sleep(10)
@@ -105,13 +119,20 @@ def main() -> int:
         return 1
     scan = json.loads(scan_run.stdout)
     commit = None
-    if scan.get("appended"):
+    try:
+        # Also true when an earlier run appended but could not commit.
+        dirty = _manifest_dirty()
+    except (RuntimeError, subprocess.SubprocessError) as exc:
+        dirty = bool(scan.get("appended"))
+        problems.append(f"Could not check the receipts file in git: {exc}")
+    if scan.get("appended") or dirty:
+        # Idempotent: an earlier run's lines replay, never duplicate.
         imported = _run([str(TRACKER / ".venv/bin/codex-usage-tracker"), "billing-import", "--manifest", manifest,
                          "--billing-ledger", BILLING_LEDGER], cwd=TRACKER, timeout=600)
         if imported.returncode != 0:
             problems.append(f"Billing import failed (the receipts file has the lines): {imported.stderr.strip()[-300:]}")
         try:
-            commit = _commit_manifest(int(scan["appended"]))
+            commit = _commit_manifest(int(scan.get("appended") or 0))
         except (RuntimeError, subprocess.SubprocessError) as exc:
             problems.append(f"Receipts file updated but not committed: {exc}")
     report = format_report(scan, commit=commit, problems=problems)
