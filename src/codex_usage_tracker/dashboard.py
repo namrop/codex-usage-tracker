@@ -3193,6 +3193,33 @@ def create_app(
             }
         )
 
+    @app.route("/api/health")
+    def api_health():
+        """Is the AI usage ledger system working (keeper, 2026-09-25): the
+        service, each ledger and its collector, the Redis copies, the systemd
+        units and timers, and the Hermes watchdog jobs. See health.py."""
+        from . import health
+
+        now = datetime.now(timezone.utc)
+
+        def fresh(path, heartbeat, lanes):
+            return _ledger_freshness(path, now=now, heartbeat_name=heartbeat, lane_health_name=lanes) if path else None
+
+        payload, status = health.build_health(
+            ledgers={
+                "usage": (resolved_unified_usage, fresh(resolved_unified_usage, "usage-collect.ok", "lanes-usage.json")),
+                "quota": (resolved_quota_ledger, fresh(resolved_quota_ledger, "quota-collect.ok", "lanes-quota.json")),
+                "billing": (resolved_billing_ledger, None),
+                "search": (resolved_search_ledger, None),
+            },
+            redis_socket=os.environ.get(usage_cache.SOCKET_ENV),
+            cron_jobs_path=os.environ.get("AI_USAGE_HERMES_CRON_JOBS", health.HERMES_CRON_JOBS),
+        )
+        response = jsonify(payload)
+        response.status_code = status
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.route("/api/subscription-fees")
     def api_subscription_fees():
         """What each AI subscription costs, from the billing facts the Atrium

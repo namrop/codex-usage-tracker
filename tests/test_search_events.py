@@ -551,7 +551,13 @@ def test_derived_exhaustion_does_not_break_the_existing_quota_surfaces(tmp_path)
         for rule in sorted(str(rule) for rule in app.url_map.iter_rules()):
             if "<" in rule:
                 continue
-            assert client.get(rule).status_code < 500, rule
+            response = client.get(rule)
+            if rule == "/api/health":
+                # A 503 here is the health answer ("down": no usage ledger is
+                # configured in this fixture), not a crash.
+                assert response.status_code in (200, 503) and response.get_json()["status"], rule
+                continue
+            assert response.status_code < 500, rule
 
 
 def test_cli_searches_reports_whether_the_bounded_query_filled_up(tmp_path, capsys, monkeypatch):
