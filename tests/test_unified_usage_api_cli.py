@@ -1120,16 +1120,21 @@ def test_private_dashboard_uses_success_heartbeats_for_noop_collection_freshness
     quota_ok = health / "quota-collect.ok"
     usage_ok.touch()
     quota_ok.touch()
-    recent = datetime(2026, 7, 14, 11, 30, 0, tzinfo=timezone.utc).timestamp()
+    recent = datetime(2026, 7, 14, 11, 50, 0, tzinfo=timezone.utc).timestamp()
     os.utime(usage_ok, (recent, recent))
     os.utime(quota_ok, (recent, recent))
     client = create_app(unified_usage_ledger=str(usage), quota_ledger=str(quota)).test_client()
 
+    # With a collector heartbeat the write threshold is one ledger tick
+    # (15 minutes plus 2 of timer slack; keeper 2026-09-25); the provider
+    # cards keep their three-hour observation threshold.
     expected = {
         "status": "fresh",
         "heartbeat_status": "fresh",
-        "latest_at": "2026-07-14T11:30:00Z",
-        "max_age_seconds": 10800,
+        "latest_at": "2026-07-14T11:50:00Z",
+        "max_age_seconds": 1020,
+        "threshold_seconds": 10800,
+        "run_in_progress_since": None,
     }
     assert client.get("/api/unified-usage?hours=3").get_json()["freshness"] == expected
     assert client.get("/api/subscriptions?days=30&history=0").get_json()["freshness"] == expected
@@ -1152,7 +1157,7 @@ def _freshness_client(tmp_path, monkeypatch, *, lane_health=None, heartbeat_at=N
     health.mkdir(exist_ok=True)
     heartbeat = health / "usage-collect.ok"
     heartbeat.touch()
-    stamp = (heartbeat_at or datetime(2026, 7, 14, 11, 30, 0, tzinfo=timezone.utc)).timestamp()
+    stamp = (heartbeat_at or datetime(2026, 7, 14, 11, 50, 0, tzinfo=timezone.utc)).timestamp()
     os.utime(heartbeat, (stamp, stamp))
     if lane_health is not None:
         (health / "lanes-usage.json").write_text(
@@ -1165,10 +1170,10 @@ def _lane_health(**last_success_at):
     return {
         "schema_version": 1,
         "scope": "usage",
-        "updated_at": "2026-07-14T11:30:00Z",
+        "updated_at": "2026-07-14T11:50:00Z",
         "lanes": {
             lane: {
-                "last_run_at": "2026-07-14T11:30:00Z",
+                "last_run_at": "2026-07-14T11:50:00Z",
                 "last_success_at": value,
                 "last_error_class": None if value else "IdentityConflictError",
                 "rows_written": 3,
@@ -1185,8 +1190,8 @@ def test_freshness_reports_every_lane_when_health_is_present_and_current(tmp_pat
         tmp_path,
         monkeypatch,
         lane_health=_lane_health(
-            hermes="2026-07-14T11:30:00Z",
-            claude_code="2026-07-14T11:30:00Z",
+            hermes="2026-07-14T11:50:00Z",
+            claude_code="2026-07-14T11:50:00Z",
         ),
     )
 
@@ -1196,7 +1201,7 @@ def test_freshness_reports_every_lane_when_health_is_present_and_current(tmp_pat
     assert freshness["stale_lanes"] == []
     assert [lane["lane"] for lane in freshness["lanes"]] == ["claude_code", "hermes"]
     assert all(lane["status"] == "fresh" for lane in freshness["lanes"])
-    assert freshness["lanes"][0]["age_seconds"] == 1800
+    assert freshness["lanes"][0]["age_seconds"] == 600
 
 
 def test_freshness_names_the_stale_lane_behind_a_healthy_heartbeat(tmp_path, monkeypatch):
@@ -1206,7 +1211,7 @@ def test_freshness_names_the_stale_lane_behind_a_healthy_heartbeat(tmp_path, mon
         tmp_path,
         monkeypatch,
         lane_health=_lane_health(
-            hermes="2026-07-14T11:30:00Z",
+            hermes="2026-07-14T11:50:00Z",
             claude_code_secondary=None,
             opencode="2026-07-11T11:30:00Z",
         ),
@@ -1235,8 +1240,8 @@ def test_freshness_projects_the_ceded_flag_so_the_ui_can_render_it(tmp_path, mon
     # retries must reach the screen — the projection carries `ceded` verbatim
     # and defaults it to False when the collector predates the field.
     lane_health = _lane_health(
-        hermes="2026-07-14T11:30:00Z",
-        claude_code="2026-07-14T11:30:00Z",
+        hermes="2026-07-14T11:50:00Z",
+        claude_code="2026-07-14T11:50:00Z",
     )
     lane_health["lanes"]["hermes"]["ceded"] = True
     lane_health["lanes"]["hermes"]["last_error_class"] = "TimeoutError"
@@ -1258,8 +1263,10 @@ def test_freshness_falls_back_to_the_heartbeat_when_lane_health_is_absent(tmp_pa
     assert freshness == {
         "status": "fresh",
         "heartbeat_status": "fresh",
-        "latest_at": "2026-07-14T11:30:00Z",
-        "max_age_seconds": 10800,
+        "latest_at": "2026-07-14T11:50:00Z",
+        "max_age_seconds": 1020,
+        "threshold_seconds": 10800,
+        "run_in_progress_since": None,
     }
 
 

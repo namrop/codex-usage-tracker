@@ -443,3 +443,86 @@ def test_cli_refreshes_each_copy_on_its_own(ledger, redis_socket, tmp_path, caps
     assert cli.cmd_usage_cache_refresh(args) == 1
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [(line["copy"], line["status"]) for line in lines] == [("usage", "refreshed"), ("quota", "failed")]
+
+
+# ── Keeper, msg 1552976803495280683: "option A is the better option. lets do
+# it please" — pre-built answers for the page's fixed requests. ──
+
+from codex_usage_tracker import prebuilt_views
+
+
+def _apps(ledger, quota_ledger, monkeypatch, redis_socket):
+    monkeypatch.setenv(usage_cache.SOCKET_ENV, redis_socket)
+    monkeypatch.delenv(prebuilt_views.SERVE_ENV, raising=False)
+    renderer = create_app(unified_usage_ledger=str(ledger), quota_ledger=str(quota_ledger))
+    monkeypatch.setenv(prebuilt_views.SERVE_ENV, "serve")
+    serving = create_app(unified_usage_ledger=str(ledger), quota_ledger=str(quota_ledger))
+    monkeypatch.delenv(prebuilt_views.SERVE_ENV)
+    return renderer, serving
+
+
+def test_prebuilt_answers_are_the_routes_own_bytes(ledger, quota_ledger, redis_socket, monkeypatch):
+    usage_cache.refresh(ledger, redis_socket)
+    usage_cache.refresh_quota(quota_ledger, redis_socket)
+    renderer, serving = _apps(ledger, quota_ledger, monkeypatch, redis_socket)
+    summary = prebuilt_views.render_once(renderer, redis_socket)
+    assert {view: entry["status"] for view, entry in summary["views"].items()} == {view: 200 for view in prebuilt_views.VIEWS}
+    client = serving.test_client()
+    for view in prebuilt_views.VIEWS:
+        stored = redis.Redis(unix_socket_path=redis_socket, decode_responses=True).hget(
+            prebuilt_views.view_key(*view.split("?", 1)) if "?" in view else prebuilt_views.view_key(view, ""), "body"
+        )
+        response = client.get(view)
+        assert response.status_code == 200
+        assert "X-AI-Usage-Prebuilt" in response.headers, view
+        assert response.get_data(as_text=True) == stored
+        assert response.headers["Cache-Control"] == "no-store"
+    # Anything else is computed live.
+    assert "X-AI-Usage-Prebuilt" not in client.get("/api/unified-usage?hours=6").headers
+    assert "X-AI-Usage-Prebuilt" not in client.get("/api/unified-usage?hours=5&provider=anthropic").headers
+
+
+def test_prebuilt_answer_matches_the_live_route_but_its_clock(ledger, quota_ledger, redis_socket, monkeypatch):
+    usage_cache.refresh(ledger, redis_socket)
+    usage_cache.refresh_quota(quota_ledger, redis_socket)
+    renderer, serving = _apps(ledger, quota_ledger, monkeypatch, redis_socket)
+    prebuilt_views.render_once(renderer, redis_socket)
+    for view in prebuilt_views.VIEWS:
+        built = serving.test_client().get(view).get_json()
+        live = renderer.test_client().get(view).get_json()
+        for payload in (built, live):
+            payload.pop("generated_at", None)
+            (payload.get("window") or {}).pop("as_of", None)
+            (payload.get("native") or {}).pop("age_seconds", None)
+        assert built == live, view
+
+
+def test_an_old_or_missing_answer_hands_back_to_the_route(ledger, quota_ledger, redis_socket, monkeypatch):
+    usage_cache.refresh(ledger, redis_socket)
+    renderer, serving = _apps(ledger, quota_ledger, monkeypatch, redis_socket)
+    prebuilt_views.render_once(renderer, redis_socket, views=("/api/unified-usage?hours=5",))
+    assert prebuilt_views.lookup("/api/unified-usage", "hours=5", socket_path=redis_socket) is not None
+    later = lambda: time.time() + prebuilt_views.DEFAULT_MAX_AGE_SECONDS + 1
+    assert prebuilt_views.lookup("/api/unified-usage", "hours=5", socket_path=redis_socket, clock=later) is None
+    assert prebuilt_views.lookup("/api/unified-usage", "hours=24", socket_path=redis_socket) is None  # not rendered
+    assert prebuilt_views.lookup("/api/unified-usage", "hours=5", socket_path=str(ledger.parent / "absent.sock")) is None
+    assert "X-AI-Usage-Prebuilt" not in renderer.test_client().get("/api/unified-usage?hours=5").headers
+
+
+def test_the_renderer_never_serves_its_own_answers(ledger, quota_ledger, redis_socket, monkeypatch):
+    usage_cache.refresh(ledger, redis_socket)
+    _renderer, serving = _apps(ledger, quota_ledger, monkeypatch, redis_socket)
+    with pytest.raises(RuntimeError):
+        prebuilt_views.render_once(serving, redis_socket)
+
+
+def test_a_rerender_carries_new_data(ledger, quota_ledger, redis_socket, monkeypatch):
+    usage_cache.refresh(ledger, redis_socket, now=NOW)
+    renderer, serving = _apps(ledger, quota_ledger, monkeypatch, redis_socket)
+    prebuilt_views.render_once(renderer, redis_socket, views=("/api/unified-usage?hours=5",))
+    before = serving.test_client().get("/api/unified-usage?hours=5").get_json()["identity"]["physical_requests"]
+    append_sqlite_facts(ledger, [_hermes("evt-rerender", _at(2.5))], fact_type="usage_event_v1")
+    usage_cache.refresh(ledger, redis_socket, now=NOW + timedelta(seconds=5))
+    prebuilt_views.render_once(renderer, redis_socket, views=("/api/unified-usage?hours=5",))
+    after = serving.test_client().get("/api/unified-usage?hours=5").get_json()["identity"]["physical_requests"]
+    assert after == before + 1

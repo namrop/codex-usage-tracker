@@ -61,7 +61,7 @@ from .canonical_ledger import (
     query_sqlite_facts,
     read_facts,
 )
-from . import usage_cache
+from . import prebuilt_views, usage_cache
 
 
 DEFAULT_ATRIUM_ROOT = "/Users/luisramirez/Digital_Workspace"
@@ -128,6 +128,22 @@ _UNIFIED_STATUS_PROVIDER_LIMIT = 12
 _SUBSCRIPTION_CHART_PROVIDER_LIMIT = 32
 _SUBSCRIPTION_CHART_SERIES_PER_PROVIDER_LIMIT = 16
 _PRIVATE_LEDGER_MAX_AGE_SECONDS = 3 * 60 * 60
+# Keeper, 2026-09-25 (Discord unified usage ledger thread): "staleness should
+# only be reported if it is over 15 minutes, or one ledger tick". Both
+# collectors run on 15-minute timers (fleet ai-usage-collect /
+# ai-quota-collect). A collector-written ledger has missed a tick when its
+# last write is over a tick old and no run has started since: a usage run
+# takes 8-25 minutes, so an older write while a run is going is a tick in
+# progress. Two minutes cover timer slack. A run going past an hour is hung.
+# A lane is stale when it did not succeed in the latest completed run.
+# Ledgers without a collector heartbeat keep the three-hour threshold, and so
+# do the provider cards' per-observation badges (``threshold_seconds``):
+# some providers write a reading only when their numbers change (the Codex
+# reading was 42 minutes old with its lane healthy), so a tick there would
+# mark a healthy provider stale.
+_COLLECTOR_TICK_SECONDS = 15 * 60
+_COLLECTOR_TICK_GRACE_SECONDS = 2 * 60
+_COLLECTOR_RUN_LIMIT_SECONDS = 60 * 60
 # Provider-reported window states that may cross the API boundary:
 # Kimi's inactive marker, and the OpenCode Go usage API's ok / rate-limited.
 _QUOTA_PROVIDER_STATES = frozenset({"inactive_or_not_reported", "ok", "rate_limited"})
@@ -316,6 +332,10 @@ def _lane_freshness(
     lanes = loaded.get("lanes")
     if not isinstance(lanes, dict):
         return []
+    never = datetime.min.replace(tzinfo=timezone.utc)
+    latest_run = (
+        _fact_datetime(loaded["updated_at"]) if isinstance(loaded.get("updated_at"), str) else never
+    )
     projected: list[dict[str, Any]] = []
     for name in sorted(str(key) for key in lanes):
         lane = lanes.get(name)
@@ -325,12 +345,24 @@ def _lane_freshness(
         parsed = (
             _fact_datetime(last_success_at) if isinstance(last_success_at, str) else None
         )
-        if parsed is None or parsed == datetime.min.replace(tzinfo=timezone.utc):
+        if parsed is None or parsed == never:
             status = "never"
             age_seconds = None
         else:
             age_seconds = int((now - parsed).total_seconds())
-            status = "stale" if age_seconds > _PRIVATE_LEDGER_MAX_AGE_SECONDS else "fresh"
+            if latest_run != never:
+                # One ledger tick: stale when it missed the latest completed run.
+                status = "stale" if parsed < latest_run else "fresh"
+            else:
+                status = (
+                    "stale"
+                    if age_seconds > _COLLECTOR_TICK_SECONDS + _COLLECTOR_TICK_GRACE_SECONDS
+                    else "fresh"
+                )
+        if isinstance(lane.get("retired"), str):
+            # Deliberately no longer run (collector RETIRED_LANES): listed with
+            # its reason, never stale.
+            status = "retired"
         projected.append(
             {
                 "lane": name,
@@ -349,6 +381,7 @@ def _lane_freshness(
                 # exhausted its retries this run was skipped so the rest of
                 # the run could land. The honest state must reach the screen.
                 "ceded": bool(lane.get("ceded")),
+                "retired": lane.get("retired") if isinstance(lane.get("retired"), str) else None,
             }
         )
     return projected
@@ -383,6 +416,13 @@ def _ledger_freshness(
     # beyond the threshold does that.
     stale_lanes = [lane["lane"] for lane in lanes if lane["status"] == "stale"]
     never_lanes = [lane["lane"] for lane in lanes if lane["status"] == "never"]
+    retired_lanes = [lane["lane"] for lane in lanes if lane["status"] == "retired"]
+    collector_ticks = heartbeat.exists()
+    max_age_seconds = (
+        _COLLECTOR_TICK_SECONDS + _COLLECTOR_TICK_GRACE_SECONDS
+        if collector_ticks
+        else _PRIVATE_LEDGER_MAX_AGE_SECONDS
+    )
     try:
         latest = max(
             datetime.fromtimestamp(candidate.stat().st_mtime, timezone.utc).replace(microsecond=0)
@@ -393,15 +433,33 @@ def _ledger_freshness(
             "status": "empty",
             "heartbeat_status": "empty",
             "latest_at": None,
-            "max_age_seconds": _PRIVATE_LEDGER_MAX_AGE_SECONDS,
+            "max_age_seconds": max_age_seconds,
         }
+        if collector_ticks:
+            payload["threshold_seconds"] = _PRIVATE_LEDGER_MAX_AGE_SECONDS
         if lanes:
             payload["lanes"] = lanes
             payload["stale_lanes"] = stale_lanes
             payload["never_lanes"] = never_lanes
+            payload["retired_lanes"] = retired_lanes
         return payload
     age_seconds = (now - latest).total_seconds()
-    status = "stale" if age_seconds > _PRIVATE_LEDGER_MAX_AGE_SECONDS else "fresh"
+    run_started: datetime | None = None
+    if collector_ticks:
+        started_marker = health_dir / f"{heartbeat_name.removesuffix('.ok')}.started"
+        try:
+            started = datetime.fromtimestamp(started_marker.stat().st_mtime, timezone.utc)
+            if started > datetime.fromtimestamp(heartbeat.stat().st_mtime, timezone.utc):
+                run_started = started
+        except (OSError, ValueError, OverflowError):
+            run_started = None
+        if run_started is not None:
+            # A tick is in progress; only a hung run is stale.
+            status = "stale" if (now - run_started).total_seconds() > _COLLECTOR_RUN_LIMIT_SECONDS else "fresh"
+        else:
+            status = "stale" if age_seconds > max_age_seconds else "fresh"
+    else:
+        status = "stale" if age_seconds > max_age_seconds else "fresh"
     payload = {
         # Writes can land on schedule while one lane has been silently dead for
         # days, so a stale lane makes the whole surface stale.
@@ -413,12 +471,22 @@ def _ledger_freshness(
         # other eight lanes were writing on schedule).
         "heartbeat_status": status,
         "latest_at": latest.isoformat().replace("+00:00", "Z"),
-        "max_age_seconds": _PRIVATE_LEDGER_MAX_AGE_SECONDS,
+        # The write-level threshold: one collector tick where a collector
+        # heartbeat exists, else three hours.
+        "max_age_seconds": max_age_seconds,
     }
+    if collector_ticks:
+        # The provider cards' per-observation threshold stays three hours
+        # (see _COLLECTOR_TICK_SECONDS); the frontend reads it first.
+        payload["threshold_seconds"] = _PRIVATE_LEDGER_MAX_AGE_SECONDS
+        payload["run_in_progress_since"] = (
+            run_started.isoformat().replace("+00:00", "Z") if run_started is not None else None
+        )
     if lanes:
         payload["lanes"] = lanes
         payload["stale_lanes"] = stale_lanes
         payload["never_lanes"] = never_lanes
+        payload["retired_lanes"] = retired_lanes
     return payload
 
 
@@ -2049,6 +2117,24 @@ def create_app(
     resolved_billing_ledger = billing_ledger or os.environ.get("BILLING_LEDGER_PATH")
     resolved_search_ledger = search_ledger or os.environ.get("SEARCH_LEDGER_PATH")
     app = Flask(__name__)
+    # Keeper, 2026-09-25 (msg 1552976803495280683, "option A ... lets do it"):
+    # the page's fixed questions are answered from pre-built responses the
+    # renderer (prebuilt_views) keeps in Redis. Only the serving dashboard sets
+    # this; the renderer's own app must always run the routes.
+    app.config["SERVE_PREBUILT_VIEWS"] = os.environ.get(prebuilt_views.SERVE_ENV) == "serve"
+
+    @app.before_request
+    def _serve_prebuilt_view():
+        if not app.config.get("SERVE_PREBUILT_VIEWS") or request.method != "GET":
+            return None
+        stored = prebuilt_views.lookup(request.path, request.query_string.decode("latin-1"))
+        if stored is None:
+            return None
+        response = app.response_class(stored["body"], status=stored["status"], content_type=stored["content_type"])
+        response.headers["X-AI-Usage-Prebuilt"] = (
+            f"rendered_at={stored['rendered_at']}; age_seconds={stored['age_seconds']:.0f}"
+        )
+        return response
 
     def _load_ledger_rows() -> List[Dict[str, Any]]:
         return _load_rows(resolved_ledger_path)

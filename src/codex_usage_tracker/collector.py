@@ -476,6 +476,19 @@ def _materialize_lane_read(value: Any) -> tuple[list[dict[str, Any]], dict[str, 
             return rows, diagnostics
 
 
+# Lanes a scope no longer runs, by scope, with the reason. Lane health keeps
+# every lane it has seen so a source that silently stops stays visible; a
+# lane removed on purpose must be retired here or it reads stale forever.
+RETIRED_LANES: dict[str, dict[str, str]] = {
+    "quota": {
+        "opencode": (
+            "retired 2026-09-15 (aa583c3): OpenCode Go quota moved to the native "
+            "opencode_go_quota lane"
+        ),
+    },
+}
+
+
 def lane_health_name(scope: str) -> str:
     return f"lanes-{scope}.json"
 
@@ -528,6 +541,12 @@ def update_lane_health(
     except (OSError, ValueError):
         previous = {}
     merged: dict[str, Any] = dict(previous)
+    # A lane this scope deliberately stopped running is recorded as retired,
+    # with the reason, instead of reading "stale" forever (keeper, 2026-09-25:
+    # "why does it always say opencode is stale?").
+    for lane, reason in RETIRED_LANES.get(scope, {}).items():
+        if lane in merged and lane not in lanes:
+            merged[lane] = {**merged[lane], "retired": reason}
     for lane, outcome in lanes.items():
         prior = previous.get(lane) if isinstance(previous.get(lane), dict) else {}
         succeeded = bool(outcome.get("succeeded"))
@@ -559,6 +578,33 @@ def update_lane_health(
             "lanes": merged,
         },
     )
+
+
+def mark_run_started(report_dir: str | Path, scope: str) -> list[Path]:
+    """Touch ``<heartbeat>.started`` when a scope's run begins.
+
+    Readers judge staleness by one collector tick (keeper, 2026-09-25, Discord
+    unified usage ledger thread: "staleness should only be reported if it is
+    over 15 minutes, or one ledger tick"). A usage run takes 8-25 minutes, so
+    a heartbeat older than a tick is only a missed tick when no run has
+    started since; this marker is how readers tell the two apart.
+    """
+    directory = Path(report_dir).expanduser()
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    names = (
+        list(SCOPE_HEARTBEATS.values())
+        if scope == "all"
+        else [SCOPE_HEARTBEATS[scope]] if scope in SCOPE_HEARTBEATS else []
+    )
+    touched: list[Path] = []
+    for name in names:
+        target = directory / f"{name.removesuffix('.ok')}.started"
+        with open(target, "a", encoding="utf-8"):
+            pass
+        os.utime(target, None)
+        os.chmod(target, 0o644)
+        touched.append(target)
+    return touched
 
 
 def touch_heartbeat(report_dir: str | Path, scope: str) -> list[Path]:
@@ -975,6 +1021,20 @@ def collect_all(
     for ledger_path, ledger_fact_type in bindings:
         _ledger_backend(ledger_path)
         _preflight_ledger_binding(ledger_path, ledger_fact_type, dry_run=dry_run)
+    if not dry_run:
+        try:
+            mark_run_started(
+                Path(report_dir).expanduser()
+                if report_dir is not None
+                else _default_report_dir(
+                    usage_ledger
+                    if collect_usage_scope
+                    else quota_ledger if collect_quota_scope else search_target
+                ),
+                scope,
+            )
+        except OSError:
+            pass  # a read-only health directory must not fail the collection
 
     env = (
         load_allowed_dotenv(dotenv, environ=environment)

@@ -344,6 +344,29 @@ def cmd_usage_cache_refresh(args: argparse.Namespace) -> int:
     return status
 
 
+def cmd_views_render(args: argparse.Namespace) -> int:
+    """Render the page's fixed requests into Redis (keeper msg 1552976803495280683)."""
+    from .dashboard import create_app
+    from . import prebuilt_views
+
+    # The renderer runs the routes; it must never answer from its own output.
+    os.environ.pop(prebuilt_views.SERVE_ENV, None)
+    os.environ["AI_USAGE_REDIS_SOCKET"] = args.socket
+    app = create_app(
+        atrium_root=args.atrium_root,
+        unified_usage_ledger=args.unified_usage_ledger,
+        quota_ledger=args.quota_ledger,
+        billing_ledger=args.billing_ledger,
+        search_ledger=args.search_ledger,
+    )
+    app.config["SERVE_PREBUILT_VIEWS"] = False
+    if args.once:
+        print(json.dumps(prebuilt_views.render_once(app, args.socket), sort_keys=True))
+        return 0
+    prebuilt_views.run_forever(app, args.socket, interval_seconds=args.interval, log=lambda line: print(line, flush=True))
+    return 0
+
+
 def cmd_rulings_cache_refresh(args: argparse.Namespace) -> int:
     """Walk the canon for ruling ledgers and store the scan in Redis."""
     from .usage_cache import refresh_rulings
@@ -1293,6 +1316,27 @@ def main() -> int:
         help="Port for Flask server (default: 5174)",
     )
     dashboard_parser.set_defaults(func=cmd_dashboard)
+
+    views_parser = subparsers.add_parser(
+        "views-render",
+        help="Keep the dashboard's pre-built answers for the page's fixed requests current in Redis",
+    )
+    for flag, help_text in (
+        ("--unified-usage-ledger", "Private canonical usage SQLite/JSONL ledger (as the dashboard)"),
+        ("--quota-ledger", "Private canonical quota SQLite/JSONL ledger (as the dashboard)"),
+        ("--billing-ledger", "Private canonical billing SQLite/JSONL ledger (as the dashboard)"),
+        ("--search-ledger", "Private canonical web search/extract ledger (as the dashboard)"),
+    ):
+        views_parser.add_argument(flag, default=None, help=help_text)
+    views_parser.add_argument("--atrium-root", dest="atrium_root", default=DEFAULT_ATRIUM_ROOT)
+    views_parser.add_argument(
+        "--socket",
+        default=os.environ.get("AI_USAGE_REDIS_SOCKET") or "/run/redis-ai-usage/redis.sock",
+        help="Redis unix socket",
+    )
+    views_parser.add_argument("--interval", type=float, default=60.0, help="Seconds between renders (default: 60)")
+    views_parser.add_argument("--once", action="store_true", help="Render once and exit")
+    views_parser.set_defaults(func=cmd_views_render)
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
