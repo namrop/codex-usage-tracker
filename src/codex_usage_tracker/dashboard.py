@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import functools
 from pathlib import Path
 import json
 import os
@@ -39,10 +40,13 @@ from .rulings import (
     RULING_SOURCES,
     RulingScan,
     RulingsSourceUnavailable,
+    UsageWeekTooLarge,
     build_rulings_per_dollar,
     build_weekly_rulings,
     load_rulings,
+    recent_week_start_dates,
     usage_window,
+    week_price_buckets_from_ledger,
 )
 from .search_events import build_search_summary
 from .token_correlation import build_token_correlation_rows, resolve_state_db_path
@@ -250,6 +254,15 @@ def _rfc3339_order_key(raw_timestamp: Any) -> tuple[datetime, Decimal] | None:
     """Return an exact UTC timestamp key, or fail closed for invalid input."""
     if not isinstance(raw_timestamp, str):
         return None
+    return _rfc3339_order_key_text(raw_timestamp)
+
+
+# Pure on its string input and returns immutables, so memoized: the quota
+# panels call it several times per row, and one collector run stamps many
+# rows with the same instant. Profiled 2026-09-25: 169k calls were 3.8 s of
+# a 7.8 s weekly-utilization request.
+@functools.lru_cache(maxsize=131_072)
+def _rfc3339_order_key_text(raw_timestamp: str) -> tuple[datetime, Decimal] | None:
     try:
         canonical = canonical_timestamp(raw_timestamp)
         timestamp_text = canonical.removesuffix("Z")
@@ -491,6 +504,16 @@ def _private_facts(
             if len(rows) > _PRIVATE_API_MAX_ROWS:
                 raise PrivateLedgerQueryTooLarge("ledger query exceeds private API row limit")
             return rows
+        if fact_type == "quota_observation_v1":
+            # Keeper, 2026-09-25 (msg 1552965574315868321): the quota panels
+            # read Redis too. None means the copy cannot answer this window.
+            cached_quota = usage_cache.quota_facts(
+                path, cutoff=cutoff, before=before, filters=filters, order=order
+            )
+            if cached_quota is not None:
+                if len(cached_quota) > _PRIVATE_API_MAX_ROWS:
+                    raise PrivateLedgerQueryTooLarge("ledger query exceeds private API row limit")
+                return cached_quota
         # One SELECT/fetchall call observes one SQLite read snapshot. Reopening
         # connections between OFFSET pages would permit concurrent appends to
         # duplicate or omit facts in an aggregate response.
@@ -679,18 +702,31 @@ def _rulings_source_argument() -> tuple[str, tuple[Any, int] | None]:
 def _cached_rulings_scan(
     *, atrium_root: str, source: str, now: float | None = None
 ) -> RulingScan:
+    return _rulings_scan_with_path(atrium_root=atrium_root, source=source, now=now)[0]
+
+
+def _rulings_scan_with_path(
+    *, atrium_root: str, source: str, now: float | None = None
+) -> tuple[RulingScan, dict[str, Any]]:
+    """The canon scan from Redis when the rulings unit has stored a fresh one
+    (keeper, 2026-09-25, msg 1552965574315868321), else the walk, memoized
+    for a minute. Returns the scan and where it came from."""
     import time as _time
 
+    if source == "canon":
+        cached_scan = usage_cache.rulings_scan(atrium_root)
+        if cached_scan is not None:
+            return cached_scan
     moment = _time.time() if now is None else now
     key = (source, atrium_root)
     with _rulings_scan_lock:
         cached = _rulings_scan_cache.get(key)
         if cached is not None and moment - cached[0] < _RULINGS_SCAN_TTL_SECONDS:
-            return cached[1]
+            return cached[1], {"read_path": source, "scan_age_seconds": round(moment - cached[0])}
     scan = load_rulings(atrium_root=atrium_root, source=source)
     with _rulings_scan_lock:
         _rulings_scan_cache[key] = (moment, scan)
-    return scan
+    return scan, {"read_path": source, "scan_age_seconds": 0}
 
 
 def _iso_z(value: datetime) -> str:
@@ -2408,10 +2444,12 @@ def create_app(
         if source_error is not None:
             return source_error
         try:
-            scan = _cached_rulings_scan(atrium_root=atrium_root, source=source)
+            scan, scan_path = _rulings_scan_with_path(atrium_root=atrium_root, source=source)
         except RulingsSourceUnavailable as exc:
             return jsonify({"error": str(exc)}), 503
-        return jsonify(build_weekly_rulings(scan, weeks=weeks))
+        payload = build_weekly_rulings(scan, weeks=weeks)
+        payload["coverage"]["scan_read"] = scan_path
+        return jsonify(payload)
 
     @app.route("/api/rulings-per-dollar")
     def api_rulings_per_dollar():
@@ -2433,25 +2471,54 @@ def create_app(
         if not resolved_unified_usage:
             return jsonify({"error": "unified usage ledger is not configured"}), 404
         try:
-            scan = _cached_rulings_scan(atrium_root=atrium_root, source=source)
+            scan, scan_path = _rulings_scan_with_path(atrium_root=atrium_root, source=source)
         except RulingsSourceUnavailable as exc:
             return jsonify({"error": str(exc)}), 503
-        window_start, window_end = usage_window(weeks)
+        generated_at = datetime.now(timezone.utc)
+        ledger_path = Path(resolved_unified_usage).expanduser()
         try:
-            rows = _private_facts(
-                resolved_unified_usage,
-                fact_type="usage_event_v1",
-                filters={},
-                cutoff=window_start,
-                before=window_end,
-            )
+            if ledger_path.suffix.casefold() in _SQLITE_LEDGER_SUFFIXES:
+                # One set of price buckets per week, never every row of the
+                # window: eight weeks of rows went past the private API's
+                # 100k-row cap the day the endpoint shipped, and it returned
+                # 413 from then on. Redis holds the buckets (keeper,
+                # 2026-09-25, msg 1552965574315868321); without a usable copy
+                # each week is read and elected on its own.
+                start_days = recent_week_start_dates(weeks, generated_at)
+                cached = usage_cache.week_price_buckets(ledger_path, start_days)
+                if cached is not None:
+                    week_buckets, price_path = cached
+                else:
+                    week_buckets = {
+                        start_day: week_price_buckets_from_ledger(
+                            ledger_path, start_day, max_rows=_PRIVATE_API_MAX_ROWS
+                        )[0]
+                        for start_day in start_days
+                    }
+                    price_path = {"read_path": "sqlite_per_week"}
+                payload = build_rulings_per_dollar(
+                    scan, None, weeks=weeks, now=generated_at, week_buckets=week_buckets
+                )
+            else:
+                window_start, window_end = usage_window(weeks, generated_at)
+                rows = _private_facts(
+                    resolved_unified_usage,
+                    fact_type="usage_event_v1",
+                    filters={},
+                    cutoff=window_start,
+                    before=window_end,
+                )
+                payload = build_rulings_per_dollar(scan, rows, weeks=weeks, now=generated_at)
+                price_path = {"read_path": "jsonl"}
         except UnsupportedLedgerSuffix:
             return jsonify({"error": "unsupported ledger suffix"}), 400
-        except PrivateLedgerQueryTooLarge:
+        except (PrivateLedgerQueryTooLarge, UsageWeekTooLarge):
             return jsonify({"error": "ledger query exceeds private API row limit"}), 413
         except (MalformedLedgerError, ValidationError, IdentityConflictError):
             return jsonify({"error": "configured private ledger is unavailable"}), 503
-        return jsonify(build_rulings_per_dollar(scan, rows, weeks=weeks))
+        payload["coverage"]["scan_read"] = scan_path
+        payload["coverage"]["price_read"] = price_path
+        return jsonify(payload)
 
     @app.route("/api/provider-status")
     def api_provider_status():

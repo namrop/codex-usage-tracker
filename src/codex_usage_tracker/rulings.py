@@ -790,21 +790,23 @@ def weekly_ruling_counts(
     return [buckets[start_day] for start_day in start_days]
 
 
-def weekly_list_price(
+PriceBuckets = dict[tuple[str, str, str], dict[str, Any]]
+
+
+def accumulate_weekly_price_buckets(
     usage_rows: Iterable[Mapping[str, Any]],
     start_days: Sequence[date],
-) -> dict[date, dict[str, Any]]:
-    """List-price estimate plus token totals per local ISO week.
+) -> list[PriceBuckets]:
+    """Fold usage rows into one :mod:`list_pricing` bucket set per local ISO
+    week, in ``start_days`` order. Rows outside the weeks are ignored.
 
-    Reuses :mod:`list_pricing`'s bucketing verbatim — the same (provider,
-    model, per-request context basis) grouping the dashboard's window and
-    daily estimates use — so the weekly dollars cannot drift from the daily
-    ones through a second copy of the arithmetic.
+    The buckets are pre-pricing token sums, so they can be kept (the
+    dashboard's Redis copy keeps one set per week) and priced later.
     """
     if not start_days:
-        return {}
+        return []
     index_by_day = {start_day: position for position, start_day in enumerate(start_days)}
-    grouped: list[dict[tuple[str, str, str], dict[str, Any]]] = [{} for _ in start_days]
+    grouped: list[PriceBuckets] = [{} for _ in start_days]
     window_start = week_bounds(start_days[0])[0]
     window_end = week_bounds(start_days[-1])[1]
     for row in usage_rows:
@@ -820,17 +822,48 @@ def weekly_list_price(
         if position is None:
             continue
         accumulate_price_bucket(grouped[position], row)
-    result: dict[date, dict[str, Any]] = {}
-    for start_day, buckets in zip(start_days, grouped):
-        finalized = finalize_price_buckets(buckets)
-        estimate = estimate_list_price(finalized)
-        result[start_day] = {
-            "estimate": estimate,
-            "output_tokens": sum(int(bucket["output_tokens"]) for bucket in finalized),
-            "total_tokens": sum(int(bucket["total_tokens"]) for bucket in finalized),
-            "events_priced_buckets": len(finalized),
-        }
-    return result
+    return grouped
+
+
+def price_buckets_as_list(buckets: PriceBuckets) -> list[dict[str, Any]]:
+    """JSON form of one week's buckets (each bucket already names its key)."""
+    return [dict(bucket) for bucket in buckets.values()]
+
+
+def price_buckets_from_list(items: Iterable[Mapping[str, Any]]) -> PriceBuckets:
+    return {
+        (str(item["provider"]), str(item["model"]), str(item["context_basis"])): dict(item)
+        for item in items
+    }
+
+
+def summarize_week_price(buckets: PriceBuckets) -> dict[str, Any]:
+    """Price one week's buckets: the estimate plus token totals."""
+    finalized = finalize_price_buckets({key: dict(bucket) for key, bucket in buckets.items()})
+    estimate = estimate_list_price(finalized)
+    return {
+        "estimate": estimate,
+        "output_tokens": sum(int(bucket["output_tokens"]) for bucket in finalized),
+        "total_tokens": sum(int(bucket["total_tokens"]) for bucket in finalized),
+        "events_priced_buckets": len(finalized),
+    }
+
+
+def weekly_list_price(
+    usage_rows: Iterable[Mapping[str, Any]],
+    start_days: Sequence[date],
+) -> dict[date, dict[str, Any]]:
+    """List-price estimate plus token totals per local ISO week.
+
+    Reuses :mod:`list_pricing`'s bucketing verbatim — the same (provider,
+    model, per-request context basis) grouping the dashboard's window and
+    daily estimates use — so the weekly dollars cannot drift from the daily
+    ones through a second copy of the arithmetic.
+    """
+    if not start_days:
+        return {}
+    grouped = accumulate_weekly_price_buckets(usage_rows, start_days)
+    return {start_day: summarize_week_price(buckets) for start_day, buckets in zip(start_days, grouped)}
 
 
 def rulings_per_1k_usd(rulings_total: int, list_price_usd: str) -> float | None:
@@ -854,18 +887,26 @@ def build_rulings_per_dollar(
     *,
     weeks: int = DEFAULT_WEEKS,
     now: datetime | None = None,
+    week_buckets: Mapping[date, PriceBuckets] | None = None,
 ) -> dict[str, Any]:
     """Join weekly ruling counts to the weekly list-price estimate.
 
     ``usage_rows`` is the canonical ``usage_event_v1`` slice covering the
     weeks asked for; ``None`` means no usage ledger was available, which
     yields counts with null prices rather than a zero-dollar denominator that
-    would read as free judgment.
+    would read as free judgment. ``week_buckets`` is the alternative to rows:
+    each week's already-accumulated price buckets (per-week reads, or the
+    dashboard's Redis copy); it must cover every requested week.
     """
     generated_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     start_days = recent_week_start_dates(weeks, generated_at)
     counts = weekly_ruling_counts(scan.rulings, weeks=weeks, now=generated_at)
-    priced = weekly_list_price(usage_rows, start_days) if usage_rows is not None else None
+    if week_buckets is not None:
+        priced = {start_day: summarize_week_price(week_buckets[start_day]) for start_day in start_days}
+    elif usage_rows is not None:
+        priced = weekly_list_price(usage_rows, start_days)
+    else:
+        priced = None
     series: list[dict[str, Any]] = []
     for start_day, bucket in zip(start_days, counts):
         entry = dict(bucket)
@@ -913,7 +954,7 @@ def build_rulings_per_dollar(
             ],
             "duplicate_uids": scan.duplicate_uids,
             "scan_truncated": scan.truncated,
-            "usage_ledger_available": usage_rows is not None,
+            "usage_ledger_available": priced is not None,
             "rate_basis": RATE_BASIS,
             # Two standing caveats, carried in the payload so no consumer can
             # read the ratio as either billed cost or keeper activity.
@@ -1010,6 +1051,71 @@ def usage_window(weeks: int, now: datetime | None = None) -> tuple[datetime, dat
     return week_bounds(start_days[0])[0], week_bounds(start_days[-1])[1]
 
 
+class UsageWeekTooLarge(ValueError):
+    """One week holds more elected rows than a single bounded read returns."""
+
+
+def week_price_buckets_from_ledger(
+    ledger_path: str | Path, start_day: date, *, max_rows: int = _USAGE_ROW_LIMIT
+) -> tuple[PriceBuckets, int]:
+    """One week's price buckets from the SQLite ledger, and its elected row count.
+
+    Contract v2 election runs over the week's own window, one week per read,
+    so memory stays bounded by a week (an eight-week read in one query went
+    past the private API's 100k-row cap the day the endpoint shipped and
+    returned 413 from then on). A request whose copies straddle a week edge
+    with different timestamps would count in both weeks; that is the
+    ``timestamp_disagreements`` alarm, zero at the v2 cutover.
+    """
+    from .canonical_ledger import query_sqlite_physical_requests
+
+    start, end = week_bounds(start_day)
+    rows, _identity = query_sqlite_physical_requests(
+        Path(ledger_path).expanduser(),
+        occurred_or_observed_at_gte=start.astimezone(timezone.utc).isoformat(),
+        occurred_or_observed_at_lt=end.astimezone(timezone.utc).isoformat(),
+        order="asc",
+        limit=max_rows + 1,
+        contract_validation=False,
+    )
+    if len(rows) > max_rows:
+        raise UsageWeekTooLarge(f"week {week_key(start_day)} exceeds {max_rows} elected rows")
+    return accumulate_weekly_price_buckets(rows, [start_day])[0], len(rows)
+
+
+# ── Scan serialization (the dashboard's Redis copy) ────────────────────────
+
+
+def scan_as_dict(scan: RulingScan) -> dict[str, Any]:
+    return {
+        "rulings": [ruling_as_dict(ruling) for ruling in scan.rulings],
+        "ledgers_scanned": scan.ledgers_scanned,
+        "entries_parsed": scan.entries_parsed,
+        "parse_errors": [dict(error) for error in scan.parse_errors],
+        "duplicate_uids": scan.duplicate_uids,
+        "source": scan.source,
+        "atrium_root": scan.atrium_root,
+        "truncated": scan.truncated,
+    }
+
+
+def scan_from_dict(payload: Mapping[str, Any]) -> RulingScan:
+    """Inverse of :func:`scan_as_dict`; every ruling is re-validated."""
+    return RulingScan(
+        rulings=tuple(
+            ruling_from_mapping(entry, source_path=entry.get("source_path"))
+            for entry in payload["rulings"]
+        ),
+        ledgers_scanned=int(payload["ledgers_scanned"]),
+        entries_parsed=int(payload["entries_parsed"]),
+        parse_errors=tuple(dict(error) for error in payload["parse_errors"]),
+        duplicate_uids=int(payload["duplicate_uids"]),
+        source=str(payload["source"]),
+        atrium_root=payload.get("atrium_root"),
+        truncated=bool(payload["truncated"]),
+    )
+
+
 __all__ = [
     "DEFAULT_SERVICE_URL",
     "DEFAULT_WEEKS",
@@ -1023,6 +1129,14 @@ __all__ = [
     "RulingParseError",
     "RulingScan",
     "RulingsSourceUnavailable",
+    "UsageWeekTooLarge",
+    "accumulate_weekly_price_buckets",
+    "price_buckets_as_list",
+    "price_buckets_from_list",
+    "scan_as_dict",
+    "scan_from_dict",
+    "summarize_week_price",
+    "week_price_buckets_from_ledger",
     "build_rulings_per_dollar",
     "build_weekly_rulings",
     "fetch_service_rulings",

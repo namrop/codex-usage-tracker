@@ -1965,6 +1965,107 @@ def snapshot_sqlite_physical_requests(
         connection.close()
 
 
+def snapshot_sqlite_facts(
+    path: str | Path,
+    *,
+    fact_type: str,
+    occurred_or_observed_at_gte: str,
+    max_rows: int = 400_000,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Every row of a type-bound ledger from a lower bound on, for a Redis copy.
+
+    The non-usage counterpart of :func:`snapshot_sqlite_physical_requests`
+    (no election: quota and billing facts are observations, not requests).
+    Rows come back in :func:`query_sqlite_facts` ascending order with the
+    same read check (hash, identity, typed columns). Each entry holds
+    ``payload`` (the stored canonical JSON text), ``fact``, ``at`` (the
+    timestamp key the SQL compares), ``seq`` and ``columns`` (typed filter
+    columns by filter name). ``meta`` carries the ingestion high-water mark
+    read in the same snapshot. Raises rather than truncating past ``max_rows``.
+    """
+    if not isinstance(fact_type, str) or fact_type not in SUPPORTED_FACT_TYPES:
+        raise ValidationError("a supported fact_type binding is required")
+    lower_bound = _timestamp(occurred_or_observed_at_gte, "occurred_or_observed_at_gte")
+    if isinstance(max_rows, bool) or not isinstance(max_rows, int) or max_rows < 1:
+        raise ValidationError("max_rows must be a positive integer")
+    target = Path(path).expanduser()
+    if not target.exists():
+        return [], {"ingestion_high_water": None, "lower_bound": lower_bound}
+    if not target.is_file():
+        raise MalformedLedgerError(f"SQLite ledger is not a regular file: {target}")
+    connection = _read_only_sqlite(target)
+    try:
+        _validate_sqlite_schema(connection, fact_type)
+        sql = f"""
+            SELECT {_SNAPSHOT_STORED_COLUMNS},
+                   {_SQLITE_TIMESTAMP_KEY_SQL} AS occurred, ingestion_sequence
+            FROM facts INDEXED BY facts_timestamp_idx
+            WHERE fact_type = ? AND {_SQLITE_TIMESTAMP_KEY_SQL} >= ?
+            ORDER BY occurred, ingestion_sequence
+            LIMIT ?
+        """
+        try:
+            connection.execute("BEGIN")
+            stored = _execute_bounded_facts_query(connection, sql, (fact_type, lower_bound[:-1], max_rows + 1))
+            high_water = connection.execute("SELECT MAX(ingestion_sequence) FROM facts").fetchone()[0]
+            connection.rollback()
+        except sqlite3.DatabaseError as exc:
+            raise MalformedLedgerError("invalid SQLite fact snapshot query") from exc
+        if len(stored) > max_rows:
+            raise MalformedLedgerError(f"fact snapshot exceeds {max_rows} rows")
+        filter_index = {name: _SNAPSHOT_TYPED_NAMES.index(column) for name, column in _SQLITE_QUERY_FILTER_COLUMNS.items()}
+        entries = []
+        for row in stored:
+            fact = _integrity_check_stored_row(row[:16], fact_type)
+            typed = row[5:16]
+            entries.append({
+                "payload": row[0],
+                "fact": fact,
+                "at": row[16],
+                "seq": int(row[17]),
+                "columns": {name: typed[index] for name, index in filter_index.items()},
+            })
+        return entries, {"ingestion_high_water": high_water, "lower_bound": lower_bound}
+    finally:
+        connection.close()
+
+
+def sqlite_ingestion_state(
+    path: str | Path, *, fact_type: str, ingested_after: int | None = None
+) -> dict[str, Any]:
+    """The ledger's ingestion high-water mark and, when ``ingested_after`` is
+    given, the earliest timestamp key among rows ingested after it.
+
+    One read snapshot; the second figure is a primary-key range scan, cheap
+    when few rows are new. A derived aggregate over closed time windows uses
+    it to find the windows that late-arriving rows have changed.
+    """
+    if not isinstance(fact_type, str) or fact_type not in SUPPORTED_FACT_TYPES:
+        raise ValidationError("a supported fact_type binding is required")
+    target = Path(path).expanduser()
+    if not target.exists():
+        return {"ingestion_high_water": None, "earliest_after": None}
+    connection = _read_only_sqlite(target)
+    try:
+        _validate_sqlite_schema(connection, fact_type)
+        try:
+            connection.execute("BEGIN")
+            high_water = connection.execute("SELECT MAX(ingestion_sequence) FROM facts").fetchone()[0]
+            earliest = None
+            if ingested_after is not None:
+                earliest = connection.execute(
+                    f"SELECT MIN({_SQLITE_TIMESTAMP_KEY_SQL}) FROM facts"
+                    " WHERE ingestion_sequence > ? AND fact_type = ?",
+                    (int(ingested_after), fact_type),
+                ).fetchone()[0]
+            connection.rollback()
+        except sqlite3.DatabaseError as exc:
+            raise MalformedLedgerError("invalid SQLite ingestion-state query") from exc
+        return {"ingestion_high_water": high_water, "earliest_after": earliest}
+    finally:
+        connection.close()
+
+
 def identity_stats_from_snapshot(entries: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Window identity stats rebuilt from snapshot entries (the SQL ``stats_sql`` sums)."""
     stats = _empty_identity_stats()

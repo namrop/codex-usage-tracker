@@ -224,3 +224,222 @@ def test_dashboard_serves_the_same_answer_from_redis(ledger, redis_socket, monke
         for key in [k for k in payload["identity"] if k.startswith("cache_") or k == "read_path"]:
             payload["identity"].pop(key)
     assert from_redis == from_disk
+
+
+# ── Keeper, msg 1552965574315868321: "yes I want those on redis as well" ──
+# The quota ledger, the weekly price buckets rulings-per-dollar prices, and
+# the canon ruling scan. Same claim as above: from Redis, exactly what the
+# source answers; otherwise None.
+
+from argparse import Namespace
+
+from codex_usage_tracker import cli
+from codex_usage_tracker.canonical_ledger import query_sqlite_facts
+from codex_usage_tracker.rulings import (
+    accumulate_weekly_price_buckets,
+    recent_week_start_dates,
+    scan_canon_rulings,
+    week_bounds,
+    week_price_buckets_from_ledger,
+)
+
+
+def _quota(source_id, observed_at, used, **updates):
+    row = {
+        "fact_type": "quota_observation_v1", "schema_version": 1,
+        "source_namespace": "private:test-quota", "source_observation_id": source_id,
+        "harness": "claude_code", "observed_at": observed_at, "provider": "anthropic",
+        "quota_name": "seven_day", "quota_scope": "account", "window_kind": "rolling",
+        "unit": "percent", "measurement_confidence": "exact", "limit_value": "100",
+        "used_value": str(used), "remaining_value": str(100 - used),
+        "resets_at": _at(-48), "account_ref": None, "provider_payload_ref": "/private/provider/payload",
+    }
+    row.update(updates)
+    return row
+
+
+@pytest.fixture()
+def quota_ledger(tmp_path):
+    path = tmp_path / "quota.sqlite3"
+    rows = []
+    for index, hours in enumerate((0.2, 1, 3, 30, 100, 400, 800, 900)):  # 900 h is past the 36-day span
+        rows.append(_quota(f"week-{index}", _at(hours), 10 + index))
+        rows.append(_quota(f"five-{index}", _at(hours), 20 + index, quota_name="five_hour", resets_at=_at(-2)))
+    rows.append(_quota("codex-0", _at(3), 7, provider="openai-codex", harness="codex", quota_name="primary_window"))
+    append_sqlite_facts(path, rows, fact_type="quota_observation_v1")
+    return path
+
+
+QUOTA_WINDOWS = [(5, None), (24, None), (168, None), (35 * 24, None), (168, 2)]
+QUOTA_FILTERS = [{}, {"provider": "anthropic"}, {"quota_name": "five_hour"}, {"harness": "codex"}]
+
+
+@pytest.mark.parametrize("hours,upper", QUOTA_WINDOWS)
+@pytest.mark.parametrize("filters", QUOTA_FILTERS)
+def test_quota_copy_answers_exactly_what_sqlite_answers(quota_ledger, redis_socket, hours, upper, filters):
+    assert usage_cache.refresh_quota(quota_ledger, redis_socket, now=NOW)["status"] == "refreshed"
+    cutoff = NOW - timedelta(hours=hours)
+    before = NOW - timedelta(hours=upper) if upper is not None else None
+    for order in ("asc", "desc"):
+        cached = usage_cache.quota_facts(
+            quota_ledger, cutoff=cutoff, before=before, filters=filters, order=order, socket_path=redis_socket
+        )
+        sql = query_sqlite_facts(
+            quota_ledger, fact_type="quota_observation_v1", filters=filters,
+            occurred_or_observed_at_gte=cutoff.isoformat(),
+            occurred_or_observed_at_lt=before.isoformat() if before else None,
+            order=order, contract_validation=False,
+        )
+        assert cached == sql
+
+
+def test_quota_windows_the_copy_cannot_answer_fall_back(quota_ledger, redis_socket, tmp_path):
+    usage_cache.refresh_quota(quota_ledger, redis_socket, now=NOW)
+    ask = lambda **kw: usage_cache.quota_facts(
+        kw.pop("path", quota_ledger),
+        **{"cutoff": NOW - timedelta(hours=5), "before": None, "filters": {}, "socket_path": redis_socket, **kw},
+    )
+    assert ask() is not None
+    assert ask(cutoff=NOW - timedelta(days=40)) is None  # before the copied span
+    assert ask(cutoff=None) is None
+    assert ask(filters={"model": "x"}) is None
+    assert ask(socket_path=str(tmp_path / "absent.sock")) is None
+    append_sqlite_facts(quota_ledger, [_quota("late", _at(0.1), 50)], fact_type="quota_observation_v1")
+    assert ask() is not None  # moved, copy recent: served
+    assert ask(clock=lambda: time.time() + 3 * 3600) is None  # moved and the copy is old
+
+
+def test_quota_panels_serve_the_same_answer_from_redis(quota_ledger, redis_socket, monkeypatch):
+    import codex_usage_tracker.dashboard as dashboard_module
+
+    usage_cache.refresh_quota(quota_ledger, redis_socket)
+    client = create_app(quota_ledger=str(quota_ledger)).test_client()
+    real_query = dashboard_module.query_sqlite_facts
+
+    def no_sqlite(*args, **kwargs):
+        raise AssertionError("served from SQLite while the Redis copy could answer")
+
+    for path in ("/api/weekly-utilization?weeks=4", "/api/subscriptions?hours=168&history=0", "/api/quota-burn?hours=6"):
+        monkeypatch.delenv(usage_cache.SOCKET_ENV, raising=False)
+        monkeypatch.setattr(dashboard_module, "query_sqlite_facts", real_query)
+        from_disk = client.get(path)
+        monkeypatch.setenv(usage_cache.SOCKET_ENV, redis_socket)
+        monkeypatch.setattr(dashboard_module, "query_sqlite_facts", no_sqlite)
+        from_redis = client.get(path)
+        assert from_disk.status_code == from_redis.status_code == 200, path
+        disk, cached = from_disk.get_json(), from_redis.get_json()
+        for payload in (disk, cached):
+            payload.pop("generated_at", None)
+            (payload.get("freshness") or {}).pop("age_seconds", None)
+        assert cached == disk, path
+
+
+def test_week_prices_match_per_week_sqlite(ledger, redis_socket):
+    summary = usage_cache.refresh(ledger, redis_socket, now=NOW, price_weeks=4)
+    assert summary["price_weeks"] == 4 and summary["price_weeks_recomputed"] == 3
+    start_days = recent_week_start_dates(4, NOW)
+    cached, info = usage_cache.week_price_buckets(ledger, start_days, socket_path=redis_socket)
+    assert info["read_path"] == "redis"
+    for day in start_days[:-1]:
+        assert cached[day] == week_price_buckets_from_ledger(ledger, day)[0]
+    # The current week comes from the elected span rows; here no request
+    # straddles its start, so it equals the week's own election.
+    assert cached[start_days[-1]] == week_price_buckets_from_ledger(ledger, start_days[-1])[0]
+    assert usage_cache.week_price_buckets(ledger, recent_week_start_dates(5, NOW), socket_path=redis_socket) is None
+
+
+def test_a_late_row_in_a_closed_week_is_recomputed(ledger, redis_socket):
+    usage_cache.refresh(ledger, redis_socket, now=NOW, price_weeks=4)
+    closed = recent_week_start_dates(4, NOW)[1]
+    late_at = (week_bounds(closed)[0] + timedelta(hours=1)).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    append_sqlite_facts(ledger, [_hermes("evt-late-week", late_at, provider="zai", model_requested="glm-5.3")], fact_type="usage_event_v1")
+    summary = usage_cache.refresh(ledger, redis_socket, now=NOW + timedelta(seconds=5), price_weeks=4)
+    assert summary["price_weeks_recomputed"] >= 1
+    cached, _ = usage_cache.week_price_buckets(ledger, [closed], socket_path=redis_socket)
+    expected = week_price_buckets_from_ledger(ledger, closed)[0]
+    assert cached[closed] == expected
+    assert any(key[0] == "zai" for key in expected)
+    # Nothing new: the next refresh carries every closed week forward.
+    append_sqlite_facts(ledger, [_hermes("evt-now", _at(0.05))], fact_type="usage_event_v1")
+    assert usage_cache.refresh(ledger, redis_socket, now=NOW + timedelta(seconds=10), price_weeks=4)["price_weeks_recomputed"] == 0
+
+
+def test_week_prices_built_by_other_code_are_not_used(ledger, redis_socket, monkeypatch):
+    usage_cache.refresh(ledger, redis_socket, now=NOW, price_weeks=4)
+    days = recent_week_start_dates(2, NOW)
+    assert usage_cache.week_price_buckets(ledger, days, socket_path=redis_socket) is not None
+    monkeypatch.setattr(usage_cache, "PRICE_FINGERPRINT", "other-code")
+    assert usage_cache.week_price_buckets(ledger, days, socket_path=redis_socket) is None
+
+
+def test_rulings_per_dollar_same_from_redis_and_per_week_sqlite(ledger, redis_socket, monkeypatch, tmp_path):
+    usage_cache.refresh(ledger, redis_socket)
+    client = create_app(atrium_root=str(tmp_path), unified_usage_ledger=str(ledger)).test_client()
+    monkeypatch.delenv(usage_cache.SOCKET_ENV, raising=False)
+    from_disk = client.get("/api/rulings-per-dollar?weeks=8")
+    monkeypatch.setenv(usage_cache.SOCKET_ENV, redis_socket)
+    from_redis = client.get("/api/rulings-per-dollar?weeks=8")
+    assert from_disk.status_code == from_redis.status_code == 200
+    disk, cached = from_disk.get_json(), from_redis.get_json()
+    assert disk["coverage"]["price_read"]["read_path"] == "sqlite_per_week"
+    assert cached["coverage"]["price_read"]["read_path"] == "redis"
+    assert sum(entry["total_tokens"] for entry in disk["series"]) > 0
+    for payload in (disk, cached):
+        payload.pop("generated_at")
+        payload["coverage"].pop("price_read")
+    assert cached == disk
+
+
+RULING_UIDS = ("019938a5-1b2c-7def-8000-00000000000a", "019938a5-1b2c-7def-8000-00000000000b")
+
+
+def _canon(root):
+    path = root / "09_authors_notes" / "ruling_ledger.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    blocks = [
+        f"uid: {RULING_UIDS[0]}\nruled_at: {_at(30)}\nclass: adoption\ngrade: ratified\nverbatim: \"yes\"",
+        f"uid: {RULING_UIDS[1]}\nruled_at: {_at(200)}\nclass: adoption\napplies_to: [a, b]",
+    ]
+    body = "\n\n".join(f"```ruling\n{block}\n```" for block in blocks)
+    path.write_text(f"---\nuid: 019938a5-1b2c-7def-8000-0000000000ff\nkind: note\nruling_ledger: v1\n---\n\n{body}\n", encoding="utf-8")
+    return root
+
+
+def test_ruling_scan_round_trips_through_redis(tmp_path, redis_socket, monkeypatch):
+    root = _canon(tmp_path / "canon")
+    summary = usage_cache.refresh_rulings(root, redis_socket)
+    assert summary["rulings"] == 2 and summary["ledgers_scanned"] == 1
+    scan, info = usage_cache.rulings_scan(root, socket_path=redis_socket)
+    assert scan == scan_canon_rulings(root)
+    assert info["read_path"] == "redis"
+    assert usage_cache.rulings_scan(tmp_path / "elsewhere", socket_path=redis_socket) is None
+    assert usage_cache.rulings_scan(root, socket_path=redis_socket, clock=lambda: time.time() + 3600) is None
+    monkeypatch.setattr(usage_cache, "RULINGS_FINGERPRINT", "other-code")
+    assert usage_cache.rulings_scan(root, socket_path=redis_socket) is None
+
+
+def test_rulings_endpoint_same_from_redis_and_walk(tmp_path, redis_socket, monkeypatch):
+    import codex_usage_tracker.dashboard as dashboard_module
+
+    root = _canon(tmp_path / "canon")
+    usage_cache.refresh_rulings(root, redis_socket)
+    client = create_app(atrium_root=str(root)).test_client()
+    monkeypatch.delenv(usage_cache.SOCKET_ENV, raising=False)
+    dashboard_module._rulings_scan_cache.clear()
+    walked = client.get("/api/rulings?weeks=8").get_json()
+    monkeypatch.setenv(usage_cache.SOCKET_ENV, redis_socket)
+    dashboard_module._rulings_scan_cache.clear()
+    cached = client.get("/api/rulings?weeks=8").get_json()
+    assert walked["coverage"].pop("scan_read")["read_path"] == "canon"
+    assert cached["coverage"].pop("scan_read")["read_path"] == "redis"
+    walked.pop("generated_at"), cached.pop("generated_at")
+    assert cached == walked
+    assert sum(entry["rulings_total"] for entry in cached["series"]) == 2
+
+
+def test_cli_refreshes_each_copy_on_its_own(ledger, redis_socket, tmp_path, capsys):
+    args = Namespace(ledger=str(ledger), socket=redis_socket, hours=192, force=False,
+                     quota_ledger=str(tmp_path / "missing.sqlite3"))
+    assert cli.cmd_usage_cache_refresh(args) == 1
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [(line["copy"], line["status"]) for line in lines] == [("usage", "refreshed"), ("quota", "failed")]

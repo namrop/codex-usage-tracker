@@ -323,16 +323,32 @@ def _bounded_weeks(value: str) -> int:
 
 
 def cmd_usage_cache_refresh(args: argparse.Namespace) -> int:
-    """Rebuild the dashboard's Redis copy of the recent elected usage rows."""
-    from .usage_cache import refresh
+    """Rebuild the dashboard's Redis copies from the ledgers.
 
-    summary = refresh(
-        args.ledger,
-        args.socket,
-        span_hours=args.hours,
-        force=args.force,
-    )
-    print(json.dumps(summary, sort_keys=True))
+    Each copy is refreshed on its own: one failing leaves the others current
+    (and the dashboard reads that one's source), and the exit status is 1.
+    """
+    from .usage_cache import refresh, refresh_quota
+
+    parts = [("usage", lambda: refresh(args.ledger, args.socket, span_hours=args.hours, force=args.force))]
+    if args.quota_ledger:
+        parts.append(("quota", lambda: refresh_quota(args.quota_ledger, args.socket, force=args.force)))
+    status = 0
+    for name, run in parts:
+        try:
+            summary = run()
+        except Exception as exc:  # noqa: BLE001 - reported, and the next copy still refreshes
+            status = 1
+            summary = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        print(json.dumps({"copy": name, **summary}, sort_keys=True), flush=True)
+    return status
+
+
+def cmd_rulings_cache_refresh(args: argparse.Namespace) -> int:
+    """Walk the canon for ruling ledgers and store the scan in Redis."""
+    from .usage_cache import refresh_rulings
+
+    print(json.dumps({"copy": "rulings", **refresh_rulings(args.atrium_root, args.socket)}, sort_keys=True))
     return 0
 
 
@@ -977,9 +993,26 @@ def main() -> int:
     )
     cache_parser.add_argument("--hours", type=int, default=192, help="Span to cache, back from now (default: 192)")
     cache_parser.add_argument(
+        "--quota-ledger",
+        default=None,
+        help="Also copy the last 36 days of this quota_observation_v1 SQLite ledger (read-only)",
+    )
+    cache_parser.add_argument(
         "--force", action="store_true", help="Rebuild even when the ledger file has not changed"
     )
     cache_parser.set_defaults(func=cmd_usage_cache_refresh)
+
+    rulings_cache_parser = subparsers.add_parser(
+        "rulings-cache-refresh",
+        help="Walk the Atrium canon for ruling ledgers and store the scan in the dashboard's Redis",
+    )
+    rulings_cache_parser.add_argument("--atrium-root", required=True, help="Atrium canon root to scan (read-only)")
+    rulings_cache_parser.add_argument(
+        "--socket",
+        default=os.environ.get("AI_USAGE_REDIS_SOCKET") or "/run/redis-ai-usage/redis.sock",
+        help="Redis unix socket",
+    )
+    rulings_cache_parser.set_defaults(func=cmd_rulings_cache_refresh)
 
     rulings_parser = subparsers.add_parser(
         "rulings-per-dollar",
