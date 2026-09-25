@@ -3193,6 +3193,42 @@ def create_app(
             }
         )
 
+    @app.route("/api/subscription-fees")
+    def api_subscription_fees():
+        """What each AI subscription costs, from the billing facts the Atrium
+        receipts manifest imports (keeper msg 1553037883747598450, 2026-09-25):
+        the latest plan charge per subscription with its weekly and monthly
+        equivalents, and the last 31 days of overage, top-ups and one-offs."""
+        from .subscription_fees import summarize
+
+        if not resolved_billing_ledger:
+            return jsonify({"error": "billing ledger is not configured"}), 404
+        try:
+            days = int(request.args.get("days", "100"))
+        except ValueError:
+            return jsonify({"error": "days must be an integer"}), 400
+        if not 1 <= days <= 400:
+            return jsonify({"error": "days must be between 1 and 400"}), 400
+        now = datetime.now(timezone.utc)
+        try:
+            rows = _private_facts(
+                resolved_billing_ledger,
+                fact_type="billing_fact_v1",
+                filters={},
+                cutoff=now - timedelta(days=days),
+                order="asc",
+            )
+        except UnsupportedLedgerSuffix:
+            return jsonify({"error": "unsupported ledger suffix"}), 400
+        except PrivateLedgerQueryTooLarge:
+            return jsonify({"error": "ledger query exceeds private API row limit"}), 413
+        except (MalformedLedgerError, ValidationError, IdentityConflictError):
+            return jsonify({"error": "configured private ledger is unavailable"}), 503
+        payload = summarize(rows, now=now, other_since=now - timedelta(days=31))
+        payload["window"] = {"days": days, "other_charges_days": 31}
+        payload["generated_at"] = now.isoformat().replace("+00:00", "Z")
+        return jsonify(payload)
+
     @app.route("/api/routing-decisions")
     def api_routing_decisions():
         path = model_routing_ledger_path(atrium_root, ROUTING_DECISION_LEDGER)

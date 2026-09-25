@@ -49,6 +49,12 @@ export interface WeeklyPanelState {
   contentVisible: boolean;
 }
 
+export interface SubscriptionFeesPanelState {
+  data: any | null;
+  message: string | null;
+  contentVisible: boolean;
+}
+
 export interface GoUsagePanelState {
   data: GoUsagePayload | null;
   message: string | null;
@@ -68,6 +74,8 @@ export interface DashboardState {
   rulings: RulingsPanelState;
   weekly: WeeklyPanelState;
   goUsage: GoUsagePanelState;
+  // What each subscription costs (keeper msg 1553037883747598450, 2026-09-25).
+  subscriptionFees: SubscriptionFeesPanelState;
   providerStatusFeeds: Record<string, any> | null;
   refreshing: boolean;
 }
@@ -83,6 +91,7 @@ const INITIAL_STATE: DashboardState = {
   rulings: { data: null, message: "Loading rulings per dollar…", contentVisible: false },
   weekly: { data: null, message: "Loading weekly allowance use…", contentVisible: false },
   goUsage: { data: null, message: "Loading OpenCode Go usage…", contentVisible: false },
+  subscriptionFees: { data: null, message: "Loading subscription fees…", contentVisible: false },
   providerStatusFeeds: null,
   refreshing: false,
 };
@@ -228,6 +237,27 @@ async function loadBurn(set: Set): Promise<void> {
       }
       return { ...prev, burn: { data: null, message: "Window burn rate unavailable.", contentVisible: false } };
     });
+  }
+}
+
+async function loadSubscriptionFees(set: Set): Promise<void> {
+  try {
+    const response = await fetch("/api/subscription-fees", { signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw new Error("unavailable");
+    const data = await response.json();
+    const subscriptions = Array.isArray(data.subscriptions) ? data.subscriptions : [];
+    if (!subscriptions.length) {
+      set((prev) => ({
+        ...prev,
+        subscriptionFees: { data, message: "No subscription charges recorded yet.", contentVisible: false },
+      }));
+      return;
+    }
+    set((prev) => ({ ...prev, subscriptionFees: { data, message: null, contentVisible: true } }));
+  } catch (error) {
+    set((prev) => (prev.subscriptionFees.contentVisible
+      ? { ...prev, subscriptionFees: { ...prev.subscriptionFees, message: "Refresh failed — showing last good data." } }
+      : { ...prev, subscriptionFees: { data: null, message: "Subscription fees unavailable.", contentVisible: false } }));
   }
 }
 
@@ -379,6 +409,7 @@ export function useDashboardData(): { state: DashboardState; refresh: () => void
         loadSubscriptions(setState),
         loadBurn(setState),
         loadBilling(setState),
+        loadSubscriptionFees(setState),
         loadRulings(setState),
         loadWeeklyUtilization(setState),
         loadGoUsage(setState),

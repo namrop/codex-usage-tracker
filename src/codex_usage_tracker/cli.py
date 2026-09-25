@@ -367,6 +367,28 @@ def cmd_views_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_billing_import(args: argparse.Namespace) -> int:
+    """Append the Atrium subscription receipts manifest to the billing ledger
+    (keeper msg 1553037883747598450). Re-running is a replay, not a duplicate."""
+    from .canonical_ledger import MalformedLedgerError, append_sqlite_facts
+    from .subscription_fees import ManifestError, read_manifest
+
+    try:
+        facts = read_manifest(args.manifest)
+    except (OSError, ManifestError) as exc:
+        print(f"billing-import: {exc}", file=sys.stderr)
+        return 2
+    try:
+        result = append_sqlite_facts(args.billing_ledger, facts, fact_type="billing_fact_v1", dry_run=args.dry_run)
+    except MalformedLedgerError as exc:
+        # A dry run cannot read a ledger with an active WAL; the real append
+        # is idempotent by canonical identity, so it is the safe check.
+        print(f"billing-import: {exc}", file=sys.stderr)
+        return 3
+    print(json.dumps({"manifest": str(args.manifest), "dry_run": args.dry_run, **asdict(result)}, sort_keys=True))
+    return 0
+
+
 def cmd_rulings_cache_refresh(args: argparse.Namespace) -> int:
     """Walk the canon for ruling ledgers and store the scan in Redis."""
     from .usage_cache import refresh_rulings
@@ -1337,6 +1359,19 @@ def main() -> int:
     views_parser.add_argument("--interval", type=float, default=60.0, help="Seconds between renders (default: 60)")
     views_parser.add_argument("--once", action="store_true", help="Render once and exit")
     views_parser.set_defaults(func=cmd_views_render)
+
+    billing_import_parser = subparsers.add_parser(
+        "billing-import",
+        help="Append the Atrium AI subscription receipts manifest to the billing ledger",
+    )
+    billing_import_parser.add_argument("--manifest", required=True, help="Receipts manifest (JSON lines)")
+    billing_import_parser.add_argument(
+        "--billing-ledger",
+        default=os.environ.get("BILLING_LEDGER_PATH") or DEFAULT_BILLING_LEDGER,
+        help="Canonical private billing SQLite ledger",
+    )
+    billing_import_parser.add_argument("--dry-run", action="store_true", help="Validate and compare only")
+    billing_import_parser.set_defaults(func=cmd_billing_import)
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
