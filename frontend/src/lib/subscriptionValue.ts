@@ -20,6 +20,9 @@ export interface SubscriptionValueRow {
   chargedAt: string | null;
   periodEnd: string | null;
   periodCurrent: boolean | null;
+  // False for subscriptions whose traffic the usage ledger does not record
+  // (Pocket, ElevenLabs; keeper msg 1553058626350874726): fee only.
+  usageTracked: boolean;
   listPriceWeek: number | null;
   // listPriceWeek / feePerWeek; null without a list-price figure.
   multiple: number | null;
@@ -61,7 +64,8 @@ export function deriveSubscriptionValue(fees: any, unified: any): SubscriptionVa
     const index = Number(row.provider_account_index);
     const listKey = row.provider === "anthropic" && Number.isSafeInteger(index) ? `anthropic:${index}` : String(row.provider);
     const feePerWeek = num(row.fee_per_week) || 0;
-    const listPriceWeek = hasList ? (list.get(listKey) ?? 0) : null;
+    const usageTracked = row.usage_tracked !== false;
+    const listPriceWeek = hasList && usageTracked ? (list.get(listKey) ?? 0) : null;
     return {
       key: String(row.subscription),
       label: String(row.label || row.subscription),
@@ -74,6 +78,7 @@ export function deriveSubscriptionValue(fees: any, unified: any): SubscriptionVa
       chargedAt: row.charged_at ? String(row.charged_at) : null,
       periodEnd: row.billing_period_end ? String(row.billing_period_end) : null,
       periodCurrent: row.period_current === true ? true : row.period_current === false ? false : null,
+      usageTracked,
       listPriceWeek,
       multiple: listPriceWeek !== null && feePerWeek > 0 ? listPriceWeek / feePerWeek : null,
     };

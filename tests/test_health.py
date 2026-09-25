@@ -131,6 +131,23 @@ def test_failed_watcher_and_disabled_watcher(tmp_path):
     assert "is disabled" in disabled["problems"][0]
 
 
+def test_a_cron_expression_watcher_is_overdue_when_its_next_run_passed(tmp_path):
+    """The monthly receipts job (keeper msg 1553058626350874726) runs on a cron
+    expression, so there is no interval to double; its next run is the clock."""
+    def jobs(next_run):
+        path = tmp_path / "cron.json"
+        path.write_text(json.dumps({"jobs": [
+            {"id": "m1", "name": "AI subscription receipts monthly", "script": "ai_usage_receipts_monthly.py",
+             "enabled": True, "schedule": {"kind": "cron", "expr": "0 9 10 * *"}, "last_run_at": None,
+             "last_status": None, "next_run_at": next_run.isoformat()},
+        ]}))
+        return str(path)
+    now = datetime.now(timezone.utc)
+    assert health.watchers_health(jobs(now + timedelta(days=12)), now=NOW)["status"] == "ok"
+    late = health.watchers_health(jobs(now - timedelta(hours=3)), now=NOW)
+    assert late["problems"] == ["watcher AI subscription receipts monthly is overdue (last run None)"]
+
+
 def test_endpoint_is_wired_and_uncached(tmp_path, monkeypatch):
     monkeypatch.setattr(health, "run_systemctl", _systemctl_output())
     monkeypatch.setenv("AI_USAGE_HERMES_CRON_JOBS", _jobs(tmp_path))

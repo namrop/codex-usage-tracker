@@ -274,6 +274,13 @@ def watchers_health(jobs_path: str | None, *, now: float) -> dict[str, Any]:
         except ValueError:
             last_epoch = None
         overdue = bool(minutes and last_epoch is not None and now - last_epoch > 2 * 60 * float(minutes))
+        if not minutes and job.get("enabled") and job.get("next_run_at"):
+            # Cron-expression schedules (the monthly receipts job) have no fixed
+            # interval: overdue when the scheduler let the next run pass by an hour.
+            try:
+                overdue = now - datetime.fromisoformat(str(job["next_run_at"])).timestamp() > 3600
+            except ValueError:
+                pass
         row = {
             "id": job.get("id"), "name": job.get("name"), "script": job.get("script"),
             "enabled": job.get("enabled"), "every_minutes": minutes, "last_run_at": last,

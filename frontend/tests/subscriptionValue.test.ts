@@ -30,6 +30,9 @@ const FEES = {
     { subscription: "codex", provider: "openai-codex", provider_account_index: null, label: "Codex", plan: "ChatGPT Pro",
       fee_per_week: "46.15", fee_per_month: "200.00", currency: "USD", fee_source: "stated", stated_at: "2026-09-25T00:00:00Z",
       charged_at: null, billing_period_end: null, period_current: null },
+    { subscription: "pocket", provider: "pocket", provider_account_index: null, label: "Pocket", plan: "Pocket Pro",
+      usage_tracked: false, fee_per_week: "3.84", fee_per_month: "16.62", currency: "USD", fee_source: "receipt",
+      charged_at: "2026-09-14T00:00:00Z", billing_period_end: "2027-09-14T00:00:00Z", period_current: true },
     { subscription: "opencode-go", provider: "opencode-go", provider_account_index: null, label: "OpenCode Go", plan: "OpenCode Go",
       fee_per_week: "2.31", fee_per_month: "10.00", currency: "USD", charged_at: "2026-09-08T00:00:00Z",
       billing_period_end: "2026-09-08T00:00:00Z", period_current: false },
@@ -66,5 +69,14 @@ describe("subscription value", () => {
     assert.equal(codex.statedAt, "2026-09-25T00:00:00Z");
     assert.equal(codex.multiple!.toFixed(1), "44.7");
     assert.equal(byKey.get("claude-1")!.feeSource, "receipt");
+  });
+
+  it("gives a subscription the usage ledger does not track a fee but no list price (msg 1553058626350874726)", () => {
+    const pocket = deriveSubscriptionValue(FEES, UNIFIED).find((row) => row.key === "pocket")!;
+    assert.equal(pocket.usageTracked, false);
+    assert.equal(pocket.listPriceWeek, null);
+    assert.equal(pocket.multiple, null);
+    assert.equal(pocket.feePerWeek, 3.84);
+    assert.equal(deriveSubscriptionValue(FEES, UNIFIED).find((row) => row.key === "claude-1")!.usageTracked, true);
   });
 });

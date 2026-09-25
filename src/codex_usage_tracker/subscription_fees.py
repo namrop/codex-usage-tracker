@@ -46,7 +46,14 @@ SUBSCRIPTIONS: dict[str, tuple[str, int | None, str]] = {
     "opencode-go": ("opencode-go", None, "OpenCode Go"),
     "openrouter": ("openrouter", None, "OpenRouter"),
     "deepseek": ("deepseek", None, "DeepSeek"),
+    # Keeper msg 1553058626350874726: "pocket and elevenlabs should go in the
+    # reciepts file". Their usage is not in the AI usage ledger.
+    "pocket": ("pocket", None, "Pocket"),
+    "elevenlabs": ("elevenlabs", None, "ElevenLabs"),
 }
+# Subscriptions whose traffic the usage ledger does not record: the card shows
+# their fee with no list-price comparison.
+USAGE_UNTRACKED = frozenset({"pocket", "elevenlabs"})
 
 # plan: the recurring subscription charge. overage: usage billed on top of a
 # plan (Claude extra usage). topup: prepaid credit. proration / one_time:
@@ -132,7 +139,7 @@ def fact_from_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
     return fact
 
 
-def _manifest_entries(path: str | Path) -> Iterable[tuple[int, dict[str, Any]]]:
+def manifest_entries(path: str | Path) -> Iterable[tuple[int, dict[str, Any]]]:
     for number, line in enumerate(Path(path).expanduser().read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip() or line.lstrip().startswith("//"):
             continue
@@ -149,7 +156,7 @@ def read_manifest(path: str | Path) -> list[dict[str, Any]]:
     """The manifest's charges as billing facts. Stated rates are not charges
     and are skipped (see ``read_stated_rates``)."""
     facts: list[dict[str, Any]] = []
-    for number, entry in _manifest_entries(path):
+    for number, entry in manifest_entries(path):
         if entry.get("kind") == STATED_RATE:
             continue
         try:
@@ -182,7 +189,7 @@ def stated_rate_from_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
 
 def read_stated_rates(path: str | Path) -> list[dict[str, Any]]:
     rates: list[dict[str, Any]] = []
-    for number, entry in _manifest_entries(path):
+    for number, entry in manifest_entries(path):
         if entry.get("kind") != STATED_RATE:
             continue
         try:
@@ -255,6 +262,7 @@ def summarize(
                 "provider": provider,
                 "provider_account_index": index,
                 "label": label,
+                "usage_tracked": key not in USAGE_UNTRACKED,
                 "plan": rate.get("plan"),
                 "amount": str(amount),
                 "currency": rate.get("currency"),
@@ -292,6 +300,7 @@ def summarize(
             "provider": provider,
             "provider_account_index": index,
             "label": label,
+            "usage_tracked": key not in USAGE_UNTRACKED,
             "plan": parse_description_code(row["description_code"])[2] or None,  # type: ignore[index]
             "amount": str(amount),
             "currency": row.get("currency"),

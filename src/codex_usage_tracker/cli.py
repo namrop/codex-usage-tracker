@@ -389,6 +389,35 @@ def cmd_billing_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_receipts_scan(args: argparse.Namespace) -> int:
+    """Find AI subscription receipts in the mailroom store (read-only) and,
+    with --append, add the new ones to the receipts manifest (keeper msg
+    1553058626350874726: "we should also have the monthly job")."""
+    from .receipt_scan import append_entries, read_emails, read_manifest_entries, scan
+    from .subscription_fees import ManifestError, fact_from_entry
+
+    try:
+        entries = read_manifest_entries(args.manifest)
+        emails = read_emails(
+            args.mailroom_db, args.mailroom_root,
+            datetime.now(timezone.utc) - timedelta(days=args.since_days),
+        )
+    except (OSError, ManifestError) as exc:
+        print(f"receipts-scan: {exc}", file=sys.stderr)
+        return 2
+    result = scan(emails, entries, today=datetime.now(timezone.utc).date())
+    try:
+        for entry in result.added:
+            fact_from_entry(entry)  # every new line must import cleanly
+    except ManifestError as exc:
+        print(f"receipts-scan: a new line would not import: {exc}", file=sys.stderr)
+        return 3
+    payload = result.as_dict()
+    payload["appended"] = append_entries(args.manifest, result.added) if args.append else 0
+    print(json.dumps(payload, sort_keys=True))
+    return 0
+
+
 def cmd_rulings_cache_refresh(args: argparse.Namespace) -> int:
     """Walk the canon for ruling ledgers and store the scan in Redis."""
     from .usage_cache import refresh_rulings
@@ -1372,6 +1401,17 @@ def main() -> int:
     )
     billing_import_parser.add_argument("--dry-run", action="store_true", help="Validate and compare only")
     billing_import_parser.set_defaults(func=cmd_billing_import)
+
+    receipts_scan_parser = subparsers.add_parser(
+        "receipts-scan",
+        help="Find AI subscription receipts in the oasis-mailroom store; --append adds new ones to the manifest",
+    )
+    receipts_scan_parser.add_argument("--manifest", required=True, help="Receipts manifest (JSON lines)")
+    receipts_scan_parser.add_argument("--mailroom-db", default="/var/lib/pharos/services/oasis-mailroom/state/oasis-mailroom.sqlite3")
+    receipts_scan_parser.add_argument("--mailroom-root", default="/var/lib/pharos/services/oasis-mailroom")
+    receipts_scan_parser.add_argument("--since-days", type=int, default=45, help="Receipts received in the last N days")
+    receipts_scan_parser.add_argument("--append", action="store_true", help="Append new charges to the manifest")
+    receipts_scan_parser.set_defaults(func=cmd_receipts_scan)
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
