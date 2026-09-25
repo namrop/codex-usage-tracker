@@ -322,6 +322,20 @@ def _bounded_weeks(value: str) -> int:
     return weeks
 
 
+def cmd_usage_cache_refresh(args: argparse.Namespace) -> int:
+    """Rebuild the dashboard's Redis copy of the recent elected usage rows."""
+    from .usage_cache import refresh
+
+    summary = refresh(
+        args.ledger,
+        args.socket,
+        span_hours=args.hours,
+        force=args.force,
+    )
+    print(json.dumps(summary, sort_keys=True))
+    return 0
+
+
 def cmd_unmapped_models(args: argparse.Namespace) -> int:
     """Private, read-only inventory of provider/model IDs no allowlist covers.
 
@@ -946,6 +960,26 @@ def main() -> int:
         ),
     )
     unmapped_parser.set_defaults(func=cmd_unmapped_models)
+
+    cache_parser = subparsers.add_parser(
+        "usage-cache-refresh",
+        help="Rebuild the dashboard's Redis copy of recent elected usage rows from the SQLite ledger",
+    )
+    cache_parser.add_argument(
+        "--ledger",
+        default=os.environ.get("UNIFIED_USAGE_LEDGER_PATH") or DEFAULT_UNIFIED_USAGE_LEDGER,
+        help="Type-bound usage_event_v1 SQLite ledger to read (read-only)",
+    )
+    cache_parser.add_argument(
+        "--socket",
+        default=os.environ.get("AI_USAGE_REDIS_SOCKET") or "/run/redis-ai-usage/redis.sock",
+        help="Redis unix socket",
+    )
+    cache_parser.add_argument("--hours", type=int, default=192, help="Span to cache, back from now (default: 192)")
+    cache_parser.add_argument(
+        "--force", action="store_true", help="Rebuild even when the ledger file has not changed"
+    )
+    cache_parser.set_defaults(func=cmd_usage_cache_refresh)
 
     rulings_parser = subparsers.add_parser(
         "rulings-per-dollar",

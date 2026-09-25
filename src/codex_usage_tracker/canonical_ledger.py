@@ -1850,6 +1850,135 @@ def query_sqlite_physical_requests(
         connection.close()
 
 
+_SNAPSHOT_STORED_COLUMNS = (
+    "canonical_json, canonical_sha256, fact_type, source_namespace, source_identity, "
+    "occurred_or_observed_at, provider, harness, purpose, model, quota_name, account_ref, "
+    "transaction_kind, transaction_status, invoice_id, line_item_id"
+)
+_SNAPSHOT_TYPED_NAMES = (
+    "occurred_or_observed_at", "provider", "harness", "purpose", "model", "quota_name",
+    "account_ref", "transaction_kind", "transaction_status", "invoice_id", "line_item_id",
+)
+
+
+def snapshot_sqlite_physical_requests(
+    path: str | Path,
+    *,
+    occurred_or_observed_at_gte: str,
+    max_rows: int = 400_000,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Every elected ``usage_event_v1`` row from a lower bound on, with its request's stats.
+
+    The read side of the dashboard's Redis cache (``usage_cache``). Election
+    and the per-request figures behind the identity stats are the SQL of
+    :func:`query_sqlite_physical_requests`, run once over the whole span, so
+    a later window read can rebuild both from the elected rows alone. Rows get
+    the dashboard's read check (hash, identity, typed columns), not the full
+    contract re-validation.
+
+    Returns ``(entries, meta)``. Each entry holds ``payload`` (the stored
+    canonical JSON text), ``fact``, ``key`` (the physical-request key),
+    ``at`` (the timestamp key the SQL compares), ``seq`` (ingestion
+    sequence), ``columns`` (the typed filter columns by filter name) and the
+    request's ``n``, ``stamp_split``, ``conflict`` and ``harnesses``. ``meta``
+    holds the ledger's ingestion high-water mark from the same read snapshot.
+    Raises ``MalformedLedgerError`` rather than truncating past ``max_rows``.
+    """
+    fact_type = "usage_event_v1"
+    lower_bound = _timestamp(occurred_or_observed_at_gte, "occurred_or_observed_at_gte")
+    if isinstance(max_rows, bool) or not isinstance(max_rows, int) or max_rows < 1:
+        raise ValidationError("max_rows must be a positive integer")
+    target = Path(path).expanduser()
+    if not target.exists():
+        return [], {"ingestion_high_water": None}
+    if not target.is_file():
+        raise MalformedLedgerError(f"SQLite ledger is not a regular file: {target}")
+    connection = _read_only_sqlite(target)
+    try:
+        _validate_sqlite_schema(connection, fact_type)
+        sql = f"""
+            WITH windowed AS (
+                SELECT ingestion_sequence, {_SNAPSHOT_STORED_COLUMNS},
+                       {_SQLITE_PHYSICAL_KEY_SQL} AS physical_key,
+                       {_SQLITE_ELECTION_PRECEDENCE_SQL} AS precedence,
+                       {_SQLITE_TIMESTAMP_KEY_SQL} AS occurred,
+                       {_SQLITE_PHYSICAL_PAYLOAD_SQL} AS payload
+                FROM facts INDEXED BY facts_timestamp_idx
+                WHERE fact_type = ? AND {_SQLITE_TIMESTAMP_KEY_SQL} >= ?
+            ), ranked AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY physical_key
+                    ORDER BY precedence, occurred, ingestion_sequence
+                ) AS election_rank
+                FROM windowed
+            ), per_source AS (
+                SELECT physical_key, source_namespace, harness, COUNT(*) AS n,
+                       COUNT(DISTINCT occurred) AS stamps,
+                       MIN(payload) AS pmin, MAX(payload) AS pmax
+                FROM windowed GROUP BY physical_key, source_namespace, harness
+            ), grouped AS (
+                SELECT physical_key, SUM(n) AS n, MAX(stamps > 1) AS stamp_split,
+                       MIN(pmin) <> MAX(pmax) AS conflict,
+                       COUNT(DISTINCT harness) AS harnesses
+                FROM per_source GROUP BY physical_key
+            )
+            SELECT r.canonical_json, r.canonical_sha256, r.fact_type, r.source_namespace,
+                   r.source_identity, r.occurred_or_observed_at, r.provider, r.harness,
+                   r.purpose, r.model, r.quota_name, r.account_ref, r.transaction_kind,
+                   r.transaction_status, r.invoice_id, r.line_item_id,
+                   r.physical_key, r.occurred, r.ingestion_sequence,
+                   g.n, g.stamp_split, g.conflict, g.harnesses
+            FROM ranked AS r JOIN grouped AS g ON g.physical_key = r.physical_key
+            WHERE r.election_rank = 1
+            ORDER BY r.occurred, r.ingestion_sequence
+            LIMIT ?
+        """
+        try:
+            connection.execute("BEGIN")
+            stored = _execute_bounded_facts_query(connection, sql, (fact_type, lower_bound[:-1], max_rows + 1))
+            high_water = connection.execute("SELECT MAX(ingestion_sequence) FROM facts").fetchone()[0]
+            connection.rollback()
+        except sqlite3.DatabaseError as exc:
+            raise MalformedLedgerError("invalid SQLite physical-request snapshot query") from exc
+        if len(stored) > max_rows:
+            raise MalformedLedgerError(f"physical-request snapshot exceeds {max_rows} rows")
+        filter_index = {name: _SNAPSHOT_TYPED_NAMES.index(column) for name, column in _SQLITE_QUERY_FILTER_COLUMNS.items()}
+        entries = []
+        for row in stored:
+            fact = _integrity_check_stored_row(row[:16], fact_type)
+            typed = row[5:16]
+            key, at, seq, n, stamp_split, conflict, harnesses = row[16:]
+            entries.append({
+                "payload": row[0],
+                "fact": fact,
+                "key": key,
+                "at": at,
+                "seq": int(seq),
+                "columns": {name: typed[index] for name, index in filter_index.items()},
+                "n": int(n),
+                "stamp_split": int(stamp_split),
+                "conflict": int(conflict),
+                "harnesses": int(harnesses),
+            })
+        return entries, {"ingestion_high_water": high_water, "lower_bound": lower_bound}
+    finally:
+        connection.close()
+
+
+def identity_stats_from_snapshot(entries: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Window identity stats rebuilt from snapshot entries (the SQL ``stats_sql`` sums)."""
+    stats = _empty_identity_stats()
+    for entry in entries:
+        stats["observations"] += entry["n"]
+        stats["physical_requests"] += 1
+        stats["harness_only_requests"] += 1 if entry["key"].startswith("obs|") else 0
+        stats["payload_conflicts"] += entry["conflict"]
+        stats["timestamp_disagreements"] += entry["stamp_split"]
+        stats["cross_harness_requests"] += 1 if entry["harnesses"] > 1 else 0
+    stats["copies_suppressed"] = stats["observations"] - stats["physical_requests"]
+    return stats
+
+
 def _open_writable_sqlite(path: Path, fact_type: str) -> tuple[sqlite3.Connection, bool]:
     existed = os.path.lexists(path)
     if existed:

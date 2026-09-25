@@ -57,6 +57,7 @@ from .canonical_ledger import (
     query_sqlite_facts,
     read_facts,
 )
+from . import usage_cache
 
 
 DEFAULT_ATRIUM_ROOT = "/Users/luisramirez/Digital_Workspace"
@@ -463,6 +464,19 @@ def _private_facts(
         lower_bound = cutoff.isoformat() if cutoff is not None else None
         upper_bound = before.isoformat() if before is not None else None
         if physical:
+            # Keeper, 2026-09-25 (msg 1552951677286355045): the page should pull
+            # the last week of rows from Redis, not disk. usage_cache returns
+            # None whenever it cannot answer this window exactly.
+            cached = usage_cache.physical_requests(
+                path, cutoff=cutoff, before=before, filters=filters, order=order
+            )
+            if cached is not None:
+                rows, stats = cached
+                if identity_stats is not None:
+                    identity_stats.update(stats)
+                if len(rows) > _PRIVATE_API_MAX_ROWS:
+                    raise PrivateLedgerQueryTooLarge("ledger query exceeds private API row limit")
+                return rows
             rows, stats = query_sqlite_physical_requests(
                 path,
                 filters=filters,
