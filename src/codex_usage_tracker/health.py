@@ -48,6 +48,8 @@ TIMERS = (
     "ai-usage-collect.timer",
     "ai-quota-collect.timer",
     "ai-quota-bench.timer",
+    # Web searches (Hermes feed + OpenClaw), keeper msg 1553067845766742228.
+    "ai-usage-search-collect.timer",
     "ai-usage-redis-refresh.timer",
     "ai-usage-rulings-refresh.timer",
     "ai-usage-public-projection-rsync.timer",

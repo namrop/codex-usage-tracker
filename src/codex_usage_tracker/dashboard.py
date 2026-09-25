@@ -48,7 +48,7 @@ from .rulings import (
     usage_window,
     week_price_buckets_from_ledger,
 )
-from .search_events import build_search_summary
+from .search_events import build_search_month_to_date, build_search_summary
 from .token_correlation import build_token_correlation_rows, resolve_state_db_path
 from .canonical_ledger import (
     _read_facts_without_side_effects,
@@ -3101,7 +3101,8 @@ def create_app(
             return days_error
         window_days = days or 7
         generated_at = datetime.now(timezone.utc)
-        cutoff = generated_at - timedelta(days=window_days)
+        month_start = generated_at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        cutoff = min(generated_at - timedelta(days=window_days), month_start)
         typed_filters = {
             field: requested
             for field in ("provider", "harness", "purpose")
@@ -3128,6 +3129,8 @@ def create_app(
         return jsonify(
             {
                 **build_search_summary(rows, days=window_days, now=generated_at),
+                # Keeper msg 1553067845766742228: "brave needs usage tracking too".
+                "month_to_date": build_search_month_to_date(rows, now=generated_at),
                 "generated_at": _iso_z(generated_at),
             }
         )

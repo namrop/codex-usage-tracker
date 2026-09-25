@@ -337,6 +337,19 @@ reads only the Hermes search audit feed and writes the search ledger plus any
 quota observation it derives. Out-of-scope default paths are not preflighted or
 created; billing remains bound only by the compatibility `all` scope.
 
+### OpenClaw
+
+`collect-all --scope usage` also reads OpenClaw (keeper msg
+1553067845766742228: "I completely forgot about openclaw"): every agent store
+at `<openclaw-home>/agents/*/agent/openclaw-agent.sqlite`, read-only, lane
+`openclaw`, harness `openclaw`, namespace `sol:openclaw:<agent>`. One fact per
+assistant message with tokens. Provider labels map to the ledger's where the
+route is the same subscription (`kimi` → `kimi-coding`, the Codex runtime →
+`openai-codex`); anything else keeps OpenClaw's name. Codex runtime turns carry
+a whole turn's usage in one message, so they are `historical_aggregate`.
+Meridian routes are skipped (their Claude SDK receipt counts them).
+`responseId` is `x_openclaw_response_id`, never a join key.
+
 A lane that fails to read or persist never fails the run (keeper-ruled
 2026-08-29): it is retried twice more with a short growing backoff and then
 ceded — skipped for that run while every remaining lane still collects and
@@ -569,7 +582,18 @@ codex-usage-tracker collect-searches \
 ```
 
 Equivalent to `collect-all --scope searches`; the lane also runs under
-`--scope all`. Reads are incremental on a byte-offset watermark kept beside the
+`--scope all`. On Sol the fleet timer `ai-usage-search-collect.timer`
+(HH:08/23/38/53) runs it. Before 2026-09-25 nothing scheduled it, and the only
+thing that ever collected searches was this repo's own test suite, whose
+`collect_all` calls defaulted to the real ledger and feed; `tests/conftest.py`
+now pins every default path to the test's tmp dir.
+
+OpenClaw's `web_search` results join the same ledger (`--openclaw-home`,
+default `~/.openclaw`, empty string to disable; lane `openclaw_search`,
+harness `openclaw`). `GET /api/searches` adds `month_to_date`: calls per
+backend since the UTC month start, by harness, and for Brave (billed per
+request, $0.005 on every receipt Jun-Sep 2026) an estimate of the running bill.
+`ledger_since` after the month start means the month is only partly covered. Reads are incremental on a byte-offset watermark kept beside the
 ledger. Rotation or truncation restarts from zero, a torn trailing line is
 deferred to the next pass, a malformed interior line is counted rather than
 fatal, and a missing feed is an empty lane that still succeeds — so the Hermes

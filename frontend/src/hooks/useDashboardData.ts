@@ -55,6 +55,12 @@ export interface SubscriptionFeesPanelState {
   contentVisible: boolean;
 }
 
+export interface SearchesPanelState {
+  data: any | null;
+  message: string | null;
+  contentVisible: boolean;
+}
+
 export interface GoUsagePanelState {
   data: GoUsagePayload | null;
   message: string | null;
@@ -76,6 +82,8 @@ export interface DashboardState {
   goUsage: GoUsagePanelState;
   // What each subscription costs (keeper msg 1553037883747598450, 2026-09-25).
   subscriptionFees: SubscriptionFeesPanelState;
+  // Web searches by backend (keeper msg 1553067845766742228).
+  searches: SearchesPanelState;
   providerStatusFeeds: Record<string, any> | null;
   refreshing: boolean;
 }
@@ -92,6 +100,7 @@ const INITIAL_STATE: DashboardState = {
   weekly: { data: null, message: "Loading weekly allowance use…", contentVisible: false },
   goUsage: { data: null, message: "Loading OpenCode Go usage…", contentVisible: false },
   subscriptionFees: { data: null, message: "Loading subscription fees…", contentVisible: false },
+  searches: { data: null, message: "Loading web searches…", contentVisible: false },
   providerStatusFeeds: null,
   refreshing: false,
 };
@@ -237,6 +246,26 @@ async function loadBurn(set: Set): Promise<void> {
       }
       return { ...prev, burn: { data: null, message: "Window burn rate unavailable.", contentVisible: false } };
     });
+  }
+}
+
+async function loadSearches(set: Set): Promise<void> {
+  try {
+    const response = await fetch("/api/searches?days=7", { signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw new Error("unavailable");
+    const data = await response.json();
+    const hasRows = (Array.isArray(data.backends) && data.backends.length > 0)
+      || (data.month_to_date && Array.isArray(data.month_to_date.backends) && data.month_to_date.backends.length > 0);
+    set((prev) => ({
+      ...prev,
+      searches: hasRows
+        ? { data, message: null, contentVisible: true }
+        : { data, message: "No web searches recorded this month.", contentVisible: false },
+    }));
+  } catch (error) {
+    set((prev) => (prev.searches.contentVisible
+      ? { ...prev, searches: { ...prev.searches, message: "Refresh failed — showing last good data." } }
+      : { ...prev, searches: { data: null, message: "Web searches unavailable.", contentVisible: false } }));
   }
 }
 
@@ -410,6 +439,7 @@ export function useDashboardData(): { state: DashboardState; refresh: () => void
         loadBurn(setState),
         loadBilling(setState),
         loadSubscriptionFees(setState),
+        loadSearches(setState),
         loadRulings(setState),
         loadWeeklyUtilization(setState),
         loadGoUsage(setState),

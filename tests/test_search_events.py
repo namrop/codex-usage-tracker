@@ -590,3 +590,28 @@ def test_read_surfaces_never_mint_the_collector_s_ledger(tmp_path, capsys, monke
     with app.test_client() as client:
         assert client.get("/api/searches").status_code == 200
     assert not ledger.exists()
+
+
+def test_month_to_date_counts_by_harness_and_estimates_brave():
+    """Keeper msg 1553067845766742228: "brave needs usage tracking too"."""
+    from datetime import datetime, timezone
+
+    from codex_usage_tracker.search_events import build_search_month_to_date
+
+    def fact(observed, provider, harness, status="ok"):
+        return {"observed_at": observed, "provider": provider, "harness": harness, "status": status}
+
+    facts = [
+        fact("2026-08-31T23:59:59Z", "brave", "hermes"),  # last month
+        fact("2026-09-11T10:35:00Z", "brave", "hermes"),
+        fact("2026-09-12T10:35:00Z", "brave", "hermes", status="rate_limited"),
+        fact("2026-09-20T10:35:00Z", "brave", "openclaw"),
+        fact("2026-09-21T10:35:00Z", "zai", "hermes"),
+    ]
+    mtd = build_search_month_to_date(facts, now=datetime(2026, 9, 25, 15, tzinfo=timezone.utc))
+    assert mtd["month_start"] == "2026-09-01" and mtd["ledger_since"] == "2026-08-31T23:59:59Z"
+    brave, zai = mtd["backends"]
+    assert (brave["backend"], brave["calls"], brave["billable_calls"], brave["by_harness"]) == (
+        "brave", 3, 2, {"hermes": 2, "openclaw": 1})
+    assert (brave["rate_usd"], brave["estimated_usd"]) == ("0.005", "0.01")
+    assert zai["calls"] == 1 and "estimated_usd" not in zai

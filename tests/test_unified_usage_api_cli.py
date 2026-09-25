@@ -2560,7 +2560,9 @@ def test_collect_all_cli_exits_zero_and_names_a_ceded_lane(tmp_path, monkeypatch
     captured = capsys.readouterr()
     summary = captured.err.strip().splitlines()[0]
     assert summary.startswith("collect-all: scope=usage")
-    assert "lanes=2/3" in summary
+    # hermes, claude_code, opencode and openclaw (keeper msg 1553067845766742228;
+    # its default home is absent here, an empty lane that still succeeds).
+    assert "lanes=3/4" in summary
     assert "degraded=hermes" in summary
     assert "ceded=hermes" in summary
     payload = json.loads(captured.out)

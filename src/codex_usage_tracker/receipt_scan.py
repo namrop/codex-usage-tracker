@@ -250,6 +250,13 @@ def _classify(email: Email) -> tuple[str, Receipt | None, list[dict[str, Any]] |
         return "openrouter", *_stripe_entries(email, "openrouter", _openrouter_item)
     if "eleven labs" in sender or "elevenlabs" in sender:
         return "elevenlabs", *_stripe_entries(email, "elevenlabs", _elevenlabs_item)
+    # Keeper msg 1553067845766742228 ("yeah, those should go in too").
+    if "brave software" in sender:
+        return "brave", *_stripe_entries(email, "brave", _brave_item)
+    if "invoice+statements@suno.com" in sender:
+        return "suno", *_stripe_entries(email, "suno", _suno_item)
+    if "invoice+statements@venice.ai" in sender:
+        return "venice", *_stripe_entries(email, "venice", _venice_item)
     if "account.z.ai" in sender:
         receipt = parse_zai_receipt(email.text)
         if receipt is None:
@@ -286,7 +293,14 @@ def _stripe_entries(email: Email, subscription: str, rule) -> tuple[Receipt | No
         return receipt, None, f"line items not recognised: {[desc for desc, _, _ in charged]}"
     desc, _amount, period = charged[0]
     kind, plan = kinds[0]
-    return receipt, [_entry(email, receipt, subscription, kind, plan, period)], None
+    entry = _entry(email, receipt, subscription, kind, plan, None if subscription in _BILLED_IN_ARREARS else period)
+    if subscription in _BILLED_IN_ARREARS and period:
+        # The receipt's period is the usage it bills, not time paid ahead:
+        # recorded in the evidence, so the next bill is expected a month on.
+        quantity = re.search(re.escape(desc) + r" Qty ([\d,]+)", email.text)
+        entry["evidence"] += (f"; usage {period[0].isoformat()} to {period[1].isoformat()}"
+                              + (f", {quantity.group(1)} requests" if quantity else ""))
+    return receipt, [entry], None
 
 
 def _anthropic_item(desc: str) -> tuple[str, str] | None:
@@ -309,6 +323,24 @@ def _named_plan(item: str, label: str):
 
 def _openrouter_item(desc: str) -> tuple[str, str] | None:
     return ("topup", "Credits") if "credits" in desc.lower() else None
+
+
+# Subscriptions billed monthly in arrears for metered use.
+_BILLED_IN_ARREARS = frozenset({"brave"})
+
+
+def _brave_item(desc: str) -> tuple[str, str] | None:
+    """Brave Search API bills requests monthly in arrears: "Pro (per request)
+    Qty 6,363 $31.82 $0.005 each". The bill is the plan charge."""
+    return ("plan", f"Brave Search API {desc}") if desc.endswith("(per request)") else None
+
+
+def _suno_item(desc: str) -> tuple[str, str] | None:
+    return ("plan", desc) if desc.lower() in {"suno pro", "suno premier"} else None
+
+
+def _venice_item(desc: str) -> tuple[str, str] | None:
+    return ("topup", "Venice credits") if desc.lower() == "venice credits" else None
 
 
 def _elevenlabs_item(desc: str) -> tuple[str, str] | None:
@@ -405,7 +437,13 @@ def missing_rebills(entries: Iterable[Mapping[str, Any]], *, today: date,
     missing = []
     for key, entry in sorted(latest.items()):
         charged = _day(entry.get("charged_at"))
-        expected = _day(entry.get("period_end")) if entry.get("period_end") else (_add_month(charged) if charged else None)
+        period_end = _day(entry.get("period_end")) if entry.get("period_end") else None
+        if period_end is not None and (charged is None or period_end > charged):
+            expected = period_end
+        else:
+            # No paid-through date, or a bill for a period already over
+            # (billed in arrears): the next bill comes a month after this one.
+            expected = _add_month(charged) if charged else None
         if expected is None:
             continue
         overdue = (today - expected).days

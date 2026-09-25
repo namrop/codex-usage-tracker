@@ -11,9 +11,9 @@ export function SubscriptionValueCard({ fees, unified }: { fees: SubscriptionFee
   const rows = useMemo(() => deriveSubscriptionValue(fees.data, unified.data), [fees.data, unified.data]);
   const other: any[] = fees.data && Array.isArray(fees.data.other_charges) ? fees.data.other_charges : [];
   const totalFeeWeek = rows.reduce((sum, row) => sum + row.feePerWeek, 0);
-  // The multiple compares like with like: fees of subscriptions whose traffic
-  // the usage ledger records, against that traffic at list.
-  const trackedFeeWeek = rows.reduce((sum, row) => sum + (row.usageTracked ? row.feePerWeek : 0), 0);
+  // The multiple compares like with like: fees of subscriptions with a
+  // list-price figure, against that traffic at list.
+  const trackedFeeWeek = rows.reduce((sum, row) => sum + (row.listPriceNote === null ? row.feePerWeek : 0), 0);
   const totalListWeek = rows.reduce((sum, row) => sum + (row.listPriceWeek || 0), 0);
   return (
     <section className="card" aria-labelledby="subscriptionValueTitle">
@@ -30,7 +30,7 @@ export function SubscriptionValueCard({ fees, unified }: { fees: SubscriptionFee
         <p className="chart-summary">
           {`${money(totalFeeWeek)} a week in fees · ${money(totalListWeek)} of traffic at list this week`}
           {trackedFeeWeek > 0 ? ` · ${(totalListWeek / trackedFeeWeek).toFixed(1)}×` : ""}
-          {trackedFeeWeek < totalFeeWeek ? ` on the subscriptions the usage ledger tracks` : ""}
+          {trackedFeeWeek < totalFeeWeek ? ` on the subscriptions with a list price` : ""}
         </p>
         <div className="table-wrap">
           <table className="tier-subscription-value">
@@ -46,7 +46,7 @@ export function SubscriptionValueCard({ fees, unified }: { fees: SubscriptionFee
                     row.plan || "—",
                     money(row.feePerMonth, row.currency),
                     money(row.feePerWeek, row.currency),
-                    row.usageTracked ? money(row.listPriceWeek) : "not in usage ledger",
+                    row.listPriceNote === null ? money(row.listPriceWeek) : row.listPriceNote,
                     row.multiple === null ? "—" : `${row.multiple.toFixed(1)}×`,
                     row.feeSource === "stated" ? "none in mail · rate you gave" : formatTimestamp(row.chargedAt),
                     row.periodEnd

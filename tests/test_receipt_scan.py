@@ -213,3 +213,44 @@ def test_cli_scan_appends_once_and_the_manifest_imports(tmp_path):
     assert (first["appended"], again["appended"], again["already_recorded"]) == (3, 0, 3)
     assert len(read_manifest(manifest)) == 3
     assert manifest.read_text().startswith("// comment\n")
+
+
+# Keeper msg 1553067845766742228 ("yeah, those should go in too"): Suno,
+# Venice.ai and Brave. Bodies keep the live receipts' shape.
+BRAVE = """Brave Software, Inc.
+Receipt from Brave Software, Inc. $31.82 Paid September 1, 2026 Receipt number 2710-0000 Invoice number T-0007 Payment method - 3341
+Receipt #2710-0000 Aug 1–Sep 1, 2026 Pro (per request) Qty 6,363 $31.82 $0.005 each Total $31.82 Amount paid $31.82 Questions?
+"""
+SUNO = """Suno
+Receipt from Suno $256.00 Paid August 2, 2026 Receipt number 2482-0000-0000 Invoice number S-0002 Payment method - 4388
+Receipt #2482-0000-0000 Aug 2, 2026 Discount for unused credits Qty 1 -$32.00 Aug 2, 2026–Aug 2, 2027 Suno Premier Qty 1 $288.00 Total $256.00 Amount paid $256.00
+"""
+VENICE = """Venice.ai
+Receipt from Venice.ai $10.00 Paid August 3, 2026 Receipt number 2401-0000 Invoice number V-0004 Payment method - 4388
+Receipt #2401-0000 Venice Credits Qty 1,000 $10.00 $0.01 each Total $10.00 Amount paid $10.00
+"""
+
+
+def test_brave_suno_and_venice_receipts():
+    emails = [
+        _email(BRAVE, '"Brave Software, Inc." <invoice+statements+acct_1MBh97BLZ1V6RGX9@stripe.com>',
+               "Your receipt from Brave Software, Inc. #2710-0000", account="yugen-harborlight", eid="b"),
+        _email(SUNO, "Suno <invoice+statements@suno.com>", "Your receipt from Suno #2482-0000-0000", account="yugen-harborlight", eid="s"),
+        _email(VENICE, '"Venice.ai" <invoice+statements@venice.ai>', "Your receipt from Venice.ai #2401-0000", account="yugen-harborlight", eid="v"),
+        _email("What's new", "Suno <suno@creators.suno.com>", "Your receipt for creating", eid="n"),
+    ]
+    result = scan(emails, [], today=date(2026, 9, 25))
+    by = {entry["subscription"]: entry for entry in result.added}
+    assert set(by) == {"brave", "suno", "venice"} and result.needs_look == []
+    brave = by["brave"]
+    assert (brave["kind"], brave["plan"], brave["charged_at"], brave["amount"]) == (
+        "plan", "Brave Search API Pro (per request)", "2026-09-01", "31.82")
+    # Billed in arrears: the receipt's period is the usage billed, kept in the
+    # evidence; no paid-through date, so the next bill is expected Oct 1.
+    assert "period_end" not in brave and brave["evidence"].endswith("usage 2026-08-01 to 2026-09-01, 6,363 requests")
+    assert missing_rebills([brave], today=date(2026, 9, 25)) == []
+    assert [row["expected"] for row in missing_rebills([brave], today=date(2026, 10, 9))] == ["2026-10-01"]
+    suno = by["suno"]
+    # The discount line is not a charge; the entry records what was paid.
+    assert (suno["plan"], suno["amount"], suno["period_end"]) == ("Suno Premier", "256.00", "2027-08-02")
+    assert (by["venice"]["kind"], by["venice"]["plan"], by["venice"]["amount"]) == ("topup", "Venice credits", "10.00")

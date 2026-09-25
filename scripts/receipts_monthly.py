@@ -36,7 +36,7 @@ ACCOUNTS = ("personal-gmail", "yugen-harborlight")
 LABELS = {
     "claude-1": "Claude 1", "claude-2": "Claude 2", "codex": "Codex", "z-ai": "Z.AI", "kimi": "Kimi K3",
     "opencode-go": "OpenCode Go", "openrouter": "OpenRouter", "deepseek": "DeepSeek", "pocket": "Pocket",
-    "elevenlabs": "ElevenLabs",
+    "elevenlabs": "ElevenLabs", "suno": "Suno", "venice": "Venice.ai", "brave": "Brave Search",
 }
 
 

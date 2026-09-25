@@ -64,6 +64,12 @@ from .search_events import (
     write_watermark,
 )
 from .usage_adapters import collect_claude_usage, collect_hermes_usage, collect_opencode_usage
+from .openclaw_usage import (
+    OPENCLAW_SEARCH_LANE,
+    OPENCLAW_USAGE_LANE,
+    collect_openclaw_searches,
+    collect_openclaw_usage,
+)
 
 ALLOWED_DOTENV_KEYS = frozenset(
     {
@@ -962,6 +968,7 @@ def collect_all(
     when_active: bool = False,
     search_ledger: str | Path | None = None,
     search_audit: str | Path | None = None,
+    openclaw_home: str | Path | None = None,
 ) -> dict[str, Any]:
     """Collect independently persistable usage and/or quota source batches.
 
@@ -1300,6 +1307,14 @@ def collect_all(
             "opencode",
             lambda: collect_opencode_usage(opencode_dbs, f"{source_prefix}:opencode"),
         )
+        # OpenClaw's model calls (keeper msg 1553067845766742228: "I completely
+        # forgot about openclaw. that's not tracked at all now right?").
+        openclaw_rows: list[dict[str, Any]] = []
+        if openclaw_home is not None:
+            openclaw_rows = collect_source(
+                OPENCLAW_USAGE_LANE,
+                lambda: collect_openclaw_usage(openclaw_home, f"{source_prefix}:openclaw"),
+            )
         usage_batches = [
             persist_source("hermes", usage_ledger, hermes, fact_type="usage_event_v1"),
             *(
@@ -1308,6 +1323,10 @@ def collect_all(
             ),
             persist_source("opencode", usage_ledger, opencode, fact_type="usage_event_v1"),
         ]
+        if openclaw_home is not None:
+            usage_batches.append(
+                persist_source(OPENCLAW_USAGE_LANE, usage_ledger, openclaw_rows, fact_type="usage_event_v1")
+            )
         result["usage"] = _aggregate_append_results(usage_batches)
         result["generated_corrections"] = generated_corrections
         paths["usage_ledger"] = str(Path(usage_ledger).expanduser())
@@ -1577,6 +1596,19 @@ def collect_all(
                 SEARCH_LANE, search_target, search_facts, fact_type="search_event_v1"
             )
         ]
+        # OpenClaw's web searches (Brave; keeper msg 1553067845766742228:
+        # "brave needs usage tracking too"). Its store is re-read whole each
+        # run; canonical identity makes that a replay.
+        if openclaw_home is not None:
+            openclaw_searches = collect_source(
+                OPENCLAW_SEARCH_LANE,
+                lambda: collect_openclaw_searches(openclaw_home, f"{source_prefix}:openclaw-search"),
+            )
+            search_batches.append(
+                persist_source(
+                    OPENCLAW_SEARCH_LANE, search_target, openclaw_searches, fact_type="search_event_v1"
+                )
+            )
         # A rate-limited event that names a reset instant is the only thing
         # this lane can say about a quota it cannot probe; everything else the
         # rate_limited count in the search ledger already carries.

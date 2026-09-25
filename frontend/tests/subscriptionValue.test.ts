@@ -36,6 +36,9 @@ const FEES = {
     { subscription: "opencode-go", provider: "opencode-go", provider_account_index: null, label: "OpenCode Go", plan: "OpenCode Go",
       fee_per_week: "2.31", fee_per_month: "10.00", currency: "USD", charged_at: "2026-09-08T00:00:00Z",
       billing_period_end: "2026-09-08T00:00:00Z", period_current: false },
+    { subscription: "brave", provider: "brave", provider_account_index: null, label: "Brave Search", plan: "Brave Search API Pro (per request)",
+      usage_tracked: true, list_price_note: "billed per request", fee_per_week: "7.34", fee_per_month: "31.82", currency: "USD",
+      fee_source: "receipt", charged_at: "2026-09-01T00:00:00Z", billing_period_end: null, period_current: null },
   ],
 };
 
@@ -78,5 +81,16 @@ describe("subscription value", () => {
     assert.equal(pocket.multiple, null);
     assert.equal(pocket.feePerWeek, 3.84);
     assert.equal(deriveSubscriptionValue(FEES, UNIFIED).find((row) => row.key === "claude-1")!.usageTracked, true);
+  });
+  it("gives Brave its fee and a reason instead of a list price (msg 1553067845766742228)", () => {
+    const rows = deriveSubscriptionValue(FEES, UNIFIED);
+    const brave = rows.find((row) => row.key === "brave")!;
+    assert.equal(brave.usageTracked, true);
+    assert.equal(brave.listPriceNote, "billed per request");
+    assert.equal(brave.listPriceWeek, null);
+    assert.equal(brave.multiple, null);
+    const pocket = rows.find((row) => row.key === "pocket")!;
+    assert.equal(pocket.listPriceNote, "not in usage ledger");
+    assert.equal(rows.find((row) => row.key === "claude-1")!.listPriceNote, null);
   });
 });

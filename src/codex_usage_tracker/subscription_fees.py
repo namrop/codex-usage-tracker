@@ -50,10 +50,21 @@ SUBSCRIPTIONS: dict[str, tuple[str, int | None, str]] = {
     # reciepts file". Their usage is not in the AI usage ledger.
     "pocket": ("pocket", None, "Pocket"),
     "elevenlabs": ("elevenlabs", None, "ElevenLabs"),
+    # Keeper msg 1553067845766742228: "yeah, those should go in too" (Suno,
+    # Venice.ai, Brave). Brave Search API is billed per request, monthly in
+    # arrears; Venice.ai is prepaid credit.
+    "suno": ("suno", None, "Suno"),
+    "venice": ("venice", None, "Venice.ai"),
+    "brave": ("brave", None, "Brave Search"),
 }
-# Subscriptions whose traffic the usage ledger does not record: the card shows
-# their fee with no list-price comparison.
-USAGE_UNTRACKED = frozenset({"pocket", "elevenlabs"})
+# Subscriptions whose traffic the usage ledger does not record.
+USAGE_UNTRACKED = frozenset({"pocket", "elevenlabs", "suno"})
+# Why a subscription row has no list-price comparison. Brave's usage is in the
+# search ledger, but its bill already IS usage at list price ($0.005/request).
+LIST_PRICE_NOTES = {
+    **{key: "not in usage ledger" for key in USAGE_UNTRACKED},
+    "brave": "billed per request",
+}
 
 # plan: the recurring subscription charge. overage: usage billed on top of a
 # plan (Claude extra usage). topup: prepaid credit. proration / one_time:
@@ -263,6 +274,7 @@ def summarize(
                 "provider_account_index": index,
                 "label": label,
                 "usage_tracked": key not in USAGE_UNTRACKED,
+                "list_price_note": LIST_PRICE_NOTES.get(key),
                 "plan": rate.get("plan"),
                 "amount": str(amount),
                 "currency": rate.get("currency"),
@@ -301,6 +313,7 @@ def summarize(
             "provider_account_index": index,
             "label": label,
             "usage_tracked": key not in USAGE_UNTRACKED,
+            "list_price_note": LIST_PRICE_NOTES.get(key),
             "plan": parse_description_code(row["description_code"])[2] or None,  # type: ignore[index]
             "amount": str(amount),
             "currency": row.get("currency"),

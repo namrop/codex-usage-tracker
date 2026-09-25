@@ -2,6 +2,7 @@ import type { DashboardState } from "../hooks/useDashboardData";
 import { BillingCard } from "../components/BillingCard";
 import { ListPriceHeadline } from "../components/ListPriceHeadline";
 import { RulingsPerDollarCard } from "../components/RulingsPerDollarCard";
+import { SearchesCard } from "../components/SearchesCard";
 import { SubscriptionValueCard } from "../components/SubscriptionValueCard";
 
 // Accounting: the API list-price equivalent headline (a comparison figure,
@@ -19,6 +20,7 @@ export function AccountingView({ state }: { state: DashboardState }) {
         donutFive={state.donutFive}
       />
       <SubscriptionValueCard fees={state.subscriptionFees} unified={state.unified} />
+      <SearchesCard searches={state.searches} />
       <BillingCard billing={state.billing} />
       <RulingsPerDollarCard rulings={state.rulings} />
     </>

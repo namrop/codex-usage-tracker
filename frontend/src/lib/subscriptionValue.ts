@@ -23,6 +23,10 @@ export interface SubscriptionValueRow {
   // False for subscriptions whose traffic the usage ledger does not record
   // (Pocket, ElevenLabs; keeper msg 1553058626350874726): fee only.
   usageTracked: boolean;
+  // Why there is no list-price comparison, when there is none: "not in usage
+  // ledger", or "billed per request" for Brave, whose bill already is usage at
+  // its per-request rate (keeper msg 1553067845766742228).
+  listPriceNote: string | null;
   listPriceWeek: number | null;
   // listPriceWeek / feePerWeek; null without a list-price figure.
   multiple: number | null;
@@ -65,7 +69,8 @@ export function deriveSubscriptionValue(fees: any, unified: any): SubscriptionVa
     const listKey = row.provider === "anthropic" && Number.isSafeInteger(index) ? `anthropic:${index}` : String(row.provider);
     const feePerWeek = num(row.fee_per_week) || 0;
     const usageTracked = row.usage_tracked !== false;
-    const listPriceWeek = hasList && usageTracked ? (list.get(listKey) ?? 0) : null;
+    const listPriceNote = row.list_price_note ? String(row.list_price_note) : usageTracked ? null : "not in usage ledger";
+    const listPriceWeek = hasList && listPriceNote === null ? (list.get(listKey) ?? 0) : null;
     return {
       key: String(row.subscription),
       label: String(row.label || row.subscription),
@@ -79,6 +84,7 @@ export function deriveSubscriptionValue(fees: any, unified: any): SubscriptionVa
       periodEnd: row.billing_period_end ? String(row.billing_period_end) : null,
       periodCurrent: row.period_current === true ? true : row.period_current === false ? false : null,
       usageTracked,
+      listPriceNote,
       listPriceWeek,
       multiple: listPriceWeek !== null && feePerWeek > 0 ? listPriceWeek / feePerWeek : null,
     };

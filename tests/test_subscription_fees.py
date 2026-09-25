@@ -116,6 +116,21 @@ def test_a_non_monthly_period_is_scaled_by_its_own_length():
     assert row["fee_per_week"] == "9.97" and row["fee_per_month"] == "43.21"  # 520 x 7 / 365, x 52 / 12
 
 
+def test_rows_say_why_they_have_no_list_price():
+    """Keeper msg 1553067845766742228: Suno, Venice.ai and Brave join the file.
+    Brave's usage is tracked (search ledger) but its bill is already per request."""
+    now = datetime.now(timezone.utc)
+    facts = [
+        fact_from_entry({"subscription": key, "kind": "plan", "plan": plan, "charged_at": "2026-09-01", "amount": amount})
+        for key, plan, amount in (("brave", "Brave Search API Pro (per request)", "31.82"), ("suno", "Suno Premier", "256.00"),
+                                  ("claude-1", "Claude Max 20x", "200.00"))
+    ]
+    rows = {row["subscription"]: row for row in summarize(facts, now=now)["subscriptions"]}
+    assert (rows["brave"]["usage_tracked"], rows["brave"]["list_price_note"], rows["brave"]["label"]) == (True, "billed per request", "Brave Search")
+    assert (rows["suno"]["usage_tracked"], rows["suno"]["list_price_note"]) == (False, "not in usage ledger")
+    assert (rows["claude-1"]["usage_tracked"], rows["claude-1"]["list_price_note"]) == (True, None)
+
+
 def test_summarize_ignores_rows_without_a_manifest_code():
     now = datetime.now(timezone.utc)
     assert summarize([{"description_code": "INV-42", "occurred_at": "2026-09-01T00:00:00Z", "amount": "1"}], now=now) == {

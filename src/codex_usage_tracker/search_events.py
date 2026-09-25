@@ -15,6 +15,7 @@ canonical identity makes a full re-read replay-safe.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import hashlib
 import json
 import os
@@ -412,8 +413,66 @@ def build_search_summary(
     }
 
 
+# Search backends billed per request, with the rate from their own receipts.
+# Keeper msg 1553067845766742228 ("brave needs usage tracking too"): Brave
+# Search API "Pro (per request)", $0.005 each on every receipt Jun-Sep 2026
+# (yugen-harborlight, receipts #2866-4186, #2207-1903, #2463-0026, #2710-3551).
+METERED_SEARCH_RATES: dict[str, tuple[str, str]] = {
+    "brave": ("0.005", "Brave Search API Pro, $0.005 per request (receipts Jun-Sep 2026)"),
+}
+
+
+def build_search_month_to_date(
+    facts: Iterable[Mapping[str, Any]],
+    *,
+    now: datetime | None = None,
+    rates: Mapping[str, tuple[str, str]] = METERED_SEARCH_RATES,
+) -> dict[str, Any]:
+    """Calls per backend since the start of the UTC month, split by harness,
+    with a metered-cost estimate for backends billed per request.
+
+    ``ledger_since`` is the earliest call among ``facts``. Given every call
+    since the month start (the dashboard reads that far back), a value after
+    the month start means the ledger does not cover the whole month yet, so
+    the count is a floor, not the bill.
+    """
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start_text = month_start.strftime("%Y-%m-%dT%H:%M:%S")
+    backends: dict[str, dict[str, Any]] = {}
+    earliest: str | None = None
+    for fact in facts:
+        observed = str(fact.get("observed_at") or "")
+        if observed and (earliest is None or observed < earliest):
+            earliest = observed
+        if observed.rstrip("Z") < start_text:
+            continue
+        backend = str(fact.get("provider") or "unknown")
+        harness = str(fact.get("harness") or "unknown")
+        row = backends.setdefault(backend, {"backend": backend, "calls": 0, "billable_calls": 0, "by_harness": {}})
+        row["calls"] += 1
+        # Brave bills the requests it served; a rate-limited or failed call
+        # still counts here as a call but not as a billable one.
+        if str(fact.get("status") or "") == "ok":
+            row["billable_calls"] += 1
+        row["by_harness"][harness] = row["by_harness"].get(harness, 0) + 1
+    for backend, row in backends.items():
+        if backend in rates:
+            rate, basis = rates[backend]
+            row["rate_usd"] = rate
+            row["rate_basis"] = basis
+            row["estimated_usd"] = str((Decimal(rate) * row["billable_calls"]).quantize(Decimal("0.01")))
+    return {
+        "month_start": month_start.date().isoformat(),
+        "ledger_since": earliest,
+        "backends": [backends[name] for name in sorted(backends)],
+    }
+
+
 __all__ = [
     "AUDIT_SCHEMA",
+    "METERED_SEARCH_RATES",
+    "build_search_month_to_date",
     "DEFAULT_SEARCH_AUDIT_RELATIVE_PATH",
     "DEFAULT_HERMES_HOME",
     "DEFAULT_SEARCH_LEDGER",

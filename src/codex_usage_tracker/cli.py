@@ -668,6 +668,7 @@ def cmd_collect_searches(args: argparse.Namespace) -> int:
             quota_ledger=args.quota_ledger,
             search_ledger=args.search_ledger,
             search_audit=args.search_audit,
+            openclaw_home=args.openclaw_home or None,
             scope="searches",
             live_quota=False,
             dry_run=args.dry_run,
@@ -779,6 +780,7 @@ def cmd_collect_all(args: argparse.Namespace) -> int:
             when_active=args.when_active,
             search_ledger=args.search_ledger,
             search_audit=args.search_audit,
+            openclaw_home=args.openclaw_home or None,
         )
     except Exception as exc:
         print(f"collect-all failed: {type(exc).__name__}", file=sys.stderr)
@@ -1225,6 +1227,14 @@ def main() -> int:
         help="Hermes search audit feed to ingest incrementally (a missing file is an empty lane)",
     )
     collect_parser.add_argument(
+        "--openclaw-home",
+        default=os.environ.get("OPENCLAW_HOME", "~/.openclaw"),
+        help=(
+            "OpenClaw home; its agents' stores are read (read-only) for model calls and web "
+            "searches. Empty string disables the OpenClaw lanes"
+        ),
+    )
+    collect_parser.add_argument(
         "--strict-sources",
         action="store_true",
         help="Exit nonzero after any source warning or quarantined identity",
@@ -1281,6 +1291,14 @@ def main() -> int:
         "--search-audit",
         default=os.environ.get("SEARCH_AUDIT_PATH") or DEFAULT_SEARCH_AUDIT,
         help="Hermes search audit feed to ingest incrementally",
+    )
+    collect_searches_parser.add_argument(
+        "--openclaw-home",
+        default=os.environ.get("OPENCLAW_HOME", "~/.openclaw"),
+        help=(
+            "OpenClaw home; its agents' stores are read (read-only) for model calls and web "
+            "searches. Empty string disables the OpenClaw lanes"
+        ),
     )
     collect_searches_parser.add_argument(
         "--quota-ledger",
