@@ -672,16 +672,24 @@ def accumulate_price_bucket(
     Reported identity still wins where present; this only rescues rows that
     would otherwise have been discarded.
     """
-    key = (
-        str(row.get("provider") or "unknown"),
-        str(
-            row.get("model_reported")
-            or row.get("model_requested")
-            or row.get("model")
-            or "unknown"
-        ),
-        request_context_basis(row),
+    provider = str(row.get("provider") or "unknown")
+    model = str(
+        row.get("model_reported")
+        or row.get("model_requested")
+        or row.get("model")
+        or "unknown"
     )
+    # A relayed row whose own label has no rate table (a bare ``custom``
+    # Hermes row through Meridian) prices as the provider it reached, and only
+    # when that provider lists this exact model (the same guard as
+    # resolve_rate_provider). Added 2026-09-25: 396 such Claude rows (~90M
+    # tokens) were sitting in unpriced coverage under the label "custom".
+    upstream = row.get("upstream_provider")
+    if upstream not in (None, "") and provider not in LIST_PRICES:
+        entry = LIST_PRICES.get(str(upstream))
+        if entry and entry["models"].get(model) is not None:
+            provider = str(upstream)
+    key = (provider, model, request_context_basis(row))
     bucket = buckets.setdefault(
         key,
         {

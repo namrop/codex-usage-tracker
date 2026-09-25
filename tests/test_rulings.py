@@ -217,6 +217,47 @@ def test_block_scalars_lists_and_quotes_survive_the_subset_parser():
     assert ruling.applies_to == ("20_digital_architecture", "07_systems")
 
 
+def test_compact_lists_and_wrapped_plain_scalars_parse():
+    """The two valid YAML shapes the canon ledgers use that the subset parser
+    rejected before 2026-09-25 (65 of 233 entries unreadable): a block list
+    at the key's own indent, and a plain scalar wrapped onto indented lines."""
+    parsed = parse_ruling_yaml(
+        "uid: %s\n"
+        "ruled_at: 2026-09-24T15:36:46-04:00\n"
+        "class: convention\n"
+        "verbatim: Do it, then load the anansi agent identity note please. That should move here to\n"
+        "  figure out which dimensions we have not accounted for\n"
+        "applies_to:\n"
+        "- 019f2eb8-53d0-7472-b359-25cf7bec5b4b\n"
+        "- 01a03a39-78a9-78b2-9e3e-b28beb7655e7\n"
+        "supersedes: null\n"
+        "source_urls:\n"
+        "- https://discord.com/channels/1/2/3\n" % UID_A
+    )
+
+    assert parsed["verbatim"] == (
+        "Do it, then load the anansi agent identity note please. That should move here to"
+        " figure out which dimensions we have not accounted for"
+    )
+    assert parsed["applies_to"] == [
+        "019f2eb8-53d0-7472-b359-25cf7bec5b4b", "01a03a39-78a9-78b2-9e3e-b28beb7655e7",
+    ]
+    assert parsed["supersedes"] is None
+    assert parsed["source_urls"] == ["https://discord.com/channels/1/2/3"]
+    assert ruling_from_mapping(parsed, source_path="fixture.md").applies_to == tuple(parsed["applies_to"])
+
+
+def test_compact_list_stops_at_the_next_key_and_bad_indentation_still_raises():
+    parsed = parse_ruling_yaml("applies_to:\n- a\n- b\nclass: gate\n")
+    assert parsed == {"applies_to": ["a", "b"], "class": "gate"}
+    # A key indented under a scalar is structure, not wrapped text: YAML
+    # rejects it and so does the reader.
+    with pytest.raises(RulingParseError):
+        parse_ruling_yaml("who: luis\n  deeper: 1\n")
+    # Wrapped text that merely contains a colon mid-line is still text.
+    assert parse_ruling_yaml("verbatim: he said\n  it at 10:30 today\n")["verbatim"] == "he said it at 10:30 today"
+
+
 @pytest.mark.parametrize(
     "mapping, fragment",
     [

@@ -54,8 +54,10 @@ def _ledger(tmp_path):
         # not recorded (the route field starts at the collector cutover).
         _fact("sol:hermes", "h3", "hermes", "custom", _at(4), 30,
               provider_request_id="msg_01BARECCCCCCCCCCCCCCCCCC", upstream_provider="anthropic"),
-        # After the cutover the collector records the route: Claude 2.
-        _fact("sol:hermes", "h4", "hermes", "custom", _at(0.5), 40,
+        # After the cutover the collector records the route: Claude 2. (90
+        # minutes old, not 30: the public chart counts complete hours only, so
+        # a row inside the current hour made this test fail after half past.)
+        _fact("sol:hermes", "h4", "hermes", "custom", _at(1.5), 40,
               provider_request_id="msg_01ROUTEDDDDDDDDDDDDDDDDD", upstream_provider="anthropic",
               x_relay_route="meridian-yugen"),
         # Not Anthropic: untouched.
@@ -101,3 +103,37 @@ def test_public_chart_counts_meridian_as_anthropic(tmp_path):
     labels = {row["label"]: row for row in projection["provider_rows"]}
     assert "Other" not in labels
     assert labels["Anthropic"]["total_tokens"] == 380
+
+
+def test_rows_carry_list_price_and_relayed_custom_rows_are_priced(tmp_path):
+    """Keeper-approved UI review (2026-09-25, msg 1553037883747598450): the
+    provider/model table and provider shares carry list-price equivalent, and a
+    bare "custom" row that reached Anthropic prices as Anthropic."""
+    from codex_usage_tracker.list_pricing import accumulate_price_bucket, estimate_list_price, finalize_price_buckets
+
+    payload = create_app(unified_usage_ledger=str(_ledger(tmp_path))).test_client().get(
+        "/api/unified-usage?hours=24"
+    ).get_json()
+    table = {row["provider_label"]: row for row in payload["by_provider_model"]}
+    for row in table.values():
+        assert "list_price_usd" in row and "list_price_priced_share" in row
+    # The account-not-recorded row is custom -> anthropic, priced in full.
+    assert table["Claude (account not recorded)"]["list_price_priced_share"] == 1.0
+    assert all("list_price_usd" in row for row in payload["by_provider"])
+    assert payload["totals"]["list_price"]["unpriced_providers"] == []
+
+    # A million-token relayed row costs the same as the same row labelled anthropic.
+    def price(provider, **extra):
+        buckets = {}
+        accumulate_price_bucket(buckets, {"provider": provider, "model_reported": "claude-opus-5-5",
+                                          "input_tokens": 1_000_000, **extra})
+        return estimate_list_price(finalize_price_buckets(buckets))
+    assert price("custom", upstream_provider="anthropic")["estimate_usd"] == price("anthropic")["estimate_usd"]
+    assert price("anthropic")["estimate_usd"] != "0.00"
+    # No upstream: still unpriced coverage, never a guess.
+    assert price("custom")["unpriced_providers"] == ["custom"]
+    # An upstream that does not list the model does not borrow a default.
+    unlisted = {}
+    accumulate_price_bucket(unlisted, {"provider": "custom", "upstream_provider": "anthropic",
+                                       "model_reported": "gpt-5.5", "input_tokens": 1_000_000})
+    assert estimate_list_price(finalize_price_buckets(unlisted))["unpriced_providers"] == ["custom"]

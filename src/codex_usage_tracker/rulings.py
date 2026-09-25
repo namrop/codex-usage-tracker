@@ -275,6 +275,24 @@ def _parse_mapping(lines: list[str], index: int, indent: int) -> tuple[dict[str,
             continue
 
         if value:
+            # A plain scalar may continue on more-indented lines; YAML folds
+            # them with single spaces (`verbatim: ...` wrapped at ~100
+            # columns). Added 2026-09-25: 8 canon entries were unreadable.
+            continuation: list[str] = []
+            while index < len(lines):
+                candidate = lines[index]
+                if not candidate.strip() or _indent_of(candidate) <= indent:
+                    break
+                # YAML rejects a key inside a plain scalar ("mapping values
+                # are not allowed here"); so does this reader, rather than
+                # folding structure it did not read into text.
+                inner = _KEY_RE.match(candidate.strip())
+                if inner is not None and (not inner.group("rest") or inner.group("rest").startswith(" ")):
+                    raise RulingParseError(f"unexpected indentation at line {index + 1}")
+                continuation.append(candidate.strip())
+                index += 1
+            if continuation:
+                value = " ".join([value, *continuation])
             result[key] = _scalar(value)
             continue
 
@@ -282,6 +300,29 @@ def _parse_mapping(lines: list[str], index: int, indent: int) -> tuple[dict[str,
         probe = index
         while probe < len(lines) and not lines[probe].strip():
             probe += 1
+        if (
+            probe < len(lines)
+            and _indent_of(lines[probe]) == indent
+            and (lines[probe].strip() == "-" or lines[probe].strip().startswith("- "))
+        ):
+            # Compact block list: the items sit at the key's own indent
+            # (`applies_to:` then `- uid` directly below). Valid YAML and the
+            # form most ledgers write; 57 canon entries were unreadable before
+            # this was accepted (2026-09-25).
+            items: list[Any] = []
+            index = probe
+            while index < len(lines):
+                candidate = lines[index]
+                if not candidate.strip():
+                    index += 1
+                    continue
+                item = candidate.strip()
+                if _indent_of(candidate) != indent or not (item == "-" or item.startswith("- ")):
+                    break
+                items.append(_scalar(item[2:].strip()) if item != "-" else None)
+                index += 1
+            result[key] = items
+            continue
         if probe >= len(lines) or _indent_of(lines[probe]) <= indent:
             result[key] = None
             continue
@@ -313,10 +354,11 @@ def _parse_mapping(lines: list[str], index: int, indent: int) -> tuple[dict[str,
 def parse_ruling_yaml(text: str) -> dict[str, Any]:
     """Parse one ruling block's YAML mapping.
 
-    Supported: ``key: scalar`` (with YAML nulls and quoted strings), block
-    scalars (``|``, ``|-``, ``>``, ``>-`` and their ``+`` forms — what
-    ``verbatim`` and ``rationale`` use), block and inline lists, and nested
-    mappings such as ``recorded_by``. Anchors, tags, and multi-document
+    Supported: ``key: scalar`` (with YAML nulls and quoted strings, and a
+    plain scalar continued on more-indented lines), block scalars (``|``,
+    ``|-``, ``>``, ``>-`` and their ``+`` forms — what ``verbatim`` and
+    ``rationale`` use), block lists (indented or compact at the key's own
+    indent) and inline lists, and nested mappings such as ``recorded_by``. Anchors, tags, and multi-document
     streams are NOT supported and raise, because a reader that quietly
     ignores structure it does not understand reports a ruling it did not
     read.

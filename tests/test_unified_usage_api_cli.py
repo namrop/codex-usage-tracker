@@ -1685,6 +1685,36 @@ def test_substituted_events_never_counts_a_null_reported_model(tmp_path, monkeyp
     }
 
 
+def test_substitution_watch_ignores_moa_council_presets(tmp_path, monkeypatch):
+    """A MoA request names a preset ("council"); the served model is always one
+    of its members, so it is never a substitution (keeper-approved UI review,
+    2026-09-25). A real swap on another provider still counts."""
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 14, 12, 5, 0, tzinfo=tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDateTime)
+    rows = [
+        _chart_fact("council-run", "2026-07-14T11:00:00Z", harness="hermes",
+                    provider="moa", model_requested="council",
+                    model_reported="glm-5.3", input_tokens=1),
+        _chart_fact("real-swap", "2026-07-14T11:01:00Z", harness="hermes",
+                    provider="zai", model_requested="glm-5.3",
+                    model_reported="glm-5.3-flash", input_tokens=1),
+    ]
+    ledger = tmp_path / "usage.jsonl"
+    ledger.write_text("\n".join(canonical_json(row) for row in rows) + "\n", encoding="utf-8")
+    client = create_app(unified_usage_ledger=str(ledger)).test_client()
+
+    data = client.get("/api/unified-usage?hours=3").get_json()
+    assert data["totals"]["substituted_events"] == 1
+    by_provider = {row["provider"]: row["substituted_events"] for row in data["by_provider"]}
+    assert by_provider["moa"] == 0
+    assert by_provider["z-ai-glm"] == 1
+
+
 def test_unified_usage_chart_collapses_models_deterministically(tmp_path, monkeypatch):
     class FrozenDateTime(datetime):
         @classmethod

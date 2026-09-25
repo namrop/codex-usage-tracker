@@ -822,6 +822,13 @@ def _is_substituted_event(row: dict[str, Any]) -> bool:
     reported = row.get("model_reported")
     if reported is None:
         return False
+    # A Mixture-of-Agents request names a preset ("council"), not a model, and
+    # its answer always comes from one of the preset's member models. Luis,
+    # 2026-09-25 (unified usage ledger thread msg 1553037883747598450, approving
+    # the UI review item that found all 143 flagged calls that week were
+    # council runs): the watch counts real swaps only.
+    if str(row.get("provider") or "").strip().lower() == "moa":
+        return False
     return reported != row.get("model_requested")
 
 
@@ -2442,6 +2449,11 @@ def create_app(
         # per request and cannot be recovered from the (provider, model)
         # aggregate the ledger view reports.
         priced_grouped: Dict[tuple[str, str, str], Dict[str, Any]] = {}
+        # The same price buckets per listed row and per provider, so the
+        # provider/model table and the provider shares carry their own
+        # list-price equivalent (UI review item approved 2026-09-25).
+        row_price_buckets: Dict[tuple[str, str], Dict[tuple[str, str, str], Dict[str, Any]]] = {}
+        provider_price_buckets: Dict[str, Dict[tuple[str, str, str], Dict[str, Any]]] = {}
         by_harness: Dict[str, Dict[str, Any]] = {}
         by_provider: Dict[str, Dict[str, Any]] = {}
         for row in rows:
@@ -2474,6 +2486,7 @@ def create_app(
             )
             bucket["provider_raw_ids"].add(raw_provider)
             bucket["events"] += 1
+            _accumulate_price_bucket(row_price_buckets.setdefault(key, {}), row)
             # Endpoint/protocol attribution — restored upstream for Hermes on
             # 2026-08-29; NULL means the source genuinely does not know.
             mode_key = str(row.get("api_mode") or "unknown")
@@ -2519,6 +2532,7 @@ def create_app(
             )
             provider_bucket["provider_raw_ids"].add(raw_provider)
             provider_bucket["events"] += 1
+            _accumulate_price_bucket(provider_price_buckets.setdefault(canonical_provider, {}), row)
             if _is_substituted_event(row):
                 provider_bucket["substituted_events"] += 1
             for field in token_fields:
@@ -2532,8 +2546,18 @@ def create_app(
             # cache read is billed and served differently from fresh input.
             bucket["cached_tokens"] = bucket["cache_read_tokens"]
             bucket["fresh_tokens"] = bucket["total_tokens"] - bucket["cache_read_tokens"]
-        for bucket in grouped.values():
+            estimate = estimate_list_price(
+                _finalize_price_buckets(provider_price_buckets.get(bucket["provider"], {}))
+            )
+            bucket["list_price_usd"] = estimate["estimate_usd"]
+            bucket["list_price_priced_share"] = estimate["priced_token_share"]
+        for key, bucket in grouped.items():
             bucket["provider_raw_ids"] = sorted(bucket["provider_raw_ids"])
+            estimate = estimate_list_price(_finalize_price_buckets(row_price_buckets.get(key, {})))
+            bucket["list_price_usd"] = estimate["estimate_usd"]
+            # Share of this row's tokens that had a rate; 0 means the row is
+            # unpriced, not free.
+            bucket["list_price_priced_share"] = estimate["priced_token_share"]
         for bucket in (*grouped.values(), *by_harness.values()):
             bucket["total_tokens"] = sum(bucket[field] for field in token_fields if field != "reasoning_tokens")
             for field in cost_fields:
