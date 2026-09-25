@@ -106,7 +106,12 @@ def _unix(value: str | None) -> float | None:
 def _sqlite_ledger(path: Path) -> dict[str, Any]:
     connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
     try:
-        row = connection.execute("select max(ingestion_sequence), max(ingested_at) from facts").fetchone()
+        # The newest row by primary key: instant, where max(ingested_at) scans
+        # the whole table (1.2 s on the 630k-row usage ledger).
+        row = connection.execute(
+            "select ingestion_sequence, ingested_at from facts"
+            " where ingestion_sequence = (select max(ingestion_sequence) from facts)"
+        ).fetchone() or (None, None)
     finally:
         connection.close()
     return {"rows_high_water": row[0], "last_ingested_at": row[1]}
