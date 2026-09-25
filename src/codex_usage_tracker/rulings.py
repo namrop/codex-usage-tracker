@@ -974,20 +974,21 @@ def read_usage_rows(
     directly. Both dispatch on the explicit suffix — a JSONL ledger stays a
     JSONL ledger and is never guessed at.
     """
-    from .canonical_ledger import query_sqlite_facts, read_facts
+    from .canonical_ledger import elect_physical_requests, query_sqlite_physical_requests, read_facts
 
     path = Path(ledger_path).expanduser()
     suffix = path.suffix.casefold()
     if suffix in _SQLITE_SUFFIXES:
-        return query_sqlite_facts(
+        # Contract v2: one elected observation per physical request.
+        rows, _identity = query_sqlite_physical_requests(
             path,
-            fact_type="usage_event_v1",
             occurred_or_observed_at_gte=start.astimezone(timezone.utc).isoformat(),
             occurred_or_observed_at_lt=end.astimezone(timezone.utc).isoformat(),
             order="asc",
             limit=_USAGE_ROW_LIMIT,
             contract_validation=False,
         )
+        return rows
     if suffix == ".jsonl":
         rows = []
         for row in read_facts(path):
@@ -999,7 +1000,7 @@ def read_usage_rows(
                 continue
             if start <= moment < end:
                 rows.append(row)
-        return rows
+        return elect_physical_requests(rows)[0]
     raise ValueError(f"unsupported usage ledger suffix: {suffix or '<none>'}")
 
 

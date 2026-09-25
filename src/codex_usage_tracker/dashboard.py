@@ -52,6 +52,8 @@ from .canonical_ledger import (
     MalformedLedgerError,
     ValidationError,
     canonical_timestamp,
+    elect_physical_requests,
+    query_sqlite_physical_requests,
     query_sqlite_facts,
     read_facts,
 )
@@ -415,17 +417,26 @@ def _private_facts(
     before: datetime | None = None,
     order: str = "asc",
     readonly_jsonl: bool = False,
+    identity_stats: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Dispatch canonical private reads by explicit suffix and preserve JSONL."""
+    """Dispatch canonical private reads by explicit suffix and preserve JSONL.
+
+    ``usage_event_v1`` reads count physical requests (contract v2, keeper
+    ratified 2026-09-25): one elected observation per request, elected over
+    the whole time window before typed filters. Pass ``identity_stats`` (a
+    dict) to receive the window's election stats.
+    """
     path = Path(ledger_path).expanduser()
     suffix = path.suffix.casefold()
+    physical = fact_type == "usage_event_v1"
     if suffix == ".jsonl":
         if path.exists() and path.stat().st_size > _PRIVATE_API_MAX_JSONL_BYTES:
             raise PrivateLedgerQueryTooLarge("JSONL ledger exceeds private API byte limit")
         reader = _read_facts_without_side_effects if readonly_jsonl else read_facts
         rows = [row for row in reader(path) if row.get("fact_type") == fact_type]
-        for field, expected in filters.items():
-            rows = [row for row in rows if row.get(field) == expected]
+        if not physical:
+            for field, expected in filters.items():
+                rows = [row for row in rows if row.get(field) == expected]
         timestamp_field = (
             "observed_at"
             if fact_type in {"quota_observation_v1", "search_event_v1"}
@@ -435,6 +446,12 @@ def _private_facts(
             rows = [row for row in rows if _fact_datetime(row.get(timestamp_field)) >= cutoff]
         if before is not None:
             rows = [row for row in rows if _fact_datetime(row.get(timestamp_field)) < before]
+        if physical:
+            rows, stats = elect_physical_requests(rows)
+            if identity_stats is not None:
+                identity_stats.update(stats)
+            for field, expected in filters.items():
+                rows = [row for row in rows if row.get(field) == expected]
         if len(rows) > _PRIVATE_API_MAX_ROWS:
             raise PrivateLedgerQueryTooLarge("ledger query exceeds private API row limit")
         rows.sort(
@@ -445,6 +462,21 @@ def _private_facts(
     if suffix in _SQLITE_LEDGER_SUFFIXES:
         lower_bound = cutoff.isoformat() if cutoff is not None else None
         upper_bound = before.isoformat() if before is not None else None
+        if physical:
+            rows, stats = query_sqlite_physical_requests(
+                path,
+                filters=filters,
+                occurred_or_observed_at_gte=lower_bound,
+                occurred_or_observed_at_lt=upper_bound,
+                order=order,
+                limit=_PRIVATE_API_MAX_ROWS + 1,
+                contract_validation=False,
+            )
+            if identity_stats is not None:
+                identity_stats.update(stats)
+            if len(rows) > _PRIVATE_API_MAX_ROWS:
+                raise PrivateLedgerQueryTooLarge("ledger query exceeds private API row limit")
+            return rows
         # One SELECT/fetchall call observes one SQLite read snapshot. Reopening
         # connections between OFFSET pages would permit concurrent appends to
         # duplicate or omit facts in an aggregate response.
@@ -2161,6 +2193,7 @@ def create_app(
             for field in ("provider", "harness", "purpose")
             if (requested := request.args.get(field)) is not None
         }
+        identity_stats: dict[str, Any] = {}
         try:
             rows = _private_facts(
                 resolved_unified_usage,
@@ -2168,6 +2201,7 @@ def create_app(
                 filters=typed_filters,
                 cutoff=cutoff,
                 before=query_before,
+                identity_stats=identity_stats,
             )
         except UnsupportedLedgerSuffix:
             return jsonify({"error": "unsupported ledger suffix"}), 400
@@ -2317,6 +2351,10 @@ def create_app(
             "totals": totals,
             "coverage": coverage,
             "window": window_payload,
+            # Contract v2 stamp: totals count physical requests; the
+            # observation count and suppressed copies stay visible so the v1
+            # number is always reproducible.
+            "identity": identity_stats,
             "by_harness": sorted(by_harness.values(), key=lambda item: item["harness"]),
             "by_provider": sorted(
                 by_provider.values(),

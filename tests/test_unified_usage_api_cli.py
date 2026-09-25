@@ -3314,7 +3314,10 @@ def test_sqlite_private_api_uses_one_stable_query_snapshot(tmp_path, monkeypatch
         [_usage_fact(f"u-{index}") for index in range(3)],
         fact_type="usage_event_v1",
     )
-    original = dashboard_module.query_sqlite_facts
+    # Contract v2 (keeper ratified 2026-09-25): usage reads go through the
+    # physical-request election, which reads rows and identity stats in one
+    # SQLite snapshot.
+    original = dashboard_module.query_sqlite_physical_requests
     calls = 0
     observed_kwargs = None
 
@@ -3322,19 +3325,22 @@ def test_sqlite_private_api_uses_one_stable_query_snapshot(tmp_path, monkeypatch
         nonlocal calls, observed_kwargs
         calls += 1
         observed_kwargs = kwargs
-        rows = original(*args, **kwargs)
+        rows, stats = original(*args, **kwargs)
         if calls == 1:
             append_sqlite_facts(usage, [_usage_fact("late")], fact_type="usage_event_v1")
-        return rows
+        return rows, stats
 
     monkeypatch.setattr(dashboard_module, "_PRIVATE_API_SQLITE_LIMIT", 2)
-    monkeypatch.setattr(dashboard_module, "query_sqlite_facts", observed_query)
+    monkeypatch.setattr(dashboard_module, "query_sqlite_physical_requests", observed_query)
     response = create_app(unified_usage_ledger=str(usage)).test_client().get("/api/unified-usage?days=36500")
     assert response.status_code == 200
     assert calls == 1
     assert observed_kwargs is not None
     assert observed_kwargs["contract_validation"] is False
-    assert sum(bucket["events"] for bucket in response.get_json()["by_provider_model"]) == 3
+    payload = response.get_json()
+    assert sum(bucket["events"] for bucket in payload["by_provider_model"]) == 3
+    assert payload["identity"]["identity_rule"] == "v2"
+    assert payload["identity"]["observations"] == payload["identity"]["physical_requests"] == 3
 
 
 def test_private_subscriptions_reads_skip_full_contract_revalidation(tmp_path, monkeypatch):

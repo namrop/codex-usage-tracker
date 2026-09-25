@@ -11,7 +11,12 @@ import re
 import tempfile
 from typing import Any
 
-from .canonical_ledger import MAX_SAFE_INTEGER, ValidationError, canonical_timestamp, query_sqlite_facts
+from .canonical_ledger import (
+    MAX_SAFE_INTEGER,
+    ValidationError,
+    canonical_timestamp,
+    query_sqlite_physical_requests,
+)
 
 
 PUBLIC_PROJECTION_KIND = "namrop_public_usage_projection.v3"
@@ -429,9 +434,11 @@ def build_unified_public_projection(
     generated = generated.astimezone(timezone.utc)
     complete_end = generated.replace(minute=0, second=0, microsecond=0)
     projection_start = complete_end - timedelta(hours=count)
-    facts = query_sqlite_facts(
+    # Contract v2 (keeper ratified 2026-09-25): the public chart counts
+    # physical requests, one elected observation per request. The cap below
+    # therefore bounds requests, not fork copies of them.
+    facts, _identity = query_sqlite_physical_requests(
         target,
-        fact_type="usage_event_v1",
         occurred_or_observed_at_gte=_utc_text(projection_start),
         occurred_or_observed_at_lt=_utc_text(complete_end),
         order="asc",

@@ -335,7 +335,7 @@ def cmd_unmapped_models(args: argparse.Namespace) -> int:
     ID here does not make it publishable: adding it to the public map stays a
     deliberate, reviewed edit.
     """
-    from .canonical_ledger import query_sqlite_facts
+    from .canonical_ledger import query_sqlite_facts, query_sqlite_physical_requests
     from .list_pricing import _rates_for
     from .unified_public_projection import _public_model_label, _public_provider_label
 
@@ -369,9 +369,9 @@ def cmd_unmapped_models(args: argparse.Namespace) -> int:
         # dashboard, use the online integrity reader (hash, identity and
         # typed columns remain checked), not a full per-event schema audit.
         try:
-            facts = query_sqlite_facts(
+            # Contract v2: token volumes per id count physical requests.
+            facts, _identity = query_sqlite_physical_requests(
                 args.sqlite,
-                fact_type="usage_event_v1",
                 occurred_or_observed_at_gte=window["start"],
                 order="desc",
                 limit=_MAX_UNMAPPED_SCAN_EVENTS,

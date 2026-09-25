@@ -68,12 +68,19 @@ def test_unmapped_models_pushes_window_into_integrity_checked_online_query(
     ])
     calls = []
     original = canonical_ledger.query_sqlite_facts
+    original_physical = canonical_ledger.query_sqlite_physical_requests
 
     def record_query(path, **kwargs):
         calls.append(kwargs)
         return original(path, **kwargs)
 
+    def record_physical(path, **kwargs):
+        calls.append(kwargs)
+        return original_physical(path, **kwargs)
+
     monkeypatch.setattr(canonical_ledger, "query_sqlite_facts", record_query)
+    # Contract v2 (2026-09-25): the windowed scan counts physical requests.
+    monkeypatch.setattr(canonical_ledger, "query_sqlite_physical_requests", record_physical)
     result = _run(capsys, monkeypatch, "--sqlite", str(ledger), "--hours", "24")
     assert calls[0]["limit"] == 1
     assert calls[1]["occurred_or_observed_at_gte"] == "2026-07-12T03:10:00Z"

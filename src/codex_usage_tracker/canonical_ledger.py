@@ -1555,6 +1555,263 @@ def read_sqlite_facts(
         connection.close()
 
 
+# ---------------------------------------------------------------------------
+# Usage-event contract v2: physical-request identity.
+#
+# Keeper ratification 2026-09-25 (Discord 1552915574944833588, "Yes go on v2
+# now please"), amending contract v1 per Atrium note
+# 01a0b287-a7cb-7ccb-9f7b-de85e4558e93. The spine is unchanged and every
+# observation is still stored; totals count PHYSICAL REQUESTS by electing one
+# observation per request at read time.
+#
+# Physical key, in order:
+#   1. ``provider_request_id`` present -> (upstream_provider or provider, id).
+#      Multi-hop rule: outer hops (Hermes over Meridian, later Bifrost) carry
+#      ``upstream_provider`` so every hop of one call lands on one key.
+#   2. Claude Code v1 rows: the Anthropic ``msg_`` id inside
+#      ``source_event_id`` (``<session>:<msg_id>``). Fork copies carry the
+#      parent's receipts under new session ids; this is what collapses them.
+#   3. Otherwise the observation is its own request (``harness_only``): it can
+#      overcount across observers, never undercount, and never merges.
+# Election: provider-reported usage first, then earliest occurred_at, then
+# earliest ingestion. Differing token payloads within one request are never
+# merged; they are counted as ``payload_conflicts``.
+#
+# The SQL expressions below and ``physical_request_key`` are one rule written
+# twice; tests assert they agree.
+# ---------------------------------------------------------------------------
+IDENTITY_RULE = "v2"
+IDENTITY_RULE_EFFECTIVE = "2026-09-25"
+_PHYSICAL_PAYLOAD_FIELDS = (
+    "input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens",
+)
+_SQLITE_PHYSICAL_KEY_SQL = """CASE
+        WHEN NULLIF(json_extract(canonical_json, '$.provider_request_id'), '') IS NOT NULL
+          THEN 'req|' || COALESCE(NULLIF(json_extract(canonical_json, '$.upstream_provider'), ''), provider, '')
+               || '|' || json_extract(canonical_json, '$.provider_request_id')
+        WHEN harness = 'claude_code' AND instr(source_identity, ':msg_') > 0
+          THEN 'req|anthropic|' || substr(source_identity, instr(source_identity, ':msg_') + 1)
+        ELSE 'obs|' || source_namespace || '|' || source_identity
+    END"""
+_SQLITE_ELECTION_PRECEDENCE_SQL = (
+    "CASE WHEN json_extract(canonical_json, '$.usage_source') = 'provider_reported' THEN 0 ELSE 1 END"
+)
+_SQLITE_PHYSICAL_PAYLOAD_SQL = "json_array(" + ", ".join(
+    f"json_extract(canonical_json, '$.{field}')" for field in _PHYSICAL_PAYLOAD_FIELDS
+) + ")"
+
+
+def physical_request_key(fact: dict[str, Any]) -> str:
+    """Return the contract-v2 physical-request key for one usage observation."""
+    request_id = fact.get("provider_request_id")
+    if request_id not in (None, ""):
+        namespace = fact.get("upstream_provider") or fact.get("provider") or ""
+        return f"req|{namespace}|{request_id}"
+    if fact.get("harness") == "claude_code":
+        identity = str(fact.get("source_event_id") or "")
+        index = identity.find(":msg_")
+        if index >= 0:
+            return f"req|anthropic|{identity[index + 1:]}"
+    return f"obs|{fact.get('source_namespace')}|{fact.get('source_event_id')}"
+
+
+def _empty_identity_stats() -> dict[str, Any]:
+    return {
+        "identity_rule": IDENTITY_RULE,
+        "identity_rule_effective": IDENTITY_RULE_EFFECTIVE,
+        "observations": 0,
+        "physical_requests": 0,
+        "copies_suppressed": 0,
+        "harness_only_requests": 0,
+        "payload_conflicts": 0,
+        "timestamp_disagreements": 0,
+    }
+
+
+def elect_physical_requests(facts: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Elect one observation per physical request; input order is preserved.
+
+    Python mirror of :func:`query_sqlite_physical_requests` for JSONL ledgers
+    and fixtures. Callers pass one time window of usage observations.
+    """
+    rows = list(facts)
+    groups: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    for position, fact in enumerate(rows):
+        groups.setdefault(physical_request_key(fact), []).append((position, fact))
+    stats = _empty_identity_stats()
+    stats["observations"] = len(rows)
+    stats["physical_requests"] = len(groups)
+    stats["copies_suppressed"] = len(rows) - len(groups)
+    elected_positions: set[int] = set()
+    for key, members in groups.items():
+        if key.startswith("obs|"):
+            stats["harness_only_requests"] += 1
+        payloads = {tuple(fact.get(field) for field in _PHYSICAL_PAYLOAD_FIELDS) for _, fact in members}
+        if len(payloads) > 1:
+            stats["payload_conflicts"] += 1
+        stamps = {str(fact.get("occurred_at") or "").rstrip("Z") for _, fact in members}
+        if len(stamps) > 1:
+            stats["timestamp_disagreements"] += 1
+        winner = min(
+            members,
+            key=lambda member: (
+                0 if member[1].get("usage_source") == "provider_reported" else 1,
+                str(member[1].get("occurred_at") or "").rstrip("Z"),
+                member[0],
+            ),
+        )
+        elected_positions.add(winner[0])
+    return [fact for position, fact in enumerate(rows) if position in elected_positions], stats
+
+
+def query_sqlite_physical_requests(
+    path: str | Path,
+    *,
+    filters: dict[str, str] | None = None,
+    occurred_or_observed_at_gte: str | None = None,
+    occurred_or_observed_at_lt: str | None = None,
+    order: str = "asc",
+    limit: int = _SQLITE_QUERY_LIMIT,
+    offset: int = 0,
+    contract_validation: bool = True,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Bounded ``usage_event_v1`` read returning one elected row per request.
+
+    Election runs over the whole time window BEFORE typed filters, so filtered
+    views partition the same set of physical requests and stay additive. The
+    limit applies to elected rows. Identity stats describe the whole window
+    (pre-filter) and are read in the same SQLite snapshot as the rows.
+
+    Copies share their original's ``occurred_at`` (verified 2026-09-25: zero
+    timestamp disagreements over 276,698 Claude observations), so election
+    inside a time window sees every copy of a request. The
+    ``timestamp_disagreements`` stat is the alarm if that ever stops holding.
+    """
+    fact_type = "usage_event_v1"
+    if not isinstance(contract_validation, bool):
+        raise ValidationError("contract_validation must be a boolean")
+    requested_filters = {} if filters is None else filters
+    if not isinstance(requested_filters, dict):
+        raise ValidationError("filters must be an object")
+    for name, value in requested_filters.items():
+        if name not in _SQLITE_QUERY_FILTER_COLUMNS:
+            raise ValidationError(f"unsupported SQLite fact filter {name!r}")
+        if not isinstance(value, str):
+            raise ValidationError(f"SQLite fact filter {name!r} must be a string")
+    normalized_order = order.casefold() if isinstance(order, str) else ""
+    if normalized_order not in {"asc", "desc"}:
+        raise ValidationError("order must be 'asc' or 'desc'")
+    for name, value, maximum in (
+        ("limit", limit, _SQLITE_QUERY_LIMIT),
+        ("offset", offset, MAX_SAFE_INTEGER),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > maximum:
+            raise ValidationError(f"{name} must be a nonnegative integer no greater than {maximum}")
+    lower_bound = None
+    if occurred_or_observed_at_gte is not None:
+        lower_bound = _timestamp(occurred_or_observed_at_gte, "occurred_or_observed_at_gte")
+    upper_bound = None
+    if occurred_or_observed_at_lt is not None:
+        upper_bound = _timestamp(occurred_or_observed_at_lt, "occurred_or_observed_at_lt")
+
+    target = Path(path).expanduser()
+    if not target.exists():
+        return [], _empty_identity_stats()
+    if not target.is_file():
+        raise MalformedLedgerError(f"SQLite ledger is not a regular file: {target}")
+    connection = _read_only_sqlite(target)
+    try:
+        _validate_sqlite_schema(connection, fact_type)
+        clauses = ["fact_type = ?"]
+        parameters: list[Any] = [fact_type]
+        if lower_bound is not None:
+            clauses.append(f"{_SQLITE_TIMESTAMP_KEY_SQL} >= ?")
+            parameters.append(lower_bound[:-1])
+        if upper_bound is not None:
+            clauses.append(f"{_SQLITE_TIMESTAMP_KEY_SQL} < ?")
+            parameters.append(upper_bound[:-1])
+        indexed_by = (
+            " INDEXED BY facts_timestamp_idx"
+            if lower_bound is not None or upper_bound is not None
+            else ""
+        )
+        where = " AND ".join(clauses)
+        outer_clauses = ["election_rank = 1"]
+        outer_parameters: list[Any] = []
+        for name, value in requested_filters.items():
+            outer_clauses.append(f"{_SQLITE_QUERY_FILTER_COLUMNS[name]} = ?")
+            outer_parameters.append(value)
+        direction = normalized_order.upper()
+        rows_sql = f"""
+            WITH windowed AS (
+                SELECT ingestion_sequence, canonical_json, canonical_sha256, fact_type,
+                       source_namespace, source_identity, occurred_or_observed_at, provider,
+                       harness, purpose, model, quota_name, account_ref, transaction_kind,
+                       transaction_status, invoice_id, line_item_id,
+                       {_SQLITE_PHYSICAL_KEY_SQL} AS physical_key,
+                       {_SQLITE_ELECTION_PRECEDENCE_SQL} AS precedence
+                FROM facts{indexed_by}
+                WHERE {where}
+            ), ranked AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY physical_key
+                    ORDER BY precedence, {_SQLITE_TIMESTAMP_KEY_SQL}, ingestion_sequence
+                ) AS election_rank
+                FROM windowed
+            )
+            SELECT canonical_json, canonical_sha256, fact_type, source_namespace, source_identity,
+                   occurred_or_observed_at, provider, harness, purpose, model, quota_name, account_ref,
+                   transaction_kind, transaction_status, invoice_id, line_item_id
+            FROM ranked
+            WHERE {' AND '.join(outer_clauses)}
+            ORDER BY {_SQLITE_TIMESTAMP_KEY_SQL} {direction}, ingestion_sequence {direction}
+            LIMIT ? OFFSET ?
+        """
+        stats_sql = f"""
+            WITH windowed AS (
+                SELECT {_SQLITE_PHYSICAL_KEY_SQL} AS physical_key,
+                       {_SQLITE_TIMESTAMP_KEY_SQL} AS occurred,
+                       {_SQLITE_PHYSICAL_PAYLOAD_SQL} AS payload
+                FROM facts{indexed_by}
+                WHERE {where}
+            ), grouped AS (
+                SELECT physical_key, COUNT(*) AS n, COUNT(DISTINCT payload) AS payloads,
+                       COUNT(DISTINCT occurred) AS stamps
+                FROM windowed GROUP BY physical_key
+            )
+            SELECT COUNT(*), COALESCE(SUM(n), 0),
+                   COALESCE(SUM(CASE WHEN physical_key LIKE 'obs|%' THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN payloads > 1 THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN stamps > 1 THEN 1 ELSE 0 END), 0)
+            FROM grouped
+        """
+        try:
+            # One read transaction: rows and stats observe the same snapshot.
+            connection.execute("BEGIN")
+            stored_rows = _execute_bounded_facts_query(
+                connection, rows_sql, tuple(parameters + outer_parameters + [limit, offset])
+            )
+            physical, observations, harness_only, conflicts, disagreements = connection.execute(
+                stats_sql, tuple(parameters)
+            ).fetchone()
+            connection.rollback()
+        except sqlite3.DatabaseError as exc:
+            raise MalformedLedgerError("invalid SQLite physical-request query") from exc
+        validator = _validate_stored_row if contract_validation else _integrity_check_stored_row
+        stats = _empty_identity_stats()
+        stats.update({
+            "observations": int(observations),
+            "physical_requests": int(physical),
+            "copies_suppressed": int(observations) - int(physical),
+            "harness_only_requests": int(harness_only),
+            "payload_conflicts": int(conflicts),
+            "timestamp_disagreements": int(disagreements),
+        })
+        return [validator(stored, fact_type) for stored in stored_rows], stats
+    finally:
+        connection.close()
+
+
 def _open_writable_sqlite(path: Path, fact_type: str) -> tuple[sqlite3.Connection, bool]:
     existed = os.path.lexists(path)
     if existed:
