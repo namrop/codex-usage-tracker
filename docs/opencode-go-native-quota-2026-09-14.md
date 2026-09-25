@@ -90,6 +90,15 @@ account whose only evidence is retired rows still appears (weekly window
 out: `exclusions.retired_opencode_go_estimate_rows` on subscriptions and
 burn, `coverage.retired_opencode_go_estimate_rows` on weekly.
 
+**Superseded for the weekly panel (2026-09-25).** Weekly allowance use now
+leaves Go out entirely, keeper message 1553002864555593851 in the unified
+usage ledger thread: "I think opencode go should be omitted from the weekly
+allowance use calculations. It's weird enough. Right now it says that I've
+only used 47% when it's actually capped." Weekly reports
+`coverage.omitted_provider_rows` instead of the retired-row count, and the
+weekly paragraph below is historical. Subscriptions, burn and the Go card are
+unchanged. See `weekly-utilization-semantics.md`.
+
 Weekly: this installation has no eligible provider-observed Go completed cycle
 yet. Once native readings straddle a Monday reset it can contribute. Until
 then `completed` is null for Go and the aggregate is the mean

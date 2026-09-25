@@ -107,7 +107,10 @@ def test_current_summary_is_the_mean_of_account_percentages():
     assert anthropic["label"] == "Anthropic / Claude"
     codex = _provider(current, "openai-codex")
     assert (codex["used_pct"], codex["account_count"]) == ("50.0", 1)
-    assert [entry["provider"] for entry in current["providers"]] == list(dashboard_module._QUOTA_PROVIDER_ORDER)
+    # OpenCode Go is left out of this panel (keeper msg 1553002864555593851).
+    assert [entry["provider"] for entry in current["providers"]] == [
+        provider for provider in dashboard_module._QUOTA_PROVIDER_ORDER if provider != "opencode-go"
+    ]
 
     claude_one = _window(payload, "anthropic", 1, "seven_day")
     assert claude_one["label"] == "Claude 1"
@@ -163,7 +166,8 @@ def test_stale_and_invalid_current_readings_are_excluded_not_zero():
     # The Kimi window's target has passed with no rollover observed: that is
     # one displayed, excluded (unconfirmed) cycle.
     assert payload["coverage"] == {
-        "source_rows": 4, "invalid_rows": 1, "excluded_cycles": 1, "retired_opencode_go_estimate_rows": 0,
+        "source_rows": 4, "invalid_rows": 1, "excluded_cycles": 1,
+        "omitted_providers": ["opencode-go"], "omitted_provider_rows": 0,
     }
 
 
@@ -499,7 +503,8 @@ def test_empty_input_is_a_null_summary_not_zero_percent():
     assert payload["completed"]["remaining_pct"] is None
     assert payload["windows"] == []
     assert payload["coverage"] == {
-        "source_rows": 0, "invalid_rows": 0, "excluded_cycles": 0, "retired_opencode_go_estimate_rows": 0,
+        "source_rows": 0, "invalid_rows": 0, "excluded_cycles": 0,
+        "omitted_providers": ["opencode-go"], "omitted_provider_rows": 0,
     }
 
 

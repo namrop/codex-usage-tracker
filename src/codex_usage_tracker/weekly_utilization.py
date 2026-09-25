@@ -24,6 +24,12 @@ semantics.md``):
   only when the rollover was observed at/after the boundary and that sample
   fell within three hours of it. Everything else stays visible with reasons.
 * Missing, stale or invalid data is excluded and counted, never read as 0%.
+* OpenCode Go is left out entirely (``_OMITTED_PROVIDERS``): no window, no
+  share of any average. Keeper, 2026-09-25 (Discord 1531875202860974264,
+  message 1553002864555593851): "I think opencode go should be omitted from
+  the weekly allowance use calculations. It's weird enough. Right now it says
+  that I've only used 47% when it's actually capped." Its weekly percent can
+  sit well under the cap while its monthly limit is exhausted.
 
 The module is pure: rows in, JSON-ready dict out, with ``generated_at`` and
 the account roster supplied by the caller.
@@ -44,7 +50,6 @@ from .dashboard import (
     _QuotaAccountIdentity,
     _canonical_quota_provider,
     _fact_datetime,
-    _is_retired_opencode_go_estimate,
     _iso_z,
     _quota_account_identity,
     _quota_observation_order_key,
@@ -53,6 +58,15 @@ from .dashboard import (
     _quota_utilization_pct,
     _rfc3339_order_key,
 )
+
+# Providers this panel leaves out (see the module docstring): their rows are
+# counted in coverage and a note, never windowed or averaged.
+_OMITTED_PROVIDERS = frozenset({"opencode-go"})
+_WEEKLY_QUOTAS = {
+    provider: quota
+    for provider, quota in _PRIMARY_WEEKLY_QUOTAS.items()
+    if provider not in _OMITTED_PROVIDERS
+}
 
 WEEKS_DEFAULT = 4
 WEEKS_MIN = 1
@@ -227,7 +241,7 @@ def _summary(
     per_provider: dict[str, dict[str, Any]] = {
         provider: {"used": [], "excluded": 0, "estimated": 0, "cycles": 0}
         for provider in _QUOTA_PROVIDER_ORDER
-        if provider in _PRIMARY_WEEKLY_QUOTAS
+        if provider in _WEEKLY_QUOTAS
     }
     for window in windows:
         if window["role"] != "primary":
@@ -285,18 +299,15 @@ def build_weekly_utilization(
     and every roster account gets a primary window row even with no data.
     """
     grouped: dict[tuple[str, str, _QuotaAccountIdentity], list[tuple[Any, _Sample]]] = {}
-    source_rows = invalid_rows = outside_roster = retired_go_rows = 0
+    source_rows = invalid_rows = outside_roster = omitted_rows = 0
     for row in rows:
         provider = _canonical_quota_provider(row.get("provider"))
-        primary = _PRIMARY_WEEKLY_QUOTAS.get(provider)
+        if provider in _OMITTED_PROVIDERS:
+            omitted_rows += 1
+            continue
+        primary = _WEEKLY_QUOTAS.get(provider)
         quota_name = str(row.get("quota_name") or "unknown")
         if primary is None or not (quota_name == primary or quota_name.startswith(f"{primary}_")):
-            continue
-        if _is_retired_opencode_go_estimate(row):
-            # Not a reading (see the predicate): excluded from current and
-            # from every inferred cycle, and counted so the panel can say
-            # the Go history restarts at the native cutover.
-            retired_go_rows += 1
             continue
         account = _quota_account_identity(row)
         if account not in account_indexes.get(provider, {}):
@@ -326,7 +337,7 @@ def build_weekly_utilization(
         )
 
     keys = set(grouped)
-    for provider, primary in _PRIMARY_WEEKLY_QUOTAS.items():
+    for provider, primary in _WEEKLY_QUOTAS.items():
         for account in account_indexes.get(provider, {}):
             keys.add((provider, primary, account))
 
@@ -341,7 +352,7 @@ def build_weekly_utilization(
             provider_rank(key[0]),
             key[0],
             account_indexes[key[0]][key[2]],
-            key[1] != _PRIMARY_WEEKLY_QUOTAS[key[0]],
+            key[1] != _WEEKLY_QUOTAS[key[0]],
             key[1],
         ),
     ):
@@ -374,7 +385,7 @@ def build_weekly_utilization(
                 "provider_account_index": index,
                 "provider_account_count": count,
                 "quota_name": quota_name,
-                "role": "primary" if quota_name == _PRIMARY_WEEKLY_QUOTAS[provider] else "model_cap",
+                "role": "primary" if quota_name == _WEEKLY_QUOTAS[provider] else "model_cap",
                 "current": _current(samples, now=generated_at),
                 "completed": {
                     "used_pct": used_text,
@@ -410,9 +421,10 @@ def build_weekly_utilization(
             del cycle["_used"]
 
     # The roster also carries accounts with no weekly quota (OpenRouter,
-    # DeepSeek); only accounts of a primary-weekly provider have a window.
+    # DeepSeek) and omitted ones (OpenCode Go); only accounts of a tracked
+    # primary-weekly provider have a window.
     tracked_accounts = sum(
-        len(accounts) for provider, accounts in account_indexes.items() if provider in _PRIMARY_WEEKLY_QUOTAS
+        len(accounts) for provider, accounts in account_indexes.items() if provider in _WEEKLY_QUOTAS
     )
     notes = [
         "Average weekly allowance used is the arithmetic mean of account percentages "
@@ -428,15 +440,11 @@ def build_weekly_utilization(
         notes.append(
             f"{outside_roster} observations from accounts outside the current 168h roster were ignored."
         )
-    if retired_go_rows or account_indexes.get("opencode-go"):
-        # Go-specific, not a provider-wide policy: the retired replay is the
-        # only source this panel excludes by name.
+    if omitted_rows or any(account_indexes.get(provider) for provider in _OMITTED_PROVIDERS):
         notes.append(
-            f"OpenCode Go: {retired_go_rows} retired estimated observations (the first-use USD replay, "
-            "which omitted model cost multipliers and the Monday/anniversary window anchors) are "
-            "excluded from every cut, so its weekly history restarts at the native usage API "
-            "cutover; native readings are whole percentage points (floor-rounded, capped at 100) "
-            "with the provider's own status and reset."
+            "OpenCode Go is left out of weekly allowance use (keeper, 2026-09-25): its weekly "
+            "percent can read well under the cap while its monthly limit is used up. Its own "
+            "card and the subscriptions panel still show every Go window."
         )
     return {
         "generated_at": _iso_z(generated_at),
@@ -450,7 +458,8 @@ def build_weekly_utilization(
             "source_rows": source_rows,
             "invalid_rows": invalid_rows,
             "excluded_cycles": excluded_cycles,
-            "retired_opencode_go_estimate_rows": retired_go_rows,
+            "omitted_providers": sorted(_OMITTED_PROVIDERS),
+            "omitted_provider_rows": omitted_rows,
         },
         "notes": notes,
     }

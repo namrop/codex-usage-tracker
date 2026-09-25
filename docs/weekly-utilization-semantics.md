@@ -21,9 +21,18 @@ unconfigured or missing ledger file → `404`). Future-dated facts are cut at
 ## Which windows
 
 - One **primary** weekly quota per account, from the dashboard's existing
-  `_PRIMARY_WEEKLY_QUOTAS`: `openai-codex/week`, `anthropic/seven_day`,
-  `opencode-go/week`, `z-ai-glm/week`, `kimi-k3-coding/week`. Provider
+  `_PRIMARY_WEEKLY_QUOTAS` minus the omitted providers: `openai-codex/week`,
+  `anthropic/seven_day`, `z-ai-glm/week`, `kimi-k3-coding/week`. Provider
   aliases resolve through the existing canonical map.
+- **OpenCode Go is left out** (`_OMITTED_PROVIDERS`): no window row and no
+  share of any average; its rows are counted in
+  `coverage.omitted_provider_rows` and a note says why. Keeper, 2026-09-25
+  (Discord 1531875202860974264, message 1553002864555593851): "I think
+  opencode go should be omitted from the weekly allowance use calculations.
+  It's weird enough. Right now it says that I've only used 47% when it's
+  actually capped." Its weekly percent read 42 while its monthly limit was
+  at 100. Its own card and the subscriptions panel still show every Go
+  window.
 - Any other quota of the same family (`seven_day_fable`, any
   `<primary>_<model>`) is a **`model_cap`** row: shown, never in a
   denominator. Five-hour windows, balances and monthly tool quotas are out.

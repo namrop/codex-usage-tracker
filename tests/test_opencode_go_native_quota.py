@@ -632,10 +632,10 @@ def test_subscriptions_exclude_retired_go_estimates_from_every_cut_but_keep_the_
     burn = client.get("/api/quota-burn?hours=24").get_json()
     assert [series["provider"] for series in burn["series"]] == ["anthropic"]
     assert burn["exclusions"] == {"retired_opencode_go_estimate_rows": 3}
+    # Weekly allowance use leaves Go out entirely (keeper msg 1553002864555593851).
     weekly = client.get("/api/weekly-utilization?weeks=2").get_json()
-    go_window = next(window for window in weekly["windows"] if window["provider"] == "opencode-go")
-    assert go_window["current"]["status"] == "no_observations"
-    assert go_window["completed"] == {"used_pct": None, "remaining_pct": None, "cycle_count": 0, "excluded_cycle_count": 0}
+    assert all(window["provider"] != "opencode-go" for window in weekly["windows"])
+    assert weekly["coverage"]["omitted_provider_rows"] == 3
 
 
 def test_subscriptions_project_native_metadata_and_keep_cookie_history_in_one_series(tmp_path, monkeypatch):
@@ -747,59 +747,48 @@ def test_direct_builders_cannot_smuggle_retired_go_estimates():
 
     roster = {"opencode-go": {(False, ""): 1}}
     weekly = build_weekly_utilization(retired, generated_at=NOW, weeks=4, account_indexes=roster)
-    [window] = weekly["windows"]
-    assert window["current"]["status"] == "no_observations"
-    assert window["cycles"] == []
-    assert weekly["coverage"]["retired_opencode_go_estimate_rows"] == 2
+    assert weekly["windows"] == []
+    assert weekly["coverage"]["omitted_provider_rows"] == 3
     assert weekly["coverage"]["source_rows"] == 0
+    assert "8.03" not in json.dumps(weekly) and "first_use" not in json.dumps(weekly)
 
 
-def test_weekly_go_history_restarts_at_the_native_cutover(tmp_path, monkeypatch):
-    """The old 26.7 % completed figure came from the replay; with only
-    estimates in the past there is no eligible Go cycle, the aggregate is
-    the mean of the contributing accounts, and the notes say why."""
+def test_weekly_allowance_use_leaves_opencode_go_out(tmp_path, monkeypatch):
+    """Keeper, 2026-09-25, Discord unified usage ledger thread msg
+    1553002864555593851: "I think opencode go should be omitted from the
+    weekly allowance use calculations. It's weird enough. Right now it says
+    that I've only used 47% when it's actually capped." Go's weekly percent
+    read 42 while its monthly limit was at 100 (rate_limited). No Go window,
+    no Go share of any average, whatever its readings say."""
     rows = [
-        # Two replay "cycles" that used to read as completed weeks.
         _estimate("e1", "2026-09-05T09:00:00Z", used="8", resets_at="2026-09-05T10:00:00Z", window_ends_at="2026-09-05T10:00:00Z"),
         _estimate("e2", "2026-09-12T09:00:00Z", used="8", resets_at="2026-09-12T10:00:00Z", window_ends_at="2026-09-12T10:00:00Z"),
         _estimate("e3", "2026-09-15T03:45:00Z", used="7.53"),
-        # A retained cookie reading and the first native readings after cutover.
         _cookie("k1", "2026-09-15T02:00:00Z", used=25),
-        _native("n1", "2026-09-15T03:00:00Z", used=100),
-        _native("n2", "2026-09-15T03:30:00Z", used=100),
+        _native("n1", "2026-09-15T03:00:00Z", used=42, state="ok"),
+        _native("n2", "2026-09-15T03:30:00Z", used=100, quota_name="month"),
         _claude("c1", "2026-09-15T03:30:00Z", 50),
     ]
     client = _client(tmp_path, rows, monkeypatch)
 
     payload = client.get("/api/weekly-utilization?weeks=4").get_json()
 
-    go = next(window for window in payload["windows"] if window["provider"] == "opencode-go")
-    assert (go["provider_account_index"], go["provider_account_count"], go["label"]) == (1, 1, "OpenCode Go")
-    current = go["current"]
-    assert (current["used_pct"], current["remaining_pct"], current["status"], current["confidence"]) == ("100.0", "0.0", "fresh", "exact")
-    assert (current["source_surface"], current["percent_resolution"], current["provider_state"]) == ("opencode_go_usage_api", 1, "rate_limited")
-    # The weekly panel serializes whole seconds (existing _iso_z); the ledger
-    # row keeps the provider's exact millisecond reset.
-    assert current["resets_at"] == "2026-09-21T00:00:00Z"
-    # One open cycle (the cookie and native readings share the Monday reset),
-    # so no completed cycle: not 0 % and not the replay's figure.
-    assert go["cycles"] == []
-    assert go["completed"] == {"used_pct": None, "remaining_pct": None, "cycle_count": 0, "excluded_cycle_count": 0}
-    completed_go = next(entry for entry in payload["completed"]["providers"] if entry["provider"] == "opencode-go")
-    assert (completed_go["used_pct"], completed_go["account_count"], completed_go["excluded_account_count"]) == (None, 0, 1)
-    assert payload["completed"]["used_pct"] is None
-    assert payload["completed"]["excluded_account_count"] == 2
-    assert payload["current"]["used_pct"] == "75.0"
-    assert payload["current"]["account_count"] == 2
-    assert payload["coverage"]["retired_opencode_go_estimate_rows"] == 3
+    assert [window["provider"] for window in payload["windows"]] == ["anthropic"]
+    for summary in (payload["current"], payload["completed"]):
+        assert all(entry["provider"] != "opencode-go" for entry in summary["providers"])
+    assert (payload["current"]["used_pct"], payload["current"]["account_count"]) == ("50.0", 1)
+    assert payload["completed"]["excluded_account_count"] == 1
+    assert payload["coverage"]["omitted_providers"] == ["opencode-go"]
+    assert payload["coverage"]["omitted_provider_rows"] == 6
     go_notes = [note for note in payload["notes"] if "OpenCode Go" in note]
-    assert len(go_notes) == 1
-    assert "3 retired estimated" in go_notes[0]
-    assert "whole percentage" in go_notes[0]
-    assert "excluded" in go_notes[0]
+    assert len(go_notes) == 1 and "left out" in go_notes[0]
+    assert "each of the 1 tracked primary weekly accounts" in payload["notes"][0]
     serialized = json.dumps(payload)
-    assert "26.7" not in serialized and "7.53" not in serialized and "first_use" not in serialized
+    assert "42.0" not in serialized and "7.53" not in serialized and "first_use" not in serialized
     assert "x_" not in serialized and "sol:" not in serialized
+    # Go stays on every other surface: its subscriptions rows are untouched.
+    subs = client.get("/api/subscriptions?hours=24").get_json()
+    assert {row["quota_name"] for row in subs["latest"] if row["provider_canonical"] == "opencode-go"} == {"week", "month"}
 
 
 def test_weekly_go_note_appears_only_when_go_is_tracked_or_excluded():
@@ -808,7 +797,7 @@ def test_weekly_go_note_appears_only_when_go_is_tracked_or_excluded():
         [_claude("c1", "2026-09-15T03:30:00Z", 50)], generated_at=NOW, weeks=4, account_indexes=roster
     )
     assert not any("OpenCode Go" in note for note in payload["notes"])
-    assert payload["coverage"]["retired_opencode_go_estimate_rows"] == 0
+    assert payload["coverage"]["omitted_provider_rows"] == 0
     assert "source_surface" in payload["windows"][0]["current"]
     assert payload["windows"][0]["current"]["source_surface"] == "claude_oauth_usage_api"
     assert payload["windows"][0]["current"]["percent_resolution"] is None
