@@ -121,13 +121,44 @@ def test_idless_rows_never_collapse_even_when_identical(tmp_path):
 def test_cross_harness_multi_hop_same_request_counts_once(tmp_path):
     # Hermes -> Meridian -> Anthropic: the outer hop carries upstream_provider
     # and the provider response id, so it joins the SDK receipt's key.
-    hermes = _hermes("evt-1", "2026-09-24T10:00:00Z",
+    # The caller's observation wins even when it is stamped LATER than the
+    # relay's receipt: it carries the session attribution; the SDK session id
+    # is Meridian plumbing.
+    hermes = _hermes("evt-1", "2026-09-24T10:00:02Z",
                      provider_request_id="msg_01G", upstream_provider="anthropic")
     sdk = _claude("sdk-session", "msg_01G", "2026-09-24T10:00:01Z")
     assert physical_request_key(hermes) == physical_request_key(sdk) == "req|anthropic|msg_01G"
     rows, stats = _both(tmp_path, [sdk, hermes])
-    assert len(rows) == 1 and rows[0]["harness"] == "hermes"  # earlier occurred_at wins
+    assert len(rows) == 1 and rows[0]["harness"] == "hermes"
     assert stats["observations"] == 2 and stats["physical_requests"] == 1
+    assert stats["cross_harness_requests"] == 1
+    # Two harnesses stamping one call a second apart is not a copy disagreeing.
+    assert stats["timestamp_disagreements"] == 0 and stats["payload_conflicts"] == 0
+
+
+def test_copy_timestamp_split_within_one_source_is_flagged(tmp_path):
+    first = _claude("s1", "msg_01T", "2026-09-24T10:00:00Z")
+    moved = _claude("s2", "msg_01T", "2026-09-24T10:00:05Z")
+    _, stats = _both(tmp_path, [first, moved])
+    assert stats["timestamp_disagreements"] == 1 and stats["cross_harness_requests"] == 0
+
+
+def test_reasoning_difference_is_not_a_payload_conflict(tmp_path):
+    # Anthropic reports thinking inside output_tokens; Hermes records the
+    # diagnostic reasoning bucket as 0, the Claude collector as thinking_tokens.
+    hermes = _hermes("evt-r", "2026-09-24T10:00:02Z", provider_request_id="msg_01R",
+                     upstream_provider="anthropic", reasoning_tokens=0)
+    sdk = _claude("sdk", "msg_01R", "2026-09-24T10:00:01Z", reasoning_tokens=30)
+    _, stats = _both(tmp_path, [sdk, hermes])
+    assert stats["payload_conflicts"] == 0
+
+
+def test_cross_harness_token_disagreement_is_counted(tmp_path):
+    hermes = _hermes("evt-c", "2026-09-24T10:00:02Z", provider_request_id="msg_01C2",
+                     upstream_provider="anthropic", cache_write_tokens=7)
+    sdk = _claude("sdk", "msg_01C2", "2026-09-24T10:00:01Z")
+    rows, stats = _both(tmp_path, [sdk, hermes])
+    assert len(rows) == 1 and stats["payload_conflicts"] == 1
 
 
 def test_outer_hop_without_upstream_provider_does_not_guess_a_join(tmp_path):
@@ -154,7 +185,10 @@ def test_filters_apply_after_election_so_partitions_stay_additive(tmp_path):
     claude_only, _ = _both(tmp_path / "b", facts, filters={"harness": "claude_code"})
     hermes_only, _ = _both(tmp_path / "c", facts, filters={"harness": "hermes"})
     assert len(total) == len(claude_only) + len(hermes_only) == 2
-    assert [row["source_event_id"] for row in hermes_only] == ["evt-4"]
+    # The relayed call is elected on its caller's row, so it partitions under
+    # hermes, and the claude_code view does not count it a second time.
+    assert claude_only == []
+    assert [row["source_event_id"] for row in hermes_only] == ["evt-3", "evt-4"]
 
 
 def test_limit_bounds_elected_requests_not_observations(tmp_path):

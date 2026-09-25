@@ -1573,9 +1573,18 @@ def read_sqlite_facts(
 #      parent's receipts under new session ids; this is what collapses them.
 #   3. Otherwise the observation is its own request (``harness_only``): it can
 #      overcount across observers, never undercount, and never merges.
-# Election: provider-reported usage first, then earliest occurred_at, then
-# earliest ingestion. Differing token payloads within one request are never
-# merged; they are counted as ``payload_conflicts``.
+# Election: provider-reported usage first; then the calling harness's
+# observation of a relayed call (it carries ``upstream_provider`` and the
+# attribution: session, surface, purpose), ahead of the relay's own receipt
+# (the Meridian SDK transcript, whose session id is plumbing); then earliest
+# occurred_at; then earliest ingestion. Differing additive token payloads
+# within one request are never merged; they are counted as
+# ``payload_conflicts``. Reasoning is diagnostic (already inside output) and
+# harnesses report it differently, so it is not compared.
+# ``timestamp_disagreements`` compares observations from ONE source only:
+# copies within a source must share their original's timestamp for
+# time-window election to see them all; two harnesses legitimately stamp one
+# call at slightly different instants.
 #
 # The SQL expressions below and ``physical_request_key`` are one rule written
 # twice; tests assert they agree.
@@ -1583,7 +1592,7 @@ def read_sqlite_facts(
 IDENTITY_RULE = "v2"
 IDENTITY_RULE_EFFECTIVE = "2026-09-25"
 _PHYSICAL_PAYLOAD_FIELDS = (
-    "input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens",
+    "input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens",
 )
 _SQLITE_PHYSICAL_KEY_SQL = """CASE
         WHEN NULLIF(json_extract(canonical_json, '$.provider_request_id'), '') IS NOT NULL
@@ -1594,11 +1603,24 @@ _SQLITE_PHYSICAL_KEY_SQL = """CASE
         ELSE 'obs|' || source_namespace || '|' || source_identity
     END"""
 _SQLITE_ELECTION_PRECEDENCE_SQL = (
-    "CASE WHEN json_extract(canonical_json, '$.usage_source') = 'provider_reported' THEN 0 ELSE 1 END"
+    "(CASE WHEN json_extract(canonical_json, '$.usage_source') = 'provider_reported' THEN 0 ELSE 2 END"
+    " + CASE WHEN NULLIF(json_extract(canonical_json, '$.upstream_provider'), '') IS NOT NULL"
+    " THEN 0 ELSE 1 END)"
 )
 _SQLITE_PHYSICAL_PAYLOAD_SQL = "json_array(" + ", ".join(
-    f"json_extract(canonical_json, '$.{field}')" for field in _PHYSICAL_PAYLOAD_FIELDS
+    f"COALESCE(json_extract(canonical_json, '$.{field}'), 0)" for field in _PHYSICAL_PAYLOAD_FIELDS
 ) + ")"
+
+
+def _election_precedence(fact: dict[str, Any]) -> int:
+    """Python twin of ``_SQLITE_ELECTION_PRECEDENCE_SQL``."""
+    return (0 if fact.get("usage_source") == "provider_reported" else 2) + (
+        0 if fact.get("upstream_provider") not in (None, "") else 1
+    )
+
+
+def _physical_payload(fact: dict[str, Any]) -> tuple[int, ...]:
+    return tuple(int(fact.get(field) or 0) for field in _PHYSICAL_PAYLOAD_FIELDS)
 
 
 def physical_request_key(fact: dict[str, Any]) -> str:
@@ -1625,6 +1647,7 @@ def _empty_identity_stats() -> dict[str, Any]:
         "harness_only_requests": 0,
         "payload_conflicts": 0,
         "timestamp_disagreements": 0,
+        "cross_harness_requests": 0,
     }
 
 
@@ -1646,16 +1669,22 @@ def elect_physical_requests(facts: Iterable[dict[str, Any]]) -> tuple[list[dict[
     for key, members in groups.items():
         if key.startswith("obs|"):
             stats["harness_only_requests"] += 1
-        payloads = {tuple(fact.get(field) for field in _PHYSICAL_PAYLOAD_FIELDS) for _, fact in members}
+        payloads = {_physical_payload(fact) for _, fact in members}
         if len(payloads) > 1:
             stats["payload_conflicts"] += 1
-        stamps = {str(fact.get("occurred_at") or "").rstrip("Z") for _, fact in members}
-        if len(stamps) > 1:
+        stamps_by_source: dict[Any, set[str]] = {}
+        for _, fact in members:
+            stamps_by_source.setdefault(fact.get("source_namespace"), set()).add(
+                str(fact.get("occurred_at") or "").rstrip("Z")
+            )
+        if any(len(stamps) > 1 for stamps in stamps_by_source.values()):
             stats["timestamp_disagreements"] += 1
+        if len({fact.get("harness") for _, fact in members}) > 1:
+            stats["cross_harness_requests"] += 1
         winner = min(
             members,
             key=lambda member: (
-                0 if member[1].get("usage_source") == "provider_reported" else 1,
+                _election_precedence(member[1]),
                 str(member[1].get("occurred_at") or "").rstrip("Z"),
                 member[0],
             ),
@@ -1770,19 +1799,27 @@ def query_sqlite_physical_requests(
         stats_sql = f"""
             WITH windowed AS (
                 SELECT {_SQLITE_PHYSICAL_KEY_SQL} AS physical_key,
+                       source_namespace, harness,
                        {_SQLITE_TIMESTAMP_KEY_SQL} AS occurred,
                        {_SQLITE_PHYSICAL_PAYLOAD_SQL} AS payload
                 FROM facts{indexed_by}
                 WHERE {where}
+            ), per_source AS (
+                SELECT physical_key, source_namespace, harness, COUNT(*) AS n,
+                       COUNT(DISTINCT occurred) AS stamps,
+                       MIN(payload) AS pmin, MAX(payload) AS pmax
+                FROM windowed GROUP BY physical_key, source_namespace, harness
             ), grouped AS (
-                SELECT physical_key, COUNT(*) AS n, COUNT(DISTINCT payload) AS payloads,
-                       COUNT(DISTINCT occurred) AS stamps
-                FROM windowed GROUP BY physical_key
+                SELECT physical_key, SUM(n) AS n, MAX(stamps > 1) AS stamp_split,
+                       MIN(pmin) <> MAX(pmax) AS conflict,
+                       COUNT(DISTINCT harness) AS harnesses
+                FROM per_source GROUP BY physical_key
             )
             SELECT COUNT(*), COALESCE(SUM(n), 0),
                    COALESCE(SUM(CASE WHEN physical_key LIKE 'obs|%' THEN 1 ELSE 0 END), 0),
-                   COALESCE(SUM(CASE WHEN payloads > 1 THEN 1 ELSE 0 END), 0),
-                   COALESCE(SUM(CASE WHEN stamps > 1 THEN 1 ELSE 0 END), 0)
+                   COALESCE(SUM(conflict), 0),
+                   COALESCE(SUM(stamp_split), 0),
+                   COALESCE(SUM(CASE WHEN harnesses > 1 THEN 1 ELSE 0 END), 0)
             FROM grouped
         """
         try:
@@ -1791,7 +1828,7 @@ def query_sqlite_physical_requests(
             stored_rows = _execute_bounded_facts_query(
                 connection, rows_sql, tuple(parameters + outer_parameters + [limit, offset])
             )
-            physical, observations, harness_only, conflicts, disagreements = connection.execute(
+            physical, observations, harness_only, conflicts, disagreements, cross_harness = connection.execute(
                 stats_sql, tuple(parameters)
             ).fetchone()
             connection.rollback()
@@ -1806,6 +1843,7 @@ def query_sqlite_physical_requests(
             "harness_only_requests": int(harness_only),
             "payload_conflicts": int(conflicts),
             "timestamp_disagreements": int(disagreements),
+            "cross_harness_requests": int(cross_harness),
         })
         return [validator(stored, fact_type) for stored in stored_rows], stats
     finally:

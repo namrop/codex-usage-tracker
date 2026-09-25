@@ -104,6 +104,47 @@ def _base_event(*, namespace: str, event_id: str, harness: str, occurred: Any, r
     }
 
 
+# Usage contract v2 (keeper ratified 2026-09-25; Hermes<->SDK double count
+# fix authorized Discord msg 1552924591557574687). Hermes records each call's
+# raw response id; this table decides, explicitly and per route, which ids
+# identify a physical request at an upstream provider. Meridian relays Hermes
+# calls through the Claude SDK to Anthropic; on the streaming path it passes
+# Anthropic's own message_start id through, which is the same msg_ id the
+# Claude Code collector reads from the SDK transcript (verified 2026-09-25 on
+# meridian-primary: msg_011CfPfSeZnPyZipskzk2go5 in both, same usage). Its
+# non-streaming path mints ``msg_<epoch-ms>``, which is not Anthropic's and
+# can repeat across instances, so that shape is never keyed. Routes are
+# matched on the provider label or, for rows the writer labelled bare
+# ``custom``, on the Meridian base URL. Anything not listed keeps its id only
+# as the ``x_hermes_response_id`` extension: visible, never joined.
+_HERMES_RELAYED_ROUTES = {
+    "custom:meridian-primary": "anthropic",
+    "custom:meridian-yugen": "anthropic",
+}
+_HERMES_RELAYED_BASE_URLS = {
+    "http://127.0.0.1:3458": "anthropic",  # meridian-primary
+    "http://127.0.0.1:3457": "anthropic",  # meridian-yugen
+}
+_ANTHROPIC_MESSAGE_ID_RE = re.compile(r"^msg_(?![0-9]+$)[0-9A-Za-z]{20,}$")
+_UPSTREAM_ID_SHAPES = {"anthropic": _ANTHROPIC_MESSAGE_ID_RE}
+
+
+def _hermes_physical_request(provider: Any, base_url: Any, response_id: Any) -> tuple[str | None, str | None]:
+    """Return ``(provider_request_id, upstream_provider)`` or ``(None, None)``."""
+    identifier = _optional_text(response_id)
+    if identifier is None:
+        return None, None
+    upstream = _HERMES_RELAYED_ROUTES.get(_optional_text(provider) or "")
+    if upstream is None:
+        upstream = _HERMES_RELAYED_BASE_URLS.get((_optional_text(base_url) or "").rstrip("/"))
+    if upstream is None:
+        return None, None
+    shape = _UPSTREAM_ID_SHAPES.get(upstream)
+    if shape is None or not shape.match(identifier):
+        return None, None
+    return identifier, upstream
+
+
 def collect_hermes_usage(db_path: str | Path, source_namespace: str, *, batch_size: int=500) -> Iterator[dict[str,Any]]:
     """Stream all Hermes event rows from SQLite opened with mode=ro.
 
@@ -173,6 +214,13 @@ def collect_hermes_usage(db_path: str | Path, source_namespace: str, *, batch_si
                 })
                 if raw_purpose is not None: row["x_aux_purpose"]=raw_purpose
                 if unfiled_cost is not None: row["x_hermes_cost_usd"]=_cost(unfiled_cost)
+                response_id=_optional_text(r.get("provider_request_id"))
+                if response_id is not None:
+                    request_id,upstream=_hermes_physical_request(r.get("provider"),r.get("billing_base_url"),response_id)
+                    if request_id is not None:
+                        row["provider_request_id"]=request_id; row["upstream_provider"]=upstream
+                    else:
+                        row["x_hermes_response_id"]=response_id
                 yield normalize_fact(row)
     finally: con.close()
 
