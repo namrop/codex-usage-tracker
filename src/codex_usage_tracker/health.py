@@ -46,6 +46,7 @@ RUNNING_SERVICES = (
 )
 TIMERS = (
     "ai-usage-collect.timer",
+    "ai-usage-deep-collect.timer",
     "ai-quota-collect.timer",
     "ai-quota-bench.timer",
     # Web searches (Hermes feed + OpenClaw), keeper msg 1553067845766742228.

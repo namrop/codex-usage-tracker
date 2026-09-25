@@ -748,15 +748,32 @@ def _bounded_search_days(value: str) -> int:
     return days
 
 
+def _parse_usage_since(value: str) -> float:
+    import math
+    epoch = float(value)
+    if not math.isfinite(epoch) or epoch < 0:
+        raise argparse.ArgumentTypeError("usage-since must be a finite nonnegative epoch")
+    return epoch
+
+
 def cmd_collect_all(args: argparse.Namespace) -> int:
     from .collector import collect_all
 
+    from functools import partial
+    from .incremental import collect_incrementally
+
+    state = getattr(args, "incremental_state", None)
+    full = getattr(args, "full_sweep", False)
+    if full and not state:
+        print("--full-sweep requires --incremental-state", file=sys.stderr)
+        return 2
+    collect = partial(collect_incrementally, collect_all, state, full_sweep=full) if state else collect_all
     opencode_dbs = args.opencode_db or [
         "~/.local/share/opencode/opencode-stable.db",
         "~/.local/share/opencode/opencode-local.db",
     ]
     try:
-        result = collect_all(
+        result = collect(
             state_db=args.state_db,
             claude_root=args.claude_root,
             claude_instances=args.claude_instances,
@@ -781,6 +798,7 @@ def cmd_collect_all(args: argparse.Namespace) -> int:
             search_ledger=args.search_ledger,
             search_audit=args.search_audit,
             openclaw_home=args.openclaw_home or None,
+            usage_since=getattr(args, "usage_since", None),
         )
     except Exception as exc:
         print(f"collect-all failed: {type(exc).__name__}", file=sys.stderr)
@@ -822,6 +840,9 @@ def _collect_summary_line(result: dict[str, Any]) -> str:
         f"newly_adjudicated={counts.get('resolutions_recorded', 0)}",
         f"warnings={counts.get('warnings', 0)}",
     ]
+    incremental = result.get("incremental")
+    if incremental:
+        fields.extend([f"mode={incremental['mode']}", f"checkpoint_advanced={incremental['checkpoint_advanced']}"])
     if searches:
         # The search lane is the only one whose feed can be silently absent,
         # so the journal names what it read even when it read nothing.
@@ -1207,6 +1228,18 @@ def main() -> int:
         help="Seconds to wait for Claude Code's /usage view",
     )
     collect_parser.add_argument("--source-prefix", default="sol", help="Stable source namespace prefix")
+    collect_parser.add_argument(
+        "--usage-since", type=_parse_usage_since, default=None, metavar="EPOCH",
+        help="Read Hermes rows recorded and Claude transcripts modified since this epoch; omit for full history",
+    )
+    collect_parser.add_argument(
+        "--incremental-state", default=None, metavar="PATH",
+        help="Usage-only scheduled collection: serialized, success-only checkpoint with a 10-minute replay overlap",
+    )
+    collect_parser.add_argument(
+        "--full-sweep", action="store_true",
+        help="With --incremental-state, read all history for late imports and old-mtime restores",
+    )
     collect_parser.add_argument(
         "--scope",
         choices=("all", "usage", "quota", "searches"),

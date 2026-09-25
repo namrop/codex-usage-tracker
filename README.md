@@ -374,6 +374,55 @@ snapshots through the secret-free quota contract and fails on malformed input;
 canonical identity makes retries idempotent. Normal scheduled quota runs continue
 to read only the newest snapshot.
 
+### Fast ticks and full sweeps
+
+Collection is a Python CLI run by systemd, not an LLM job. Usage, provider
+quota, searches, cache refresh, and page rendering already run independently.
+The usage bottleneck was repeated historical parsing/validation, not network
+requests. Adding threads to that work does not remove it.
+
+For routine collection add:
+
+```bash
+codex-usage-tracker collect-all --scope usage \
+  --incremental-state ~/.local/state/codex-usage-tracker/health/usage-incremental.json \
+  --state-db /var/lib/hermes/primary/usage_events.db \
+  --claude-instance claude-code=/home/luis/.claude \
+  --claude-instance claude-code-secondary=/home/luis/.claude-accounts/secondary \
+  --strict-sources
+```
+
+Use the **same command and state path with `--full-sweep`** for daily history
+reconciliation. Fleet wiring preserves the 15-minute routine timer and adds
+`ai-usage-deep-collect.timer` at 04:08 local. Activating that wiring is a separate
+keeper-approved Sol switch; a tested source checkout is not a deployed timer.
+
+- No checkpoint, corrupt/future checkpoint, changed source configuration, or
+  replaced input/destination file means a full bootstrap, not a guessed cutoff.
+- A successful tick saves its **start time**, not its finish time. The next
+  tick overlaps it by ten minutes, including Claude's five-minute settle period.
+- Hermes reads recent ingestion timestamps; Claude reads changed transcripts.
+  Small OpenCode/OpenClaw stores still receive complete reads on every tick.
+- The full sweep recovers backdated imports and old-mtime restored transcripts.
+  Ordinary fast ticks do not claim that historical coverage.
+- Fast/deep runs share a whole-run lock. Ceded lanes, quarantines, exceptions,
+  or source replacement do not advance the checkpoint. Malformed Claude files
+  are recorded privately as pending and retried regardless of mtime; missing
+  retry diagnostics prevent advancement. Pending counts stay visible.
+- `--dry-run` never advances state or creates its lock/directory. Explicit
+  `--usage-since EPOCH` is for bounded probes, not scheduled cursor management.
+- Claude reconciliation loads indexed matching baselines and scans correction
+  targets once per batch. It retains arbitrary/manual corrections, source
+  regression handling, validation, immutable rows, and replay semantics.
+
+The September 25 live-source sandbox measured a 12.5-second fast collection
+and a 455.4-second full sweep, versus an earlier 18.8-minute profiled run.
+A subsequent full bootstrap through the checkpoint wrapper took 465.2 seconds;
+its next real incremental tick took 14.2 seconds and retained six malformed
+transcripts for retry. These are measured runs, not guaranteed latency bounds.
+The destination was an isolated copy; existing facts remained unchanged and
+SQLite checks passed.
+
 ### Migration, audit, and JSONL interchange
 
 Migrate each legacy JSONL separately and bind the destination explicitly:

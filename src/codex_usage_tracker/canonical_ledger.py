@@ -2307,6 +2307,10 @@ def _append_sqlite_facts_policy_locked(
         [list[dict[str, Any]], list[dict[str, Any]]],
         tuple[list[dict[str, Any]], Any],
     ] | None = None,
+    reconcile_existing: Callable[
+        [sqlite3.Connection, list[dict[str, Any]]], list[dict[str, Any]]
+    ]
+    | None = None,
 ) -> tuple[AppendResult, tuple[ConflictSummary, ...], Any]:
     connection, created = _open_writable_sqlite(target, expected)
     completed = False
@@ -2317,11 +2321,21 @@ def _append_sqlite_facts_policy_locked(
         _secure_sqlite_files(target)
         metadata: Any = None
         if reconcile is not None:
-            payloads = connection.execute(
-                "SELECT canonical_json FROM facts ORDER BY ingestion_sequence"
-            ).fetchall()
-            existing = [json.loads(payload) for (payload,) in payloads]
+            if reconcile_existing is not None:
+                # Targeted reconcile window: the caller names exactly the
+                # canonical rows its reconcile needs, so a 679k-row ledger no
+                # longer re-parses row by row on every Claude append. Rows in
+                # the ledger are normalized at write time; loading them here
+                # skips that (their canonical form is already on disk).
+                existing = reconcile_existing(connection, incoming)
+            else:
+                payloads = connection.execute(
+                    "SELECT canonical_json FROM facts ORDER BY ingestion_sequence"
+                ).fetchall()
+                existing = [json.loads(payload) for (payload,) in payloads]
             incoming, metadata = reconcile(existing, incoming)
+            # Reconciliation may synthesize new facts. Validate its output on
+            # both paths; a targeted read is not permission to skip the contract.
             incoming = [normalize_fact(fact) for fact in incoming]
             reconciled_type = _homogeneous_fact_type(incoming, expected)
             if reconciled_type != expected:
@@ -2493,6 +2507,10 @@ def append_sqlite_facts_quarantined_reconciled(
     ],
     dry_run: bool = False,
     equivalent_changed_fields: frozenset[str] = frozenset(),
+    reconcile_existing: Callable[
+        [sqlite3.Connection, list[dict[str, Any]]], list[dict[str, Any]]
+    ]
+    | None = None,
 ) -> tuple[AppendResult, tuple[ConflictSummary, ...], Any]:
     """Reconcile against one locked SQLite transaction before appending."""
     incoming = [normalize_fact(fact) for fact in facts]
@@ -2517,10 +2535,13 @@ def append_sqlite_facts_quarantined_reconciled(
         try:
             _validate_persistent_wal_header(target)
             _validate_sqlite_schema(connection, expected, verify_journal_mode=False)
-            payloads = connection.execute(
-                "SELECT canonical_json FROM facts ORDER BY ingestion_sequence"
-            ).fetchall()
-            existing = [json.loads(payload) for (payload,) in payloads]
+            if reconcile_existing is not None:
+                existing = reconcile_existing(connection, incoming)
+            else:
+                payloads = connection.execute(
+                    "SELECT canonical_json FROM facts ORDER BY ingestion_sequence"
+                ).fetchall()
+                existing = [json.loads(payload) for (payload,) in payloads]
             prepared, metadata = reconcile(existing, incoming)
             prepared = [normalize_fact(fact) for fact in prepared]
             result, _pending, conflicts = _compare_sqlite_incoming(
@@ -2543,6 +2564,7 @@ def append_sqlite_facts_quarantined_reconciled(
             quarantine_conflicts=True,
             equivalent_changed_fields=equivalent_changed_fields,
             reconcile=reconcile,
+            reconcile_existing=reconcile_existing,
         )
 
 

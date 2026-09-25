@@ -486,6 +486,18 @@ def test_prebuilt_answers_are_the_routes_own_bytes(ledger, quota_ledger, redis_s
 
 
 def test_prebuilt_answer_matches_the_live_route_but_its_clock(ledger, quota_ledger, redis_socket, monkeypatch):
+    # Compare one evaluation instant. Besides generated_at/age, quota burn has
+    # seconds_to_reset and other derived clocks; merely dropping age fields
+    # still failed when the two route calls crossed a second boundary.
+    import codex_usage_tracker.dashboard as dashboard_module
+    frozen_epoch = datetime.now(timezone.utc).timestamp()
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromtimestamp(frozen_epoch, tz)
+
+    monkeypatch.setattr(dashboard_module, "datetime", FrozenDatetime)
     usage_cache.refresh(ledger, redis_socket)
     usage_cache.refresh_quota(quota_ledger, redis_socket)
     renderer, serving = _apps(ledger, quota_ledger, monkeypatch, redis_socket)

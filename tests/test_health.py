@@ -69,6 +69,10 @@ def _ledger(tmp_path):
 FRESH = {"status": "fresh", "heartbeat_status": "fresh", "latest_at": "2026-09-25T12:00:00Z", "stale_lanes": []}
 
 
+def test_deep_sweep_timer_is_part_of_health():
+    assert "ai-usage-deep-collect.timer" in health.TIMERS
+
+
 def test_all_green_reads_ok(tmp_path):
     payload, code = health.build_health(
         ledgers={"usage": (_ledger(tmp_path), FRESH), "billing": (None, None)},

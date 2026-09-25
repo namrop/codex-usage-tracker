@@ -234,6 +234,7 @@ def _append_canonical_ledger_quarantined_reconciled(
     dry_run: bool,
     reconcile: Any,
     equivalent_changed_fields: frozenset[str] = frozenset(),
+    reconcile_existing: Any = None,
 ) -> tuple[AppendResult, tuple[ConflictSummary, ...], Any]:
     """Run semantic reconciliation inside the canonical writer boundary."""
     backend = _ledger_backend(path)
@@ -246,6 +247,7 @@ def _append_canonical_ledger_quarantined_reconciled(
             reconcile=reconcile,
             dry_run=dry_run,
             equivalent_changed_fields=equivalent_changed_fields,
+            reconcile_existing=reconcile_existing,
         )
     if any(not isinstance(row, dict) or row.get("fact_type") != fact_type for row in rows):
         raise ValidationError(f"ledger requires fact_type {fact_type}")
@@ -640,14 +642,68 @@ def touch_heartbeat(report_dir: str | Path, scope: str) -> list[Path]:
     return touched
 
 
+def _load_reconcile_window(
+    connection: sqlite3.Connection,
+    incoming: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Read matching baselines by index, then corrections in one pass.
+
+    Corrections may have arbitrary identities and harnesses. All corrections
+    targeting the batch must be considered, not just generated suffixes.
+    The fixed v1 schema has no correction-target index: scan that JSON field
+    once per batch, NOT once per 500 incoming identities. No schema migration
+    or changed accounting semantics are needed.
+    """
+    from .canonical_ledger import _integrity_check_stored_row
+
+    identities = sorted({
+        (str(row.get("source_namespace")), str(row.get("source_event_id")))
+        for row in incoming
+    })
+    if not identities:
+        return []
+    columns = (
+        "f.canonical_json, f.canonical_sha256, f.fact_type, f.source_namespace, "
+        "f.source_identity, f.occurred_or_observed_at, f.provider, f.harness, "
+        "f.purpose, f.model, f.quota_name, f.account_ref, f.transaction_kind, "
+        "f.transaction_status, f.invoice_id, f.line_item_id"
+    )
+    found: dict[tuple[str, str], dict[str, Any]] = {}
+    for start in range(0, len(identities), 400):
+        window = identities[start : start + 400]
+        placeholders = ",".join("(?,?)" for _ in window)
+        # A VALUES-driven join produces indexed point lookups on older SQLite
+        # too; a row-value IN list can instead produce a full table scan.
+        query = (
+            f"WITH wanted(ns, id) AS (VALUES {placeholders}) SELECT {columns} "
+            "FROM wanted CROSS JOIN facts AS f "
+            "WHERE f.source_namespace = wanted.ns AND f.source_identity = wanted.id"
+        )
+        for stored in connection.execute(query, [v for pair in window for v in pair]):
+            row = _integrity_check_stored_row(stored, "usage_event_v1")
+            found[(row["source_namespace"], row["source_event_id"])] = row
+
+    targets = set(identities)
+    for stored in connection.execute(
+        f"SELECT {columns} FROM facts AS f "
+        "WHERE json_extract(f.canonical_json, '$.record_kind') = 'correction' "
+        "ORDER BY f.ingestion_sequence"
+    ):
+        row = _integrity_check_stored_row(stored, "usage_event_v1")
+        if (row.get("corrects_source_namespace"), row.get("corrects_source_event_id")) in targets:
+            found[(row["source_namespace"], row["source_event_id"])] = row
+    return list(found.values())
+
+
 def _reconcile_finalized_claude_rows(
     existing: list[dict[str, Any]],
     rows: Iterable[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], tuple[int, list[dict[str, Any]]]]:
     """Converge Claude stream re-derivations against the canonical snapshot.
 
-    The caller supplies the complete canonical snapshot while holding the writer
-    boundary. The original attempt remains immutable; monotonic growth is
+    The caller supplies matching baselines and all corrections targeting them
+    from one snapshot while holding the writer boundary. The original attempt
+    remains immutable; monotonic growth is
     expressed only as deterministic signed token deltas. A strictly poorer
     re-derivation (a source regression, e.g. a transcript that lost its terminal
     receipt to a torn write) keeps the canonical fact and is adjudicated instead
@@ -969,6 +1025,9 @@ def collect_all(
     search_ledger: str | Path | None = None,
     search_audit: str | Path | None = None,
     openclaw_home: str | Path | None = None,
+    usage_since: float | None = None,
+    claude_retry_files: Iterable[str] = (),
+    retry_files_out: list[str] | None = None,
 ) -> dict[str, Any]:
     """Collect independently persistable usage and/or quota source batches.
 
@@ -1131,6 +1190,8 @@ def collect_all(
         rows, diagnostics = outcome
         skipped = diagnostics.get("skipped_files") or []
         lane["skipped_files"] = len(skipped)
+        if retry_files_out is not None and source in claude_usage_source_keys:
+            retry_files_out.extend(str(Path(item["path"]).resolve()) for item in skipped)
         if skipped:
             # Count only: the paths are private and the report is not.
             warnings.append(
@@ -1195,6 +1256,7 @@ def collect_all(
                     dry_run=dry_run,
                     reconcile=_reconcile_finalized_claude_rows,
                     equivalent_changed_fields=equivalent_fields,
+                    reconcile_existing=_load_reconcile_window,
                 )
             batch_result, batch_summaries = _append_canonical_ledger_quarantined(
                 path,
@@ -1274,10 +1336,18 @@ def collect_all(
     opencode: list[dict[str, Any]] | None = None
     quota_batches: list[tuple[AppendResult, int]] = []
 
+    def _with_since(bound: Callable[..., Any], *args: Any) -> Callable[[], Any]:
+        # Preserve the original no-cutoff call shape. A cutoff is never silently
+        # dropped on TypeError: that is an adapter defect, not a full-scan hint.
+        kwargs: dict[str, Any] = {} if usage_since is None else {"since": usage_since}
+        if bound is collect_claude_usage and claude_retry_files:
+            kwargs["retry_files"] = claude_retry_files
+        return lambda: bound(*args, **kwargs)
+
     if collect_usage_scope:
         hermes = collect_source(
             "hermes",
-            lambda: collect_hermes_usage(state_db, f"{source_prefix}:hermes"),
+            _with_since(collect_hermes_usage, state_db, f"{source_prefix}:hermes"),
         )
         claude_sources: list[tuple[str, list[dict[str, Any]]]] = []
         if configured_claude_instances:
@@ -1285,7 +1355,8 @@ def collect_all(
                 source = instance.source_key
                 rows = collect_source(
                     source,
-                    lambda instance=instance: collect_claude_usage(
+                    _with_since(
+                        collect_claude_usage,
                         Path(instance.config_dir) / "projects",
                         instance.usage_namespace(source_prefix),
                     ),
@@ -1297,8 +1368,8 @@ def collect_all(
                     "claude_code",
                     collect_source(
                         "claude_code",
-                        lambda: collect_claude_usage(
-                            claude_root, f"{source_prefix}:claude-code"
+                        _with_since(
+                            collect_claude_usage, claude_root, f"{source_prefix}:claude-code"
                         ),
                     ),
                 )
@@ -1328,6 +1399,10 @@ def collect_all(
                 persist_source(OPENCLAW_USAGE_LANE, usage_ledger, openclaw_rows, fact_type="usage_event_v1")
             )
         result["usage"] = _aggregate_append_results(usage_batches)
+        if usage_since is not None:
+            # The fast tick is incremental: report the epoch cutoff it ran
+            # with so the next tick can chain from this report.
+            result["usage"]["usage_since"] = usage_since
         result["generated_corrections"] = generated_corrections
         paths["usage_ledger"] = str(Path(usage_ledger).expanduser())
         if resolutions and not dry_run:

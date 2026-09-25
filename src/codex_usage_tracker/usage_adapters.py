@@ -173,7 +173,7 @@ def _hermes_physical_request(provider: Any, base_url: Any, response_id: Any) -> 
     return identifier, upstream
 
 
-def collect_hermes_usage(db_path: str | Path, source_namespace: str, *, batch_size: int=500) -> Iterator[dict[str,Any]]:
+def collect_hermes_usage(db_path: str | Path, source_namespace: str, *, batch_size: int=500, since: float|None=None) -> Iterator[dict[str,Any]]:
     """Stream all Hermes event rows from SQLite opened with mode=ro.
 
     Hermes moved usage events out of state.db into the sidecar ledger
@@ -188,12 +188,16 @@ def collect_hermes_usage(db_path: str | Path, source_namespace: str, *, batch_si
     con=_ro(db_path)
     try:
         tables={row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-        if "usage_events" in tables:
-            cursor=con.execute("SELECT rowid AS _immutable_rowid, * FROM usage_events ORDER BY rowid")
-        elif "llm_usage_events" in tables:
-            cursor=con.execute("SELECT rowid AS _immutable_rowid, * FROM llm_usage_events ORDER BY rowid")
-        else:
+        table = "usage_events" if "usage_events" in tables else "llm_usage_events" if "llm_usage_events" in tables else None
+        if table is None:
             return
+        columns = {r[1]: str(r[2]).upper() for r in con.execute(f"PRAGMA table_info({table})")}
+        predicate, params = "", []
+        # Only the modern numeric ingestion clock is a safe cutoff. Legacy
+        # layouts lacking it keep full-read behavior rather than lose events.
+        if since is not None and columns.get("created_at") in {"REAL", "INTEGER", "INT", "NUMERIC"}:
+            predicate, params = " WHERE created_at >= ? OR created_at IS NULL", [float(since)]
+        cursor=con.execute(f"SELECT rowid AS _immutable_rowid, * FROM {table}{predicate} ORDER BY rowid", params)
         while True:
             batch=cursor.fetchmany(max(1,batch_size))
             if not batch: break
@@ -293,6 +297,8 @@ def collect_claude_usage(
     *,
     settle_seconds: float = 300.0,
     skipped_files: list[dict[str,Any]] | None = None,
+    since: float | None = None,
+    retry_files: Iterable[str] = (),
 ) -> Iterator[dict[str,Any]]:
     """Read stable provider receipts; transcript content is never projected.
 
@@ -310,11 +316,18 @@ def collect_claude_usage(
     root_path=Path(root).expanduser()
     if not root_path.exists(): return {"skipped_files": skipped}
     now_timestamp = datetime.now(timezone.utc).timestamp()
+    retry_paths = {str(Path(p).expanduser().resolve()) for p in retry_files}
     for path in sorted(root_path.rglob("*.jsonl")):
         try:
-            quiescent = now_timestamp - path.stat().st_mtime >= settle_seconds
+            mtime = path.stat().st_mtime
         except OSError:
             continue
+        # Normal appends advance mtime. The daily full pass recovers restored
+        # transcripts whose mtime was preserved; pending malformed files bypass
+        # the cutoff and are retried on every tick.
+        if since is not None and mtime < since and str(path.resolve()) not in retry_paths:
+            continue
+        quiescent = now_timestamp - mtime >= settle_seconds
         grouped: dict[tuple[str,str],list[tuple[int,dict[str,Any]]]]={}
         for sequence,item in enumerate(_read_claude_file(path, skipped_files=skipped)):
             message=item.get("message")
