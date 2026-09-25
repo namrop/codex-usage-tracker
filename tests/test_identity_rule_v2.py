@@ -81,7 +81,7 @@ def test_fork_copy_is_counted_once_and_original_keeps_attribution(tmp_path):
     assert [row["session_id"] for row in rows] == ["aaaa-original"]
     assert stats["observations"] == 6 and stats["physical_requests"] == 1
     assert stats["copies_suppressed"] == 5 and stats["payload_conflicts"] == 0
-    assert stats["identity_rule"] == IDENTITY_RULE == "v2"
+    assert stats["identity_rule"] == IDENTITY_RULE == "v2.1"
 
 
 def test_fork_copy_ingested_first_still_loses_to_nothing_but_ingestion_order(tmp_path):
@@ -112,7 +112,8 @@ def test_conflicting_payloads_are_counted_never_merged(tmp_path):
 
 
 def test_idless_rows_never_collapse_even_when_identical(tmp_path):
-    facts = [_hermes(f"evt-{index}", "2026-09-24T10:00:00Z") for index in range(3)]
+    # Not a relayed route: id-less rows on a direct provider are their own requests.
+    facts = [_hermes(f"evt-{index}", "2026-09-24T10:00:00Z", provider="zai") for index in range(3)]
     rows, stats = _both(tmp_path, facts)
     assert len(rows) == 3
     assert stats["harness_only_requests"] == 3 and stats["copies_suppressed"] == 0
@@ -179,7 +180,7 @@ def test_provider_reported_usage_outranks_estimates(tmp_path):
 def test_filters_apply_after_election_so_partitions_stay_additive(tmp_path):
     sdk = _claude("sdk", "msg_01I", "2026-09-24T10:00:00Z")
     hermes = _hermes("evt-3", "2026-09-24T10:00:01Z", provider_request_id="msg_01I", upstream_provider="anthropic")
-    solo = _hermes("evt-4", "2026-09-24T11:00:00Z")
+    solo = _hermes("evt-4", "2026-09-24T11:00:00Z", provider="zai")
     facts = [sdk, hermes, solo]
     total, _ = _both(tmp_path / "a", facts)
     claude_only, _ = _both(tmp_path / "b", facts, filters={"harness": "claude_code"})
@@ -206,3 +207,62 @@ def test_public_projection_counts_physical_requests(tmp_path, tmp_subdir):
     payload = build_unified_public_projection(ledger, hours=3, source="test-public", now=now)
     assert payload["summary"]["total_tokens"] == 2 + 1000 + 50
     assert payload["summary"]["request_attempts"] == 1
+
+
+# ── v2.1 (keeper, msgs 1552986099343818813 / 1552992232733413420): a Hermes
+# call relayed through Meridian counts only through Anthropic's id; without
+# it, the Claude SDK receipt of the same call is what counts. ──
+
+from codex_usage_tracker.canonical_ledger import RELAY_BARE_CUSTOM_WINDOW, is_unkeyed_relay
+
+
+@pytest.mark.parametrize("updates", [
+    {"provider": "custom:meridian-primary"},
+    {"provider": "custom:meridian-yugen"},
+    {"provider": "custom"},  # inside the audited bare-custom window
+    {"provider": "custom", "occurred_at": "2026-09-25T12:30:00Z", "x_relay_route": "meridian-yugen"},
+])
+def test_an_idless_relayed_hermes_row_is_never_a_request(tmp_path, updates):
+    moment = updates.pop("occurred_at", "2026-09-24T10:00:02Z")
+    window = ("2026-09-24T00:00:00Z", "2026-09-26T00:00:00Z")
+    hermes = _hermes("evt-relay", moment, **updates)
+    sdk = _claude("sdk-session", "msg_01RELAY", moment)
+    assert physical_request_key(hermes).startswith("relay|")
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [hermes, sdk], fact_type="usage_event_v1")
+    rows, stats = query_sqlite_physical_requests(
+        ledger, occurred_or_observed_at_gte=window[0], occurred_or_observed_at_lt=window[1]
+    )
+    mirror, mirror_stats = elect_physical_requests([hermes, sdk])
+    assert stats == mirror_stats
+    assert [row["harness"] for row in rows] == [row["harness"] for row in mirror] == ["claude_code"]
+    assert stats["observations"] == 2 and stats["physical_requests"] == 1
+    assert stats["relay_observations_without_id"] == 1 and stats["copies_suppressed"] == 1
+    assert stats["harness_only_requests"] == 0
+
+
+def test_relay_rows_leave_filtered_views_additive(tmp_path):
+    facts = [
+        _hermes("evt-r1", "2026-09-24T10:00:00Z"),  # relayed, no id
+        _claude("sdk", "msg_01S", "2026-09-24T10:00:00Z"),
+        _hermes("evt-z", "2026-09-24T11:00:00Z", provider="zai"),
+    ]
+    total, stats = _both(tmp_path / "a", facts)
+    hermes_only, _ = _both(tmp_path / "b", facts, filters={"harness": "hermes"})
+    claude_only, _ = _both(tmp_path / "c", facts, filters={"harness": "claude_code"})
+    assert len(total) == len(hermes_only) + len(claude_only) == 2
+    assert [row["source_event_id"] for row in hermes_only] == ["evt-z"]
+    assert stats["relay_observations_without_id"] == 1
+
+
+def test_what_is_not_an_unkeyed_relay():
+    # A relayed row WITH Anthropic's id joins its receipt instead.
+    keyed = _hermes("evt-k", "2026-09-24T10:00:00Z", provider_request_id="msg_01K2", upstream_provider="anthropic")
+    assert physical_request_key(keyed) == "req|anthropic|msg_01K2"
+    # Bare "custom" outside the audited window (June: local model endpoints).
+    assert not is_unkeyed_relay(_hermes("evt-j", "2026-06-11T03:37:27Z", provider="custom"))
+    assert not is_unkeyed_relay(_hermes("evt-late", RELAY_BARE_CUSTOM_WINDOW[1] + "Z", provider="custom"))
+    assert is_unkeyed_relay(_hermes("evt-in", "2026-09-25T11:59:59.999Z", provider="custom"))
+    # Other harnesses and other providers are untouched.
+    assert not is_unkeyed_relay(_hermes("evt-o", "2026-09-24T10:00:00Z", provider="openai-codex"))
+    assert not is_unkeyed_relay(_claude("s", "msg_01X", "2026-09-24T10:00:00Z", provider="custom:meridian-primary"))

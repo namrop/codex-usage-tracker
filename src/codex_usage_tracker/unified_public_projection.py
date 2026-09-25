@@ -81,6 +81,12 @@ _PUBLIC_PROVIDER_MAP = {
     # naming the backend. A null or unrecognized provider stays Other — the
     # provider is never inferred from the model name.
     "custom:gemma-4-moe-it": "Local models",
+    # The two Meridian lanes relay Hermes calls to the two Claude accounts
+    # (keeper, 2026-09-25, msgs 1552986099343818813 / 1552992232733413420:
+    # "meridian primary and meridian yugen are really anthropic 1 and 2").
+    # Pooled here as on every share view; they used to fall into Other.
+    "custom:meridian-primary": "Anthropic",
+    "custom:meridian-yugen": "Anthropic",
 }
 _PUBLIC_HARNESS_MAP = {
     "hermes": "Hermes",
@@ -221,6 +227,15 @@ def _public_provider_label(value: Any) -> str:
     return _PUBLIC_PROVIDER_MAP.get(value.casefold(), "Other")
 
 
+def _public_fact_provider_label(fact: dict[str, Any]) -> str:
+    """A relayed call's upstream (a bare ``custom`` Hermes row through Meridian
+    carries ``upstream_provider``), else the fact's own provider label."""
+    upstream = fact.get("upstream_provider")
+    if isinstance(upstream, str) and upstream:
+        return _public_provider_label(upstream)
+    return _public_provider_label(fact.get("provider"))
+
+
 def _public_harness_label(value: Any) -> str:
     if not isinstance(value, str):
         return "Other"
@@ -353,7 +368,7 @@ def _ranking_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _build_provider_rows(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[str, dict[str, Any]] = {}
     for fact in facts:
-        label = _public_provider_label(fact.get("provider"))
+        label = _public_fact_provider_label(fact)
         _add_comparison_fact(groups.setdefault(label, _empty_comparison_group()), fact)
     bounded = _bounded_groups(groups, other_key="Other", maximum=_MAX_PUBLIC_PROVIDER_ROWS)
     ranking_total = sum(group["total_tokens"] for _label, group in bounded)
@@ -373,7 +388,7 @@ def _build_model_rows(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     other_key = ("Other", "Other")
     groups: dict[tuple[str, str], dict[str, Any]] = {}
     for fact in facts:
-        provider = _public_provider_label(fact.get("provider"))
+        provider = _public_fact_provider_label(fact)
         model = _public_model_label(fact.get("model_reported") or fact.get("model_requested"))
         key = (provider, model) if provider != "Other" and model is not None else other_key
         _add_comparison_fact(groups.setdefault(key, _empty_comparison_group()), fact)

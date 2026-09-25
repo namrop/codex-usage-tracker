@@ -177,14 +177,26 @@ def test_two_claude_usage_roots_keep_namespaces_and_pool_public_aggregates(tmp_p
         window_end=datetime(2026, 8, 5, 13, tzinfo=timezone.utc),
         generated_at=datetime(2026, 8, 5, 13, 30, tzinfo=timezone.utc),
     )
+    # Private series keep the two accounts apart as "Claude 1" / "Claude 2"
+    # (keeper, 2026-09-25, msgs 1552986099343818813 / 1552992232733413420);
+    # the public projection above still pools them.
     assert time_series["model_series"] == [
         {
             "provider": "anthropic",
+            "provider_label": "Claude 2",
             "model": "claude-sonnet-5",
-            "label": "claude-sonnet-5 · anthropic",
-            "total_tokens": 52,
-            "values": [0, 52, 0, 0, 0, 0, 0, 0],
-        }
+            "label": "claude-sonnet-5 · Claude 2",
+            "total_tokens": 32,
+            "values": [0, 32, 0, 0, 0, 0, 0, 0],
+        },
+        {
+            "provider": "anthropic",
+            "provider_label": "Claude 1",
+            "model": "claude-sonnet-5",
+            "label": "claude-sonnet-5 · Claude 1",
+            "total_tokens": 20,
+            "values": [0, 20, 0, 0, 0, 0, 0, 0],
+        },
     ]
     serialized = json.dumps({"projection": projection, "time_series": time_series})
     assert "sol:claude-code" not in serialized

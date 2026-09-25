@@ -3346,7 +3346,7 @@ def test_sqlite_private_api_uses_one_stable_query_snapshot(tmp_path, monkeypatch
     assert observed_kwargs["contract_validation"] is False
     payload = response.get_json()
     assert sum(bucket["events"] for bucket in payload["by_provider_model"]) == 3
-    assert payload["identity"]["identity_rule"] == "v2"
+    assert payload["identity"]["identity_rule"] == "v2.1"
     assert payload["identity"]["observations"] == payload["identity"]["physical_requests"] == 3
 
 

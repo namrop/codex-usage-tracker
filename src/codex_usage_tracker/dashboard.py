@@ -208,6 +208,10 @@ _QUOTA_PROVIDER_ALIASES = {
     "kimi-k3-coding": "kimi-k3-coding",
     "moonshot": "kimi-k3-coding",
     "moonshot-ai": "kimi-k3-coding",
+    # The two Meridian lanes relay to the two Claude accounts (keeper,
+    # 2026-09-25, msg 1552986099343818813); see _usage_provider_identity.
+    "custom:meridian-primary": "anthropic",
+    "custom:meridian-yugen": "anthropic",
 }
 _QuotaAccountIdentity: TypeAlias = tuple[bool, str]
 _QuotaSeriesIdentity: TypeAlias = tuple[
@@ -885,7 +889,7 @@ def _build_provider_status_series(
         # same status feed and the same quota row, so they must not read as
         # two providers on the strip.
         raw_provider = str(row.get("provider") or "unknown")
-        provider = _canonical_quota_provider(raw_provider)
+        provider = _usage_canonical_provider(row)
         if provider not in events:
             events[provider] = [0] * bucket_count
             errors[provider] = [0] * bucket_count
@@ -947,6 +951,7 @@ def _build_unified_time_series(
 ) -> dict[str, Any]:
     bucket_count, bucket_starts = _bucket_grid(window_start, window_end)
     model_buckets: dict[tuple[str, str], list[int]] = {}
+    provider_of_label: dict[str, str] = {}
     bucket_series = {field: [0] * bucket_count for field in _LIST_PRICE_TOKEN_FIELDS}
 
     for row in rows:
@@ -955,9 +960,10 @@ def _build_unified_time_series(
         if bucket_index < 0 or bucket_index >= bucket_count:
             continue
         total = _accounted_tokens(row)
-        provider = str(row.get("provider") or "unknown")
+        provider, _account, provider_label = _usage_provider_identity(row)
         model = str(row.get("model_reported") or row.get("model_requested") or "unknown")
-        values = model_buckets.setdefault((provider, model), [0] * bucket_count)
+        values = model_buckets.setdefault((provider_label, model), [0] * bucket_count)
+        provider_of_label[provider_label] = provider
         values[bucket_index] += total
         for field in _LIST_PRICE_TOKEN_FIELDS:
             bucket_series[field][bucket_index] += int(row.get(field) or 0)
@@ -970,13 +976,14 @@ def _build_unified_time_series(
     remaining_models = ranked_models[_UNIFIED_MODEL_SERIES_LIMIT:]
     model_series = [
         {
-            "provider": provider,
+            "provider": provider_of_label[provider_label],
+            "provider_label": provider_label,
             "model": model,
-            "label": f"{model} · {provider}",
+            "label": f"{model} · {provider_label}",
             "total_tokens": sum(values),
             "values": values,
         }
-        for (provider, model), values in named_models
+        for (provider_label, model), values in named_models
     ]
     other_model_series = None
     if remaining_models:
@@ -1170,6 +1177,62 @@ def _canonical_quota_provider(value: Any) -> str:
     if not raw:
         raw = "unknown"
     return _QUOTA_PROVIDER_ALIASES.get(raw.casefold(), raw)
+
+
+# Keeper, 2026-09-25 (unified usage ledger thread msgs 1552986099343818813
+# and 1552992232733413420): "meridian primary and meridian yugen are really
+# anthropic 1 and 2". Meridian is the route, the provider is Anthropic. Usage
+# on either account reads as Anthropic, pooled where the page draws shares
+# (provider donuts, status strip) and named "Claude 1" / "Claude 2" where it
+# lists rows (provider/model table, model series): the ordinals the quota
+# surfaces already use, primary account first.
+_ANTHROPIC_ACCOUNT_BY_ROUTE = {
+    "custom:meridian-primary": 1,
+    "meridian-primary": 1,
+    "custom:meridian-yugen": 2,
+    "meridian-yugen": 2,
+}
+_ANTHROPIC_ACCOUNT_BY_NAMESPACE_SUFFIX = ((":claude-code-secondary", 2), (":claude-code", 1))
+_ANTHROPIC_ACCOUNT_COUNT = 2
+
+
+def _usage_canonical_provider(row: dict[str, Any]) -> str:
+    """The provider a usage row's call reached: a relayed call's upstream
+    (a bare ``custom`` Hermes row through Meridian carries
+    ``upstream_provider``), else its own label, folded by the alias table."""
+    upstream = row.get("upstream_provider")
+    if upstream not in (None, ""):
+        return _canonical_quota_provider(upstream)
+    return _canonical_quota_provider(row.get("provider"))
+
+
+def _usage_account_index(row: dict[str, Any]) -> int | None:
+    """Which Claude account an Anthropic usage row belongs to, when recorded."""
+    for route in (row.get("x_relay_route"), row.get("provider")):
+        index = _ANTHROPIC_ACCOUNT_BY_ROUTE.get(str(route or ""))
+        if index is not None:
+            return index
+    if row.get("harness") == "claude_code":
+        namespace = str(row.get("source_namespace") or "")
+        for suffix, index in _ANTHROPIC_ACCOUNT_BY_NAMESPACE_SUFFIX:
+            if namespace.endswith(suffix):
+                return index
+    return None
+
+
+def _usage_provider_identity(row: dict[str, Any]) -> tuple[str, int | None, str]:
+    """``(provider, account index, label)`` for listing a usage row.
+
+    Anthropic rows list under ``anthropic`` and their account ("Claude 1");
+    one whose account the ledger did not record says so rather than guessing.
+    Every other provider keeps its raw label, as before.
+    """
+    canonical = _usage_canonical_provider(row)
+    if canonical != "anthropic":
+        raw = str(row.get("provider") or "unknown")
+        return raw, None, raw
+    index = _usage_account_index(row)
+    return "anthropic", index, (f"Claude {index}" if index is not None else "Claude (account not recorded)")
 
 
 # Burn-panel cadence contract: the hourly ai-quota-collect timer plus the
@@ -2382,16 +2445,26 @@ def create_app(
         by_harness: Dict[str, Dict[str, Any]] = {}
         by_provider: Dict[str, Dict[str, Any]] = {}
         for row in rows:
+            # Pricing stays keyed on the raw label (the rate table's aliases
+            # decide what a Meridian label may be priced as).
             _accumulate_price_bucket(priced_grouped, row)
+            raw_provider = str(row.get("provider") or "unknown")
+            list_provider, account_index, provider_label = _usage_provider_identity(row)
             key = (
-                str(row.get("provider") or "unknown"),
+                provider_label,
                 str(row.get("model_reported") or row.get("model_requested") or "unknown"),
             )
             bucket = grouped.setdefault(
                 key,
                 {
-                    "provider": key[0],
-                    "provider_canonical": _canonical_quota_provider(key[0]),
+                    "provider": list_provider,
+                    "provider_canonical": _canonical_quota_provider(list_provider),
+                    "provider_label": provider_label,
+                    "provider_account_index": account_index,
+                    "provider_account_count": (
+                        _ANTHROPIC_ACCOUNT_COUNT if account_index is not None else None
+                    ),
+                    "provider_raw_ids": set(),
                     "model": key[1],
                     "events": 0,
                     "api_modes": {},
@@ -2399,6 +2472,7 @@ def create_app(
                     **{field: Decimal("0") for field in cost_fields},
                 },
             )
+            bucket["provider_raw_ids"].add(raw_provider)
             bucket["events"] += 1
             # Endpoint/protocol attribution — restored upstream for Hermes on
             # 2026-08-29; NULL means the source genuinely does not know.
@@ -2431,7 +2505,7 @@ def create_app(
             # resolved here rather than in the browser so the donut legend can
             # join to a quota row without a second copy of the alias table;
             # the raw ids merged into the row ride along for the ledger view.
-            canonical_provider = _canonical_quota_provider(key[0])
+            canonical_provider = _usage_canonical_provider(row)
             provider_bucket = by_provider.setdefault(
                 canonical_provider,
                 {
@@ -2443,7 +2517,7 @@ def create_app(
                     **{field: 0 for field in token_fields},
                 },
             )
-            provider_bucket["provider_raw_ids"].add(key[0])
+            provider_bucket["provider_raw_ids"].add(raw_provider)
             provider_bucket["events"] += 1
             if _is_substituted_event(row):
                 provider_bucket["substituted_events"] += 1
@@ -2458,6 +2532,8 @@ def create_app(
             # cache read is billed and served differently from fresh input.
             bucket["cached_tokens"] = bucket["cache_read_tokens"]
             bucket["fresh_tokens"] = bucket["total_tokens"] - bucket["cache_read_tokens"]
+        for bucket in grouped.values():
+            bucket["provider_raw_ids"] = sorted(bucket["provider_raw_ids"])
         for bucket in (*grouped.values(), *by_harness.values()):
             bucket["total_tokens"] = sum(bucket[field] for field in token_fields if field != "reasoning_tokens")
             for field in cost_fields:
@@ -2496,7 +2572,9 @@ def create_app(
                 by_provider.values(),
                 key=lambda item: (-item["total_tokens"], item["provider"]),
             ),
-            "by_provider_model": sorted(grouped.values(), key=lambda item: (item["provider"], item["model"])),
+            "by_provider_model": sorted(
+                grouped.values(), key=lambda item: (item["provider"], item["provider_label"], item["model"])
+            ),
         }
         if series_start is not None and series_end is not None:
             payload["time_series"] = _build_unified_time_series(

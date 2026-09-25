@@ -608,9 +608,10 @@ export function UnifiedUsageCard({ palette, unified, freshness, donutFive, quota
               <tbody id="providerModelUsageBody">
                 {providerModelRows.map((row, index) => (
                   <TextRow
-                    key={`${row.provider}-${row.model}-${index}`}
+                    key={`${row.provider_label || row.provider}-${row.model}-${index}`}
                     values={[
-                      row.provider, row.model, formatApiModes(row.api_modes), row.events, row.input_tokens,
+                      // "Claude 1" / "Claude 2" for Anthropic rows (the account); raw label otherwise.
+                      row.provider_label || row.provider, row.model, formatApiModes(row.api_modes), row.events, row.input_tokens,
                       row.cache_read_tokens, row.cache_write_tokens, row.output_tokens, row.reasoning_tokens,
                       row.total_tokens, row.estimated_cost_usd, row.actual_cost_usd,
                     ]}

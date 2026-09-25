@@ -158,7 +158,10 @@ def test_cache_answers_exactly_what_sqlite_answers(ledger, redis_socket, hours, 
 def test_refresh_counts_requests_not_copies(ledger, redis_socket):
     summary = usage_cache.refresh(ledger, redis_socket, span_hours=192)
     sql_rows, sql_stats = _sql(ledger, NOW - timedelta(hours=192), None, {})
-    assert summary["rows"] == len(sql_rows) == sql_stats["physical_requests"]
+    # Unkeyed relay observations (the id-less Meridian Hermes rows) ride the
+    # copy for the stats and are never rows (identity rule v2.1).
+    assert summary["relay_rows"] == sql_stats["relay_observations_without_id"] == 3
+    assert summary["rows"] - summary["relay_rows"] == len(sql_rows) == sql_stats["physical_requests"]
     assert summary["observations"] == sql_stats["observations"]
     assert sql_stats["copies_suppressed"] >= 4 + 1 + 1 + 1  # forks, relay, conflict, split
 
@@ -521,7 +524,7 @@ def test_a_rerender_carries_new_data(ledger, quota_ledger, redis_socket, monkeyp
     renderer, serving = _apps(ledger, quota_ledger, monkeypatch, redis_socket)
     prebuilt_views.render_once(renderer, redis_socket, views=("/api/unified-usage?hours=5",))
     before = serving.test_client().get("/api/unified-usage?hours=5").get_json()["identity"]["physical_requests"]
-    append_sqlite_facts(ledger, [_hermes("evt-rerender", _at(2.5))], fact_type="usage_event_v1")
+    append_sqlite_facts(ledger, [_hermes("evt-rerender", _at(2.5), provider="zai", model_requested="glm-5.3")], fact_type="usage_event_v1")
     usage_cache.refresh(ledger, redis_socket, now=NOW + timedelta(seconds=5))
     prebuilt_views.render_once(renderer, redis_socket, views=("/api/unified-usage?hours=5",))
     after = serving.test_client().get("/api/unified-usage?hours=5").get_json()["identity"]["physical_requests"]

@@ -1589,17 +1589,47 @@ def read_sqlite_facts(
 # The SQL expressions below and ``physical_request_key`` are one rule written
 # twice; tests assert they agree.
 # ---------------------------------------------------------------------------
-IDENTITY_RULE = "v2"
+#
+# v2.1 (keeper, 2026-09-25, Discord unified usage ledger thread msgs
+# 1552986099343818813 and 1552992232733413420, "yeah make those changes"):
+# a Hermes call relayed through Meridian counts only through Anthropic's id.
+# Meridian relays every such call through the Claude SDK, whose transcript
+# the Claude Code collector reads, so a relayed Hermes row WITHOUT the id is a
+# second observation of a call its SDK receipt already counts (measured over
+# the 168 h to 2026-09-25 06:20 EDT: 3.285B tokens on the Hermes side, 3.289B
+# on the receipts). Such a row is an "unkeyed relay" observation: stored,
+# visible in ``relay_observations_without_id``, never elected. That covers
+# every relayed call before the 2026-09-25 03:07 Hermes switch and the
+# non-streaming calls since (Meridian mints a synthetic id there).
+# A relayed row is one labelled with a Meridian provider, one carrying the
+# collector's ``x_relay_route`` (from 2026-09-25T12:00Z), or a bare
+# ``custom`` Hermes row inside the audited window: the Hermes sidecar's
+# billing_base_url shows every bare ``custom`` row from 2026-09-18 17:07 to
+# 2026-09-25 09:46 (the audit) went to Meridian's ports 3457/3458, and the
+# previous one was 2026-06-24 (local model endpoints). The window ends where
+# the collector starts recording the route.
+IDENTITY_RULE = "v2.1"
 IDENTITY_RULE_EFFECTIVE = "2026-09-25"
+RELAY_PROVIDER_LABELS = ("custom:meridian-primary", "custom:meridian-yugen")
+RELAY_BARE_CUSTOM_WINDOW = ("2026-09-16T00:00:00", "2026-09-25T12:00:00")
 _PHYSICAL_PAYLOAD_FIELDS = (
     "input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens",
 )
-_SQLITE_PHYSICAL_KEY_SQL = """CASE
+_SQLITE_UNKEYED_RELAY_SQL = (
+    "(harness = 'hermes'"
+    " AND (provider IN (" + ", ".join(f"'{label}'" for label in RELAY_PROVIDER_LABELS) + ")"
+    " OR NULLIF(json_extract(canonical_json, '$.x_relay_route'), '') IS NOT NULL"
+    f" OR (provider = 'custom' AND rtrim(occurred_or_observed_at, 'Z') >= '{RELAY_BARE_CUSTOM_WINDOW[0]}'"
+    f" AND rtrim(occurred_or_observed_at, 'Z') < '{RELAY_BARE_CUSTOM_WINDOW[1]}')))"
+)
+_SQLITE_PHYSICAL_KEY_SQL = f"""CASE
         WHEN NULLIF(json_extract(canonical_json, '$.provider_request_id'), '') IS NOT NULL
           THEN 'req|' || COALESCE(NULLIF(json_extract(canonical_json, '$.upstream_provider'), ''), provider, '')
                || '|' || json_extract(canonical_json, '$.provider_request_id')
         WHEN harness = 'claude_code' AND instr(source_identity, ':msg_') > 0
           THEN 'req|anthropic|' || substr(source_identity, instr(source_identity, ':msg_') + 1)
+        WHEN {_SQLITE_UNKEYED_RELAY_SQL}
+          THEN 'relay|' || source_namespace || '|' || source_identity
         ELSE 'obs|' || source_namespace || '|' || source_identity
     END"""
 _SQLITE_ELECTION_PRECEDENCE_SQL = (
@@ -1623,8 +1653,25 @@ def _physical_payload(fact: dict[str, Any]) -> tuple[int, ...]:
     return tuple(int(fact.get(field) or 0) for field in _PHYSICAL_PAYLOAD_FIELDS)
 
 
+def is_unkeyed_relay(fact: dict[str, Any]) -> bool:
+    """Python twin of ``_SQLITE_UNKEYED_RELAY_SQL`` (without the id test,
+    which ``physical_request_key`` applies first)."""
+    if fact.get("harness") != "hermes":
+        return False
+    if fact.get("provider") in RELAY_PROVIDER_LABELS or fact.get("x_relay_route") not in (None, ""):
+        return True
+    if fact.get("provider") != "custom":
+        return False
+    moment = str(fact.get("occurred_at") or "").rstrip("Z")
+    return RELAY_BARE_CUSTOM_WINDOW[0] <= moment < RELAY_BARE_CUSTOM_WINDOW[1]
+
+
 def physical_request_key(fact: dict[str, Any]) -> str:
-    """Return the contract-v2 physical-request key for one usage observation."""
+    """Return the contract-v2.1 physical-request key for one usage observation.
+
+    ``relay|`` keys are unkeyed relay observations: never elected, counted in
+    ``relay_observations_without_id`` (see IDENTITY_RULE).
+    """
     request_id = fact.get("provider_request_id")
     if request_id not in (None, ""):
         namespace = fact.get("upstream_provider") or fact.get("provider") or ""
@@ -1634,6 +1681,8 @@ def physical_request_key(fact: dict[str, Any]) -> str:
         index = identity.find(":msg_")
         if index >= 0:
             return f"req|anthropic|{identity[index + 1:]}"
+    if is_unkeyed_relay(fact):
+        return f"relay|{fact.get('source_namespace')}|{fact.get('source_event_id')}"
     return f"obs|{fact.get('source_namespace')}|{fact.get('source_event_id')}"
 
 
@@ -1645,6 +1694,7 @@ def _empty_identity_stats() -> dict[str, Any]:
         "physical_requests": 0,
         "copies_suppressed": 0,
         "harness_only_requests": 0,
+        "relay_observations_without_id": 0,
         "payload_conflicts": 0,
         "timestamp_disagreements": 0,
         "cross_harness_requests": 0,
@@ -1661,12 +1711,16 @@ def elect_physical_requests(facts: Iterable[dict[str, Any]]) -> tuple[list[dict[
     groups: dict[str, list[tuple[int, dict[str, Any]]]] = {}
     for position, fact in enumerate(rows):
         groups.setdefault(physical_request_key(fact), []).append((position, fact))
+    relay_keys = [key for key in groups if key.startswith("relay|")]
     stats = _empty_identity_stats()
     stats["observations"] = len(rows)
-    stats["physical_requests"] = len(groups)
-    stats["copies_suppressed"] = len(rows) - len(groups)
+    stats["physical_requests"] = len(groups) - len(relay_keys)
+    stats["copies_suppressed"] = len(rows) - stats["physical_requests"]
+    stats["relay_observations_without_id"] = len(relay_keys)
     elected_positions: set[int] = set()
     for key, members in groups.items():
+        if key.startswith("relay|"):
+            continue  # counted through its SDK receipt, never elected
         if key.startswith("obs|"):
             stats["harness_only_requests"] += 1
         payloads = {_physical_payload(fact) for _, fact in members}
@@ -1765,7 +1819,7 @@ def query_sqlite_physical_requests(
             else ""
         )
         where = " AND ".join(clauses)
-        outer_clauses = ["election_rank = 1"]
+        outer_clauses = ["election_rank = 1", "physical_key NOT LIKE 'relay|%'"]
         outer_parameters: list[Any] = []
         for name, value in requested_filters.items():
             outer_clauses.append(f"{_SQLITE_QUERY_FILTER_COLUMNS[name]} = ?")
@@ -1815,11 +1869,13 @@ def query_sqlite_physical_requests(
                        COUNT(DISTINCT harness) AS harnesses
                 FROM per_source GROUP BY physical_key
             )
-            SELECT COUNT(*), COALESCE(SUM(n), 0),
+            SELECT COALESCE(SUM(CASE WHEN physical_key LIKE 'relay|%' THEN 0 ELSE 1 END), 0),
+                   COALESCE(SUM(n), 0),
                    COALESCE(SUM(CASE WHEN physical_key LIKE 'obs|%' THEN 1 ELSE 0 END), 0),
                    COALESCE(SUM(conflict), 0),
                    COALESCE(SUM(stamp_split), 0),
-                   COALESCE(SUM(CASE WHEN harnesses > 1 THEN 1 ELSE 0 END), 0)
+                   COALESCE(SUM(CASE WHEN harnesses > 1 THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN physical_key LIKE 'relay|%' THEN 1 ELSE 0 END), 0)
             FROM grouped
         """
         try:
@@ -1828,9 +1884,9 @@ def query_sqlite_physical_requests(
             stored_rows = _execute_bounded_facts_query(
                 connection, rows_sql, tuple(parameters + outer_parameters + [limit, offset])
             )
-            physical, observations, harness_only, conflicts, disagreements, cross_harness = connection.execute(
-                stats_sql, tuple(parameters)
-            ).fetchone()
+            (
+                physical, observations, harness_only, conflicts, disagreements, cross_harness, relay_rows,
+            ) = connection.execute(stats_sql, tuple(parameters)).fetchone()
             connection.rollback()
         except sqlite3.DatabaseError as exc:
             raise MalformedLedgerError("invalid SQLite physical-request query") from exc
@@ -1841,6 +1897,7 @@ def query_sqlite_physical_requests(
             "physical_requests": int(physical),
             "copies_suppressed": int(observations) - int(physical),
             "harness_only_requests": int(harness_only),
+            "relay_observations_without_id": int(relay_rows),
             "payload_conflicts": int(conflicts),
             "timestamp_disagreements": int(disagreements),
             "cross_harness_requests": int(cross_harness),
@@ -1875,6 +1932,10 @@ def snapshot_sqlite_physical_requests(
     a later window read can rebuild both from the elected rows alone. Rows get
     the dashboard's read check (hash, identity, typed columns), not the full
     contract re-validation.
+
+    Unkeyed relay observations (``relay|`` keys, identity rule v2.1) are
+    included as entries so the stats can be rebuilt; they are never
+    requests, and callers drop them from rows and totals.
 
     Returns ``(entries, meta)``. Each entry holds ``payload`` (the stored
     canonical JSON text), ``fact``, ``key`` (the physical-request key),
@@ -2071,6 +2132,11 @@ def identity_stats_from_snapshot(entries: Iterable[dict[str, Any]]) -> dict[str,
     stats = _empty_identity_stats()
     for entry in entries:
         stats["observations"] += entry["n"]
+        if entry["key"].startswith("relay|"):
+            # An unkeyed relay observation rides the snapshot so the stats
+            # match the SQL path; it is never a request (IDENTITY_RULE v2.1).
+            stats["relay_observations_without_id"] += 1
+            continue
         stats["physical_requests"] += 1
         stats["harness_only_requests"] += 1 if entry["key"].startswith("obs|") else 0
         stats["payload_conflicts"] += entry["conflict"]

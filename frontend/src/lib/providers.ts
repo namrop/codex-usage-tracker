@@ -43,6 +43,9 @@ export const PROVIDER_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.f
   "kimi-k3-coding": "Kimi K3 Coding",
 });
 
+// Byte-identical to the server's _QUOTA_PROVIDER_ALIASES (a test parses it as
+// JSON). The two Meridian lanes relay to the two Claude accounts (keeper,
+// 2026-09-25), so usage on either reads as Anthropic.
 export const PROVIDER_ALIASES: Readonly<Record<string, string>> = Object.freeze({
   "openai": "openai-codex",
   "openai-codex": "openai-codex",
@@ -64,6 +67,8 @@ export const PROVIDER_ALIASES: Readonly<Record<string, string>> = Object.freeze(
   "kimi-k3-coding": "kimi-k3-coding",
   "moonshot": "kimi-k3-coding",
   "moonshot-ai": "kimi-k3-coding",
+  "custom:meridian-primary": "anthropic",
+  "custom:meridian-yugen": "anthropic",
 });
 
 export const PROVIDER_ORDER: readonly string[] = Object.freeze([

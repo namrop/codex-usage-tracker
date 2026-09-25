@@ -108,7 +108,9 @@ QUOTA_META_KEY = f"{KEY_PREFIX}:quota:meta"
 RULINGS_KEY = f"{KEY_PREFIX}:rulings"
 OLD_GENERATION_TTL_SECONDS = 600
 ZADD_BATCH = 5_000
-SCHEMA = 1
+# 2: identity rule v2.1 (unkeyed relay observations ride the copy, never
+# served as rows). A copy built by other code is never read.
+SCHEMA = 2
 
 
 def _fingerprint(*modules: Any) -> str:
@@ -277,7 +279,9 @@ def _refresh_week_prices(
         buckets, rows = week_price_buckets_from_ledger(ledger, start_day)
         fields[week] = json.dumps({"buckets": price_buckets_as_list(buckets), "rows": rows, "source": "week"}, separators=(",", ":"))
         recomputed.append(week)
-    current_buckets = accumulate_weekly_price_buckets((entry["fact"] for entry in entries), [current])[0]
+    current_buckets = accumulate_weekly_price_buckets(
+        (entry["fact"] for entry in entries if not entry["key"].startswith("relay|")), [current]
+    )[0]
     fields[_week_start_key(current)] = json.dumps(
         {"buckets": price_buckets_as_list(current_buckets), "source": "span"}, separators=(",", ":")
     )
@@ -345,6 +349,7 @@ def refresh(
         "ingestion_high_water": snapshot_meta.get("ingestion_high_water"),
         "rows": len(entries),
         "observations": sum(entry["n"] for entry in entries),
+        "relay_rows": sum(1 for entry in entries if entry["key"].startswith("relay|")),
         "prices": {key: value for key, value in price_meta.items() if key != "recomputed"},
     }
     transaction = client.pipeline(transaction=True)
@@ -359,6 +364,7 @@ def refresh(
         "since": meta["since"],
         "rows": meta["rows"],
         "observations": meta["observations"],
+        "relay_rows": meta["relay_rows"],
         "ingestion_high_water": meta["ingestion_high_water"],
         "price_weeks": len(price_fields),
         "price_weeks_recomputed": len(price_meta["recomputed"]),
@@ -436,7 +442,8 @@ def physical_requests(
     rows = [
         entry["f"]
         for entry in window
-        if all(entry["c"].get(name) == expected for name, expected in filters.items())
+        if not entry["k"].startswith("relay|")
+        and all(entry["c"].get(name) == expected for name, expected in filters.items())
     ]
     return rows, stats
 

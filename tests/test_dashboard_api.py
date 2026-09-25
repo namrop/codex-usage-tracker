@@ -921,6 +921,8 @@ def test_quota_provider_aliases_are_the_complete_explicit_allowlist():
         "kimi-k3-coding": "kimi-k3-coding",
         "moonshot": "kimi-k3-coding",
         "moonshot-ai": "kimi-k3-coding",
+        "custom:meridian-primary": "anthropic",
+        "custom:meridian-yugen": "anthropic",
     }
 
 
@@ -3237,7 +3239,7 @@ def test_model_series_carries_every_model_with_a_bounded_default_visible_count(
     # Tokens reconcile exactly against the window totals.
     assert sum(row["total_tokens"] for row in series["model_series"]) == payload["totals"]["total_tokens"]
     # The row shape is unchanged (a pinned contract elsewhere in the suite).
-    assert set(series["model_series"][0]) == {"provider", "model", "label", "total_tokens", "values"}
+    assert set(series["model_series"][0]) == {"provider", "provider_label", "model", "label", "total_tokens", "values"}
 
 
 def test_model_series_stays_bounded_and_the_tail_reads_as_chart_grouping(
