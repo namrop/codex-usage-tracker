@@ -102,3 +102,49 @@ def test_hermes_and_sdk_observations_of_one_meridian_call_count_once(tmp_path):
     assert stats["observations"] == 2 and stats["physical_requests"] == 1
     assert stats["cross_harness_requests"] == 1 and stats["payload_conflicts"] == 0
     assert [row["harness"] for row in rows] == ["hermes"]  # the caller keeps the attribution
+
+
+# Keeper, msg 1552986099343818813: "meridian primary and meridian yugen are
+# really anthropic 1 and 2". From RELAY_ROUTE_RECORDED_FROM the collector
+# records the Meridian lane a Hermes call went through; before it, rows keep
+# the exact shape already stored (the adapter re-reads the whole sidecar).
+
+from datetime import datetime, timezone
+
+from codex_usage_tracker.usage_adapters import RELAY_ROUTE_RECORDED_FROM
+
+
+def _restamp(db, epoch):
+    con = sqlite3.connect(db)
+    con.execute("UPDATE usage_events SET timestamp = ?, created_at = ?", (epoch, epoch))
+    con.commit()
+    con.close()
+
+
+_CUTOVER = datetime.fromisoformat(RELAY_ROUTE_RECORDED_FROM).replace(tzinfo=timezone.utc).timestamp()
+ROUTES = [
+    ("p1", "custom:meridian-primary", "http://127.0.0.1:3458", None),
+    ("p2", "custom", "http://127.0.0.1:3458/", "msg_1790316687652"),
+    ("y1", "custom", "http://127.0.0.1:3457", REAL_ID),
+    ("y2", "custom:meridian-yugen", None, None),
+    ("k1", "kimi-coding", "https://api.kimi.com/coding", None),
+    ("c1", "custom", "http://127.0.0.1:8017/v1", None),
+]
+
+
+def test_relay_route_is_recorded_from_the_cutover(tmp_path):
+    db = _sidecar(tmp_path, ROUTES)
+    _restamp(db, _CUTOVER)
+    by = {row["source_event_id"]: row for row in collect_hermes_usage(db, "sol:hermes")}
+    assert by["p1"]["x_relay_route"] == by["p2"]["x_relay_route"] == "meridian-primary"
+    assert by["y1"]["x_relay_route"] == by["y2"]["x_relay_route"] == "meridian-yugen"
+    assert "x_relay_route" not in by["k1"] and "x_relay_route" not in by["c1"]
+    # The route is recorded alongside, never instead of, the id rules.
+    assert by["y1"]["provider_request_id"] == REAL_ID and by["p2"]["provider_request_id"] is None
+
+
+def test_rows_before_the_cutover_keep_their_stored_shape(tmp_path):
+    db = _sidecar(tmp_path, ROUTES)
+    _restamp(db, _CUTOVER - 0.001)
+    for row in collect_hermes_usage(db, "sol:hermes"):
+        assert "x_relay_route" not in row

@@ -125,7 +125,35 @@ _HERMES_RELAYED_BASE_URLS = {
     "http://127.0.0.1:3458": "anthropic",  # meridian-primary
     "http://127.0.0.1:3457": "anthropic",  # meridian-yugen
 }
+# Which Meridian lane (so which Claude account) a Hermes call went through.
+# Keeper, Discord unified usage ledger thread msg 1552986099343818813:
+# "meridian primary and meridian yugen are really anthropic 1 and 2". Hermes
+# labels some calls bare ``custom`` (cron pins onto the Meridian providers),
+# and a call whose response id is not Anthropic's carries no
+# ``upstream_provider``, so the route is recorded on its own as
+# ``x_relay_route``. Readers use it to count such a call through its Claude
+# SDK receipt and to name the account.
+_HERMES_RELAY_ROUTE_NAMES = {
+    "custom:meridian-primary": "meridian-primary",
+    "custom:meridian-yugen": "meridian-yugen",
+}
+_HERMES_RELAY_BASE_URL_NAMES = {
+    "http://127.0.0.1:3458": "meridian-primary",
+    "http://127.0.0.1:3457": "meridian-yugen",
+}
+# Only rows at or after this instant get the field. The adapter re-reads the
+# whole sidecar every run, and a stored identity whose payload changes is a
+# conflict, so rows collected before the change keep their stored shape.
+# Chosen past the last collector run that could still start on the old code.
+RELAY_ROUTE_RECORDED_FROM = "2026-09-25T12:00:00"
 _ANTHROPIC_MESSAGE_ID_RE = re.compile(r"^msg_(?![0-9]+$)[0-9A-Za-z]{20,}$")
+
+
+def _hermes_relay_route(provider: Any, base_url: Any) -> str | None:
+    route = _HERMES_RELAY_ROUTE_NAMES.get(_optional_text(provider) or "")
+    if route is None:
+        route = _HERMES_RELAY_BASE_URL_NAMES.get((_optional_text(base_url) or "").rstrip("/"))
+    return route
 _UPSTREAM_ID_SHAPES = {"anthropic": _ANTHROPIC_MESSAGE_ID_RE}
 
 
@@ -221,6 +249,9 @@ def collect_hermes_usage(db_path: str | Path, source_namespace: str, *, batch_si
                         row["provider_request_id"]=request_id; row["upstream_provider"]=upstream
                     else:
                         row["x_hermes_response_id"]=response_id
+                relay_route=_hermes_relay_route(r.get("provider"),r.get("billing_base_url"))
+                if relay_route is not None and occurred.rstrip("Z")>=RELAY_ROUTE_RECORDED_FROM:
+                    row["x_relay_route"]=relay_route
                 yield normalize_fact(row)
     finally: con.close()
 
