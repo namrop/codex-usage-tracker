@@ -94,10 +94,19 @@ RATE_BASIS = "standard"
 # unpriced coverage. Aliasing beats copying the anthropic rate table under
 # more keys, which would drift the moment one copy is edited.
 #
-# Bare ``custom`` is deliberately NOT aliased: that label carries both Claude
-# and GPT model ids (residue of an older route), so a provider-level alias
-# would misprice half of it. It stays coverage until its rows carry a
-# specific provider.
+# Bare ``custom`` is deliberately NOT aliased. CORRECTED 2026-09-24 by the
+# nightly price-coverage job: the earlier note here called it "residue of an
+# older route", but it is live traffic. Every bare-``custom`` row in the
+# 14-day window is a cron session from a job that jobs.json pins to
+# ``provider: custom:meridian-primary`` or ``custom:meridian-yugen``. Their
+# ``billing_base_url`` is a Meridian port (:3458 / :3457) and their
+# ``model_reported`` is a real Claude id. Other cron runs on the same ports,
+# including at least one pinned job (9ba33bba64c3), record the full
+# ``custom:meridian-*`` label. So the writer loses the provider name on some
+# cron runs; the exact trigger is not established. The fix belongs in the
+# Hermes ledger writer, not here. An alias would price these rows correctly
+# today, but it would hide the writer defect and claim that every anonymous
+# custom endpoint is Meridian.
 PROVIDER_RATE_ALIASES: Dict[str, str] = {
     "custom:meridian-yugen": "anthropic",
     "custom:meridian-primary": "anthropic",
@@ -176,6 +185,31 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
             # 4.6-generation onward, so this entry deliberately has no nested
             # "long" table.
             "claude-opus-5-5": {"input": "4", "output": "20", "cache_read": "0.20", "cache_write": "5.00"},
+            # claude-opus-5-5[1m]: added 2026-09-24 by the nightly
+            # price-coverage job. "[1m]" is Claude Code's context-window
+            # selector appended to a full model name, not a separate model:
+            # code.claude.com/docs/en/model-config ("append [1m] to a full
+            # model name"; Claude Code "resolves claude-opus-4-8[1m] to Opus
+            # 4.8"), read 2026-09-24. The ledger shows the same thing: 155
+            # main-loop rows that requested this id came back from the
+            # provider reporting claude-opus-5-5. Only background_review rows,
+            # which carry no reported identity, reach pricing under the
+            # suffixed id.
+            #
+            # Same rates as claude-opus-5-5 because Anthropic prices the 1M
+            # window at standard rates for this model: the pricing table
+            # (platform.claude.com/docs/en/about-claude/pricing.md, read
+            # 2026-09-24) lists Opus 5.5 at $4 input / $5 5m cache write /
+            # $0.20 cache hit / $20 output, and its Long context section says
+            # "Claude 4.6 and later models ... include the full 1M token
+            # context window at standard pricing." So there is no long table.
+            #
+            # This is an explicit per-model entry, NOT a rule that strips
+            # "[1m]" from every id. The suffix matters for pricing on any
+            # model that has a long-context premium, because only the 1M
+            # variant can send a prompt past 200K. A new "<model>[1m]" id
+            # should therefore show up as a gap and get its own page check.
+            "claude-opus-5-5[1m]": {"input": "4", "output": "20", "cache_read": "0.20", "cache_write": "5.00"},
             "claude-opus-5": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},
             "claude-opus-4-8": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},
             "claude-opus-4-6": {"input": "5", "output": "25", "cache_read": "0.50", "cache_write": "6.25"},

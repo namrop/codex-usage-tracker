@@ -102,9 +102,45 @@ def test_new_claude_model_on_meridian_is_unpriced_until_given_an_entry():
 
 
 def test_bare_custom_provider_is_not_aliased():
-    """``custom`` carries both Claude and GPT ids, so it cannot be aliased."""
+    """Bare ``custom`` on Meridian traffic is a ledger-writer labelling defect.
+
+    Cron runs pinned to ``custom:meridian-*`` sometimes record plain
+    ``custom``. Aliasing the label here would hide that defect, so these rows
+    stay visible as coverage until the writer records the real provider.
+    """
     assert resolve_rate_provider("custom", "claude-opus-5") == "custom"
     assert classify("custom", "claude-opus-5") == "unpriced"
+    assert classify("custom", "claude-opus-5-5") == "unpriced"
+
+
+def test_opus_5_5_1m_variant_prices_as_opus_5_5_on_meridian():
+    """``[1m]`` selects Opus 5.5's 1M window, which Anthropic bills at
+    standard rates. Background-review rows carry the suffixed id because they
+    have no provider-reported identity."""
+    assert classify("custom:meridian-yugen", "claude-opus-5-5[1m]") == "exact"
+    assert LIST_PRICES["anthropic"]["models"]["claude-opus-5-5[1m]"] == (
+        LIST_PRICES["anthropic"]["models"]["claude-opus-5-5"]
+    )
+    tokens = dict(input_tokens=34, output_tokens=15_510,
+                  cache_read_tokens=4_380_317, cache_write_tokens=323_481,
+                  total_tokens=4_719_342)
+    plain = estimate_list_price([
+        {"provider": "custom:meridian-yugen", "model": "claude-opus-5-5",
+         "context_basis": "long", **tokens}])
+    suffixed = estimate_list_price([
+        {"provider": "custom:meridian-yugen", "model": "claude-opus-5-5[1m]",
+         "context_basis": "long", **tokens}])
+    assert suffixed["estimate_usd"] == plain["estimate_usd"]
+    # No long-context meter exists for this model, so none may be reported.
+    assert suffixed["long_context_tokens"] == 0
+
+
+def test_1m_suffix_is_not_stripped_generically():
+    """Only models whose 1M pricing was checked get a suffixed entry. On a
+    model with a long-context premium the suffix changes the price, so a new
+    ``<model>[1m]`` must surface as a gap."""
+    assert classify("custom:meridian-yugen", "claude-opus-5[1m]") == "unpriced"
+    assert classify("custom:meridian-primary", "claude-sonnet-4-6[1m]") == "unpriced"
 
 
 # ── actionable vs acknowledged ────────────────────────────────────────────
