@@ -32,6 +32,11 @@ Coverage limitations, stated rather than papered over (see ``RATE_BASIS``):
   independently document the same 272,000-token boundary. Models awaiting
   threshold evidence can be listed in ``LONG_CONTEXT_UNVERIFIED``; this set
   is currently empty.
+- DeepSeek Flash has time-of-day API tariffs. The current bucket shape does
+  not retain a peak/off-peak classification, so its published OFF-PEAK rate
+  is a lower-bound list-price estimate, not an actual-bill reconstruction;
+  peak-period requests cost twice as much. Its cache-write charge is not
+  published and is recorded as zero (an additional possible understatement).
 
 Provenance note: the 2026-09-06 OpenAI rates below were retrieved from the
 vendor pages by the parent agent. They are dated source observations, not
@@ -495,24 +500,33 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
         },
         "default": None,
     },
-    # DeepSeek list: v4-pro $0.95/$4.00, v4-flash $0.14/$0.28. Cache-hit rate
-    # not found in the checked sources — ASSUMED 10% of input, the provider
-    # convention; verify. This is the last surviving INFERRED rate in the
-    # table and it should not be here. It survives only because the provider
-    # has no current traffic. Replace it with a figure published by DeepSeek,
-    # or delete these models and let them surface as coverage.
+    # DeepSeek FIRST-PARTY API card, read 2026-09-25:
+    # https://api-docs.deepseek.com/quick_start/pricing
+    # Off-peak per-Mtok (cache miss / hit / output): Flash
+    # $0.15 / $0.003 / $0.60; V4 Pro $0.66 / $0.022 / $1.98.
+    # Peak: Flash $0.30 / $0.006 / $1.20; Pro $1.32 / $0.044 / $3.96.
+    # Peak is 01-04 and 06-10 UTC weekdays excluding Chinese holidays. Our
+    # buckets lack a time-tier dimension: these are the published OFF-PEAK
+    # FLOOR, not a blended or actual-bill rate; peak usage can cost 2x.
+    # No cache-write tariff is published: zero is a written-down possible
+    # understatement, not a statement that writes are free. Both models
+    # list a 1M context with no published pricing cliff; no "long" tables.
     #
-    # PROVIDER DEFAULT REMOVED 2026-09-24, and this one was not hypothetical:
-    # the ledger holds ~119M tokens of gpt-5.5, plus gemini-3.5-flash,
-    # gpt-5.4 and a local mlx model, all recorded under a 'deepseek' provider
-    # label. That default silently priced OpenAI and Google traffic at
-    # DeepSeek rates. A provider default cannot distinguish an unlisted
-    # sibling from a foreign model, which is why only $0 local defaults
-    # remain sanctioned.
+    # The requested legacy deepseek-v4-flash now SERVES V4.1-Flash at the
+    # Flash tariff, so its current list price is the SAME as deepseek-flash.
+    # The sidecar's two new rows request that legacy id but report
+    # deepseek-flash; the detector uses the provider-reported id. Release:
+    # https://api-docs.deepseek.com/news/news260910 (read 2026-09-25).
+    # Old seeded rates for the two legacy ids contained INFERRED cache-hit
+    # coefficients and have been replaced with the published current card.
+    #
+    # PROVIDER DEFAULT REMOVED 2026-09-24: the label also carried foreign GPT
+    # and Gemini traffic. No rate-bearing fallback may silently price them.
     "deepseek": {
         "models": {
-            "deepseek-v4-pro": {"input": "0.95", "output": "4.00", "cache_read": "0.095", "cache_write": "0"},
-            "deepseek-v4-flash": {"input": "0.14", "output": "0.28", "cache_read": "0.014", "cache_write": "0"},
+            "deepseek-v4-pro": {"input": "0.66", "output": "1.98", "cache_read": "0.022", "cache_write": "0"},
+            "deepseek-v4-flash": {"input": "0.15", "output": "0.60", "cache_read": "0.003", "cache_write": "0"},
+            "deepseek-flash": {"input": "0.15", "output": "0.60", "cache_read": "0.003", "cache_write": "0"},
         },
         "default": None,
     },

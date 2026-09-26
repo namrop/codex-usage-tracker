@@ -294,6 +294,28 @@ def test_glm_flash_carries_its_published_rate_not_a_stand_in():
     assert zai["default"] is None
 
 
+def test_deepseek_current_offpeak_floor_uses_vendor_rates_not_seeded_guesses():
+    """The current vendor card publishes two time tariffs, but our buckets
+    cannot encode the tariff window. Pin the *published* off-peak floor here,
+    not the old inferred cache-hit convention or a made-up blended rate.
+    """
+    deepseek = LIST_PRICES["deepseek"]
+    assert deepseek["default"] is None
+    flash = {"input": "0.15", "output": "0.60", "cache_read": "0.003", "cache_write": "0"}
+    assert deepseek["models"]["deepseek-flash"] == flash
+    assert deepseek["models"]["deepseek-v4-flash"] == flash
+    assert deepseek["models"]["deepseek-v4-pro"] == {
+        "input": "0.66", "output": "1.98", "cache_read": "0.022", "cache_write": "0",
+    }
+    assert "long" not in flash
+    priced = estimate_list_price([_bucket(
+        "deepseek", "deepseek-flash", input_tokens=1_000_000,
+        output_tokens=1_000_000, cache_read_tokens=1_000_000,
+    )])
+    assert priced["estimate_usd"] == "0.75"
+    assert priced["priced_token_share"] == 1.0
+
+
 def test_no_paid_provider_keeps_a_rate_bearing_default():
     """The invariant the 2026-09-24 audit settled on.
 

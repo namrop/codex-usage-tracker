@@ -191,6 +191,19 @@ def test_foreign_model_under_a_provider_label_is_no_longer_priced_silently():
     assert len(report["actionable"]) == 1
 
 
+def test_deepseek_reported_flash_is_exact_but_foreign_model_remains_a_gap():
+    """The provider echoes the new id for a request using the old flash id."""
+    report = coverage_report([
+        _pair("deepseek", "deepseek-flash", tokens=77005),
+        _pair("deepseek", "gpt-5.5", tokens=10),
+    ])
+    assert classify("deepseek", "deepseek-flash") == "exact"
+    assert report["token_totals"]["exact"] == 77005
+    assert [(row["provider"], row["model"]) for row in report["actionable"]] == [
+        ("deepseek", "gpt-5.5")
+    ]
+
+
 def test_published_rates_reached_the_providers_that_serve_them():
     """Keeper directive 2026-09-24: price the models used from the providers
     used. Each of these carries real traffic under that exact label."""
