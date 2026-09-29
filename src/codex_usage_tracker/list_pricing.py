@@ -225,6 +225,15 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
             "claude-sonnet-5": {"input": "2", "output": "10", "cache_read": "0.20", "cache_write": "2.50"},
             "claude-sonnet-4-6": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.75"},
             "claude-haiku-4-5": {"input": "1", "output": "5", "cache_read": "0.10", "cache_write": "1.25"},
+            # The provider-reported dated ID is Haiku 4.5; the shorter ID
+            # above is its Claude API alias, not another tariff. Anthropic's
+            # model roster confirms both IDs and the 200k context window:
+            # https://platform.claude.com/docs/en/about-claude/models/overview.md
+            # Anthropic's own model-pricing table publishes all four rates
+            # (5-minute cache write); both pages read 2026-09-28:
+            # https://platform.claude.com/docs/en/about-claude/pricing.md
+            # No nested long tier: the model's context window ends at 200k.
+            "claude-haiku-4-5-20251001": {"input": "1", "output": "5", "cache_read": "0.10", "cache_write": "1.25"},
         },
         # Unlisted anthropic models price at the fable tier (conservative-high).
         "default": {"input": "10", "output": "50", "cache_read": "1.00", "cache_write": "12.50"},

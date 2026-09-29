@@ -64,6 +64,25 @@ def test_meridian_claude_traffic_resolves_to_anthropic_rates():
     assert classify("custom:meridian-primary", "claude-opus-5") == "exact"
 
 
+def test_haiku_4_5_dated_id_on_meridian_uses_verified_haiku_rates():
+    """The provider reports the dated API ID, not the requested short alias."""
+    model = "claude-haiku-4-5-20251001"
+    expected = {"input": "1", "output": "5", "cache_read": "0.10", "cache_write": "1.25"}
+    assert LIST_PRICES["anthropic"]["models"][model] == expected
+    assert resolve_rate_provider("custom:meridian-yugen", model) == "anthropic"
+    assert classify("custom:meridian-yugen", model) == "exact"
+    row = {
+        "provider": "custom:meridian-yugen", "model": model,
+        "input_tokens": 1_000_000, "output_tokens": 1_000_000,
+        "cache_read_tokens": 1_000_000, "cache_write_tokens": 1_000_000,
+        "total_tokens": 4_000_000,
+    }
+    result = estimate_list_price([row])
+    assert result["estimate_usd"] == "7.35"
+    assert result["priced_token_share"] == 1.0
+    assert coverage_report([_pair("custom:meridian-yugen", model)])["actionable"] == []
+
+
 def test_meridian_priced_identically_to_direct_anthropic():
     tokens = dict(input_tokens=1_000_000, output_tokens=100_000)
     direct = estimate_list_price([
