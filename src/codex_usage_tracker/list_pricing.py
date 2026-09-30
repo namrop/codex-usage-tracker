@@ -386,6 +386,20 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
     # borrow an unrelated model's rate.
     "openrouter": {
         "models": {
+            # OpenRouter's OWN public catalog for this exact route, read
+            # 2026-09-29: https://openrouter.ai/api/v1/models and
+            # https://openrouter.ai/api/v1/models/anthropic/claude-opus-5.5/endpoints
+            # Per-token prompt/completion/cache-read/5m-cache-write prices
+            # (0.000004/0.00002/0.0000002/0.000005) converted to USD/MTok.
+            # The 1M-context endpoints list no context-tier overrides;
+            # Anthropic's model-specific pricing page confirms Opus 5.5 has
+            # standard rates through 1M (read 2026-09-29):
+            # https://platform.claude.com/docs/en/about-claude/pricing.md
+            # Endpoint variance remains: standard routing lists $4/$20,
+            # while some endpoints are $4.40/$22 or $8/$40 (Fast).
+            "anthropic/claude-opus-5.5": {
+                "input": "4", "output": "20", "cache_read": "0.20", "cache_write": "5",
+            },
             # The 272K long-context override is published in the catalog for
             # both GPT-6 routes and matches OpenAI's own documented threshold
             # and multipliers — independent cross-confirmation.

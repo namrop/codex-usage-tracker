@@ -82,6 +82,23 @@ def test_haiku_4_5_dated_id_on_meridian_uses_verified_haiku_rates():
     assert result["priced_token_share"] == 1.0
     assert coverage_report([_pair("custom:meridian-yugen", model)])["actionable"] == []
 
+def test_openrouter_opus_5_5_has_its_own_verified_route_price():
+    model = "anthropic/claude-opus-5.5"
+    assert classify("openrouter", model) == "exact"
+    assert LIST_PRICES["openrouter"]["models"][model] == {
+        "input": "4", "output": "20", "cache_read": "0.20", "cache_write": "5",
+    }
+    result = estimate_list_price([{
+        "provider": "openrouter", "model": model,
+        "input_tokens": 1_000_000, "output_tokens": 1_000_000,
+        "cache_read_tokens": 1_000_000, "cache_write_tokens": 1_000_000,
+        "total_tokens": 4_000_000, "context_basis": "long",
+    }])
+    assert result["estimate_usd"] == "29.20"
+    assert result["long_context_tokens"] == 0
+    assert coverage_report([_pair("openrouter", model)])["actionable"] == []
+    assert classify("openrouter", "anthropic/claude-opus-5.6") == "unpriced"
+
 
 def test_meridian_priced_identically_to_direct_anthropic():
     tokens = dict(input_tokens=1_000_000, output_tokens=100_000)
