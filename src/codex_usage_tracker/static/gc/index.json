@@ -30,7 +30,8 @@
     "diadem.session-type": [
       "main",
       "cron",
-      "delegated"
+      "delegated",
+      "native"
     ]
   },
   "modifiers": [
@@ -38,8 +39,8 @@
   ],
   "themes": [
     {
-      "name": "governed-cognition",
-      "title": "Governed Cognition",
+      "name": "abyssal-covenant",
+      "title": "Abyssal Covenant",
       "native_shape": "rounded",
       "hard_edged": false,
       "shapes": [
@@ -47,17 +48,86 @@
         "hard",
         "slanted"
       ],
-      "css": "theme-governed-cognition.css",
-      "tokens": "tokens/governed-cognition.json",
+      "css": "theme-abyssal-covenant.css",
+      "tokens": "tokens/abyssal-covenant.json",
+      "assets": {},
+      "scheme": "dark",
+      "schemes": [
+        "dark",
+        "light"
+      ],
+      "scheme_halves": {
+        "light": {
+          "assets": {}
+        }
+      }
+    },
+    {
+      "name": "alexandria",
+      "title": "Alexandria",
+      "native_shape": "hard",
+      "hard_edged": true,
+      "shapes": [
+        "hard",
+        "slanted"
+      ],
+      "css": "theme-alexandria.css",
+      "tokens": "tokens/alexandria.json",
       "assets": {
         "background": {
-          "file": "assets/governed-cognition-bg-91f7d6db05b5.webp",
-          "bytes": 5780,
-          "sha256": "91f7d6db05b518fb84f2dfd56d9a91f3150dbcbb44e77308c617710e9d95e2fc",
+          "file": "assets/alexandria-bg-41a3ae74cb69.webp",
+          "bytes": 33636,
+          "sha256": "41a3ae74cb690cdc4f2f80f1a09aac3c1a6aa672efcb387c7497f1b820f915bf",
           "size": "cover",
           "repeat": "no-repeat",
+          "position": "center top",
           "width": 1024,
-          "height": 1024
+          "height": 683
+        }
+      },
+      "scheme": "dark",
+      "schemes": [
+        "dark",
+        "light"
+      ],
+      "scheme_halves": {
+        "light": {
+          "assets": {
+            "background": {
+              "file": "assets/alexandria-light-bg-f90ffcbb3618.webp",
+              "bytes": 33370,
+              "sha256": "f90ffcbb3618930ac87883c9073c91eec466e9c2037a6c69d557bb85078c49a0",
+              "size": "cover",
+              "repeat": "no-repeat",
+              "position": "center top",
+              "width": 1024,
+              "height": 683
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "chromatic-festival",
+      "title": "Chromatic Festival",
+      "native_shape": "rounded",
+      "hard_edged": false,
+      "shapes": [
+        "rounded",
+        "hard",
+        "slanted"
+      ],
+      "css": "theme-chromatic-festival.css",
+      "tokens": "tokens/chromatic-festival.json",
+      "assets": {},
+      "scheme": "dark",
+      "schemes": [
+        "dark",
+        "light"
+      ],
+      "scheme_halves": {
+        "light": {
+          "assets": {}
         }
       }
     },
@@ -80,8 +150,30 @@
           "sha256": "98aa005880e1963f574c2cb8e7892a0fa4395479b3f5c1421ce49c1757555de9",
           "size": "650px",
           "repeat": "repeat",
+          "position": "center top",
           "width": 1024,
           "height": 1024
+        }
+      },
+      "scheme": "light",
+      "schemes": [
+        "light",
+        "dark"
+      ],
+      "scheme_halves": {
+        "dark": {
+          "assets": {
+            "background": {
+              "file": "assets/johannah-dark-bg-402c6bcdfcaf.webp",
+              "bytes": 55374,
+              "sha256": "402c6bcdfcafbf20745c159c1accc7828112cff509641f93ba31a9475f52f2ce",
+              "size": "cover",
+              "repeat": "no-repeat",
+              "position": "left top",
+              "width": 1536,
+              "height": 1024
+            }
+          }
         }
       }
     },
@@ -103,8 +195,30 @@
           "sha256": "110f0d4c768fd6f0f683b883228f34c4f0d2395d2683cafb8c9714302a579547",
           "size": "cover",
           "repeat": "no-repeat",
+          "position": "center top",
           "width": 1536,
           "height": 1024
+        }
+      },
+      "scheme": "dark",
+      "schemes": [
+        "dark",
+        "light"
+      ],
+      "scheme_halves": {
+        "light": {
+          "assets": {
+            "background": {
+              "file": "assets/namrop-light-bg-0f2ef50bfb6f.webp",
+              "bytes": 81974,
+              "sha256": "0f2ef50bfb6fb5ab424f90dc37667795e585e2f15c9af10f506a146a0f728c49",
+              "size": "cover",
+              "repeat": "no-repeat",
+              "position": "center top",
+              "width": 1536,
+              "height": 1024
+            }
+          }
         }
       }
     },
@@ -121,16 +235,33 @@
       "tokens": "tokens/neo-andean.json",
       "assets": {
         "background": {
-          "file": "assets/neo-andean-bg-b94a9226869b.webp",
-          "bytes": 5282,
-          "sha256": "b94a9226869b999a8231645e3656ef87c60930aae2caa350faa9062c03308fcd",
+          "file": "assets/neo-andean-bg-8e5ed937d03e.webp",
+          "bytes": 74094,
+          "sha256": "8e5ed937d03e14ac47401b00e4355202c6e822119ead14cc9cea0b82acf3f21e",
           "size": "cover",
           "repeat": "no-repeat",
-          "width": 1024,
+          "position": "center top",
+          "width": 1536,
           "height": 1024
+        }
+      },
+      "scheme": "dark",
+      "schemes": [
+        "dark",
+        "light"
+      ],
+      "scheme_halves": {
+        "light": {
+          "assets": {}
         }
       }
     }
+  ],
+  "scheme_preferences": [
+    "native",
+    "light",
+    "dark",
+    "system"
   ],
   "shapes": [
     {
@@ -146,7 +277,7 @@
       "css": "shape-slant.css"
     }
   ],
-  "default_theme": "governed-cognition",
+  "default_theme": "alexandria",
   "runtime": {
     "loader": "loader.js",
     "switcher": {
@@ -156,7 +287,23 @@
     "glass": {
       "css": "glass.css"
     },
-    "types": "loader.d.ts"
+    "types": "loader.d.ts",
+    "gallery": {
+      "html": "index.html",
+      "css": "gallery.css",
+      "themes_css": "gallery-themes.css",
+      "js": "gallery-app.js",
+      "samples": {
+        "dir": "samples/",
+        "kinds": [
+          "reading",
+          "dashboard",
+          "console"
+        ],
+        "css": "samples.css",
+        "js": "samples.js"
+      }
+    }
   },
   "adapters": {
     "shadcn": "gc-shadcn.css"

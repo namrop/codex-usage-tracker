@@ -44,10 +44,13 @@
 		themeGroup.className = "gc-switcher-themes";
 		const shapeGroup = document.createElement("fieldset");
 		shapeGroup.className = "gc-switcher-shape";
+		const schemeGroup = document.createElement("fieldset");
+		schemeGroup.className = "gc-switcher-scheme";
 		const glassGroup = document.createElement("fieldset");
 		glassGroup.className = "gc-switcher-glass";
 		panel.appendChild(themeGroup);
 		panel.appendChild(shapeGroup);
+		panel.appendChild(schemeGroup);
 		panel.appendChild(glassGroup);
 		root.appendChild(gear);
 		host.appendChild(root);
@@ -90,6 +93,41 @@
 		function describeShape(value) {
 			const title = SHAPE_TITLE[value];
 			return title ? { title } : null;
+		}
+		const SCHEME_TITLE = {
+			native: "each theme in the half it was designed in",
+			light: "the light half of every theme",
+			dark: "the dark half of every theme",
+			system: "follow this device's light/dark setting"
+		};
+		function renderSchemeOptions(theme) {
+			schemeGroup.textContent = "";
+			if (typeof GC.setScheme !== "function" || typeof GC.scheme !== "function") {
+				schemeGroup.hidden = true;
+				return;
+			}
+			schemeGroup.hidden = false;
+			const native = typeof GC.nativeScheme === "function" ? GC.nativeScheme(theme) : null;
+			const carried = typeof GC.schemes === "function" ? GC.schemes(theme) : [];
+			fill(schemeGroup, "scheme", [
+				"native",
+				"light",
+				"dark",
+				"system"
+			], GC.scheme(), id + "-scheme", (pref) => {
+				GC.setScheme(pref);
+			}, (pref) => ({
+				label: pref === "native" && native ? "native · " + native : pref,
+				title: SCHEME_TITLE[pref]
+			}));
+			if (carried.length) schemeGroup.querySelectorAll("input").forEach((input) => {
+				const half = input.value;
+				if ((half === "light" || half === "dark") && carried.indexOf(half) === -1) {
+					input.disabled = true;
+					const wrap = input.closest("label");
+					if (wrap) wrap.title = "this theme ships no " + half + " half";
+				}
+			});
 		}
 		const GLASS_TITLE = "liquid glass on premier surfaces — refraction on Chromium; plain frosted glass on Safari/Firefox; your reduced-transparency system setting turns it off entirely";
 		function renderGlassOption() {
@@ -157,6 +195,7 @@
 				state.shape = shape;
 				GC.apply(state.theme, shape);
 			}, describeShape);
+			renderSchemeOptions(state.theme);
 			renderGlassOption();
 		}
 		function place() {

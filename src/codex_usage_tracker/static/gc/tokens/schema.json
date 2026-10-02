@@ -62,14 +62,15 @@
         "members": [
           "main",
           "cron",
-          "delegated"
+          "delegated",
+          "native"
         ],
-        "note": "The sidebar session-type dots (diadem v0.9 keeper rider): the dot's base color encodes the session TYPE; liveness stays on the pulse animation. main = the primary interactive lane, cron = scheduled/mechanical, delegated = sub-agent lanes."
+        "note": "The sidebar session-type dots (diadem v0.9 keeper rider): the dot's base color encodes the session TYPE; liveness stays on the pulse animation. main = the primary interactive lane, cron = scheduled/mechanical, delegated = sub-agent lanes, native = Diadem-born \u2014 a session Diadem itself created and owns the write path to. The fourth member was keeper-ruled 2026-09-02 (\u03b3 seed R4: \"session types are GC-owned\"; the name `native` ruled the same day): the set grows here, in the schema, and every theme maps it \u2014 Diadem re-vendors, it does not mint its own."
       }
     }
   },
   "modifiers": {
-    "doctrine": "A state modifier is a systematic transform for state variants (highlighted/not, ...). It is declared ONCE here, applied to roles and set-members alike at generate time, DERIVED by default (a lightness shift in HLS space), theme-tunable (a theme may set its own shift — light themes typically darken where dark themes lighten), and per-token overridable (a theme may pin an explicit value for one derived token). The keeper's session-type observation — 'technically 6 colors because of highlighted/not' — is 3 set-members x 1 modifier, not 6 free choices.",
+    "doctrine": "A state modifier is a systematic transform for state variants (highlighted/not, ...). It is declared ONCE here, applied to roles and set-members alike at generate time, DERIVED by default (a lightness shift in HLS space), theme-tunable (a theme may set its own shift — light themes typically darken where dark themes lighten), and per-token overridable (a theme may pin an explicit value for one derived token). The keeper's session-type observation — 'technically 6 colors because of highlighted/not' — was 3 set-members x 1 modifier, not 6 free choices; since the fourth member (native, 2026-09-02) it is 4 x 1, still not 8 free choices.",
     "declared": {
       "hi": {
         "meaning": "highlighted / active / selected emphasis of the base token",
@@ -153,7 +154,8 @@
           "dark",
           "light"
         ],
-        "doctrine": "The theme declares its own browser color-scheme; apps never hardcode one. Added 2026-08-29 (ai-usage consumer round: johannah is a light theme and the hardcoded dark was a latent defect)."
+        "doctrine": "The theme declares its own browser color-scheme; apps never hardcode one. Added 2026-08-29 (ai-usage consumer round: johannah is a light theme and the hardcoded dark was a latent defect).",
+        "pairs": "Every theme is a light/dark PAIR (keeper, 2026-10-01: 'they are forced dark mode or light mode, I want to make the pairs for them please'). color.scheme names the NATIVE half; the other half lives under the theme's top-level `schemes.<scheme>` block — colour only (color.roles/surface/syntax/extra, sets, modifiers, modifier_overrides, shape.lift, notes), held to the same coverage by conformance.py. Shape geometry, motion and type are the theme's own in both halves. Merge rule: conformance.scheme_view. Delivery: the native half is the sheet's :root block, the other is :root[data-gc-scheme=\"<scheme>\"], which the loader sets from the app's scheme preference (native | light | dark | system)."
       }
     },
     "shape": {

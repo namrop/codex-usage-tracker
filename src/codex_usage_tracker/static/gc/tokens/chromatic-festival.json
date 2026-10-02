@@ -1,0 +1,223 @@
+{
+  "name": "chromatic-festival",
+  "title": "Chromatic Festival",
+  "description": "Sugar-skull warmth x cyberpunk contrast x synthwave motion on a chromatic dark base — the Lighthouse OS chromatic system v0.1. Chromatic, not black: the bases retain hue so saturated accents read as intentional. Donor of record: ChatGPT session 01544 (2026-01-21), message 8 (the named palette + semantic table + contrast rules) and message 14 (the palette visualizer, whose :root block and mock-log classes ARE the authored semantic mapping). Luis graded it in-session: 'That's pretty good.'",
+  "color": {
+    "roles": {
+      "structure": "#7DF9FF",
+      "info": "#00CFFF",
+      "stability": "#2ED1C2",
+      "threshold": "#FF9F1C",
+      "violation": "#D72638",
+      "intent": "#FF2FB3"
+    },
+    "surface": {
+      "bg": "#0B1020",
+      "fg": "#EAE7FF",
+      "panel": "#1A0F2E",
+      "line": "rgba(125, 249, 255, 0.16)",
+      "muted": "#ACABC1",
+      "muted-alt": "#B8A7FF",
+      "shade": "rgba(0, 0, 0, 0.55)",
+      "terminal": "#0B1020",
+      "raw": "#1A0F2E",
+      "scrollbar-thumb": "#37264E",
+      "scrollbar-thumb-hover": "#4B346A",
+      "scrollbar-track": "#1A0F2E",
+      "bg-deep": "#070A15",
+      "panel-raised": "#241933"
+    },
+    "syntax": {
+      "bg": "#1A0F2E",
+      "fg": "#EAE7FF",
+      "key": "#00CFFF",
+      "string": "#FF9F1C",
+      "number": "#ACABC1",
+      "bool": "#FF2FB3",
+      "null": "#B8A7FF"
+    },
+    "extra": {
+      "abyssal-indigo": "#0B1020",
+      "midnight-plum": "#1A0F2E",
+      "carbon-violet": "#241933",
+      "cold-lilac": "#B8A7FF",
+      "laser-violet": "#8F00FF",
+      "sunset-pink": "#FF6EC7"
+    },
+    "scheme": "dark"
+  },
+  "sets": {
+    "ai-usage.harness": {
+      "claude_code": "#7DF9FF",
+      "claude_code_secondary": "#B8A7FF",
+      "hermes": "#FF9F1C",
+      "opencode": "#FF2FB3"
+    },
+    "ai-usage.series-rank": {
+      "rank-1": "#7DF9FF",
+      "rank-2": "#00CFFF",
+      "rank-3": "#2ED1C2",
+      "rank-4": "#B8A7FF",
+      "rank-5": "#8F00FF",
+      "rank-6": "#FF2FB3",
+      "rank-7": "#FF6EC7",
+      "rank-8": "#FF9F1C",
+      "rank-9": "#AE47FF",
+      "rank-10": "#0095B8"
+    },
+    "diadem.session-type": {
+      "main": "#2ED1C2",
+      "cron": "#B8A7FF",
+      "delegated": "#8F00FF",
+      "native": "#FF9F1C"
+    }
+  },
+  "modifiers": {
+    "hi": {
+      "lightness": 0.14
+    }
+  },
+  "shape": {
+    "native": "rounded",
+    "radius": {
+      "xs": "4px",
+      "sm": "8px",
+      "md": "12px",
+      "lg": "14px",
+      "xl": "16px",
+      "pill": "999px"
+    },
+    "lift": "rgba(125, 249, 255, 0.06)"
+  },
+  "motion": {
+    "timings": {
+      "fast": "0.14s",
+      "med": "0.22s",
+      "slide": "0.28s",
+      "pulse": "2s",
+      "pulse-fast": "1.1s",
+      "blink": "1.6s",
+      "flash": "1.8s",
+      "breathe": "4s"
+    },
+    "amplitudes": {
+      "pulse": 0.8
+    }
+  },
+  "type": {
+    "family": {
+      "body": "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, 'Apple Color Emoji', 'Segoe UI Emoji'",
+      "display": "@body",
+      "mono": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace"
+    },
+    "scale": {
+      "xs": "10px",
+      "sm": "12px",
+      "base": "14px",
+      "lg": "15px",
+      "xl": "18px"
+    },
+    "leading": {
+      "code": 1.45,
+      "base": 1.55,
+      "prose": 1.7
+    }
+  },
+  "notes": {
+    "provenance": "SOURCE OF RECORD is ChatGPT session 01544, /srv/pharos/lantern_chamber_logs_split/chatgpt_exports_split/imports/acubens-home-20260612T022654Z/conversations/01544-lighthouse-os-color-scheme-69705ecc-7374-8326-925a-9ba97f58512c.md — msg 8 (palette v0.1, 2026-01-21) and msg 14 (the HTML visualizer). CORRECTION: the Atrium canon note 20_digital_architecture/color_schemes/chromatic_festival_synth_ritual_palette_2026-04-03.md captured a LATER restatement (session 01667) whose hexes are Tailwind defaults (#67E8F9, #2DD4BF, #F472B6, #FB923C, #8B5CF6, #3B82F6, #0D1021, #1A1024, #111827). Those are NOT the authored palette — they are a downstream normalization onto an off-the-shelf ramp. This theme uses 01544's hexes throughout; the canon note wants a provenance correction, which is the keeper's to make, not this lane's. Second correction: 01544 declares no --sans/--mono custom properties. The :root block carries only colors; the font stacks live as inline font-family declarations in the mock's body{} (sans) and .log{}/.hex{} (mono), and are carried here verbatim from there.",
+    "roles": "Ruled by Luis from the source's own semantic table, not decorated. structure = Ghost Cyan #7DF9FF — msg 8 §3 'Focus rings, cursors, selection' and §7 (non-negotiable contrast rules) 'Cyan is the only acceptable cursor/focus color'; msg 14 renders it as .focus and '[FOCUS] cursor locked: ghost-cyan'. info = Electric Blue #00CFFF — msg 8 §5 'Data movement, IO, sync'; msg 14 .flow / '[IO] synced packet'. threshold = Cempasuchil Orange #FF9F1C — msg 8 §4 'Meaning, warnings, thresholds' and §6 'Orange -> judgment, thresholds, action required'; msg 14 .warn and the 'Threshold' pill. violation = Blood Magenta #D72638 — msg 8 §4 'Irreversibility, commits, danger', §6 'Red -> commitment, risk, no-rollback states', §7 'Red is never decorative'; msg 14 .risk / '[COMMIT] write intent requires human ack'. Despite the name it is hue 353.9deg and reads red, not magenta. intent = Sacred Fuchsia #FF2FB3 — msg 8 §4 'Creativity, emergence, anomalies', §6 'Magenta / Fuchsia -> creativity, divergence, novelty'; msg 14 .novel / '[NOVEL] emergence'. It is the human/novel channel, and §7's rule 'Purple != Magenta (planning vs emergence)' is what keeps intent apart from Laser Violet, which carries planning.",
+    "stability": "THE ONE JUDGMENT CALL in the role table. ATTESTED: the source has no green anywhere — msg 14's mock closes by offering 'a jade/verde to echo papel picado + marigold compositions' as a color it does not yet have. DRAFTED: stability = Signal Teal #2ED1C2, because the mock's own at-rest class IS Signal Teal — .ok{ color: var(--signal-teal) } rendering '[OK] invariants pass: hash tree', beside the 'Healthy' status pill keyed to the same hue. msg 8 §3 glosses it 'Active states, live systems'. So the hue was drafted onto the role by GC's vocabulary, but the source had already spent it on exactly the semantics the role names. Keeper-tunable: adopting the offered jade/verde would give stability its own hue and widen the 174-191deg crowding noted under 'hue_crowding'.",
+    "hue_crowding": "Flagged against the doctrine sentence ('legibility of governance semantics survives any palette swap'): structure 182.8deg, info 191.3deg and stability 174.5deg sit inside a 17-degree band. The three are separated by lightness and saturation (ghost cyan L .745 S 1.0, electric blue L .500 S 1.0, signal teal L .500 S .639), not by hue. That is the source's own composition — 'Cyan / Teal -> awareness, sensing, observation' is one family in msg 8 §6 — but it is the weakest legibility seam in this theme and the reason a jade/verde stability is worth a ruling.",
+    "surfaces": "bg = Abyssal Indigo #0B1020, panel = Midnight Plum #1A0F2E, panel-raised = Carbon Violet #241933 — msg 8 §2 assigns exactly these three ('Primary background, terminal, canvas' / 'Panels, sidebars, shadow depth' / 'Secondary surfaces, cards'). terminal = #0B1020 is that line verbatim; raw = #1A0F2E is the panel value. fg = #EAE7FF (--text). line = rgba(125,249,255,.16), the --hairline verbatim (it is Ghost Cyan at 16% — the source frames every card, panel, pill and log in it). shade = rgba(0,0,0,.55), the --shadow verbatim. muted-alt = Cold Lilac #B8A7FF, msg 8 §3 'Secondary highlights, metadata'. DERIVED (arithmetic recorded): muted #ACABC1 is a SOLID composite of the source's --muted rgba(234,231,255,.72) over bg #0B1020 — .72*234 + .28*11 = 171.56 -> 172 = AC; .72*231 + .28*16 = 170.80 -> 171 = AB; .72*255 + .28*32 = 192.56 -> 193 = C1. The schema wants a token an app can put anywhere, so the alpha is baked against the base it was authored over. bg-deep #070A15 is Abyssal Indigo at HLS lightness -0.030 (L .084 -> .055), hue and saturation held; the source names no darker stop, so this one is drafted.",
+    "scrollbar": "Keeper-ruled (2026-08-29, v0.1 browse feedback): scrollbars are quiet structure and never an accent. This theme is loud everywhere else, so the rule bites hardest here. thumb #37264E = Carbon Violet at lightness +0.08, hover #4B346A = Carbon Violet at +0.16, track = Midnight Plum verbatim. All three stay inside the base family — no cyan, no marigold, nothing from the ritual heat.",
+    "syntax": "Exactly the schema's own optional_fallbacks logic, written out rather than left implicit: key = info, string = threshold, number = muted, bool = intent, null = muted-alt, bg = panel, fg = fg. No new values invented for the code surface.",
+    "sets": "LANE-DRAFTED, KEEPER-TUNABLE (as namrop's are). series-rank: ranks 1-8 are the eight attested accents that survive the exclusions — Blood Magenta is excluded because violation's hue is never decorative and a ramp is decoration; the three bases are excluded as backgrounds; #EAE7FF is excluded because a series line never wears the text color. Order runs cool-to-warm along the source's own Horizon Gradient (msg 14 .grad): ghost cyan, electric blue, signal teal, cold lilac, laser violet, sacred fuchsia, sunset pink, cempasuchil. Ranks 9-10 are the schema's declared transform, not free invention: #AE47FF is hi(Laser Violet) at the declared 0.14 lightness shift, #0095B8 is Electric Blue at -0.14. SIDE EFFECT, noted and deliberately not patched: because delegated = Laser Violet, the generator's derived diadem.session-type.delegated--hi equals rank-9 #AE47FF verbatim. That is a cross-set collision between two different apps' surfaces, not a within-set one, so no invariant is broken and the pairwise gate is silent on it. harness: claude_code = ghost cyan, secondary = cold lilac, hermes = cempasuchil, opencode = sacred fuchsia. session-type: main = Signal Teal ('Active states, live systems' — the live interactive lane), cron = Cold Lilac ('Secondary highlights, metadata' — mechanical and quiet), delegated = Laser Violet (msg 8 §5 'Pipelines, active reasoning', and §6 'Purple / Violet -> cognition, abstraction, planning' — a sub-agent lane is a routed pipeline). This DEPARTS from namrop and neo-andean, which both put the structural gold on cron; keeping the threshold hue off a dot that appears on every scheduled row is the doctrine call ('threshold colors are never routine'), and it costs the precedent.",
+    "hi_collapse": "Consequence of the cron pick, recorded not patched. Cold Lilac is already L .827, so the declared hi transform (+0.14 lightness) lands diadem.session-type.cron--hi at #F2EEFF — eight units off fg #EAE7FF, i.e. a highlighted cron dot reads as the text color. Nothing is broken by it: the set's contract is distinctness-from-siblings and that holds under the modifier (#69DED3 / #F2EEFF / #AE47FF are pairwise distinct); the collision is with fg, which no gate covers. Neon Sunset Pink #FF6EC7 was considered as a cron replacement — msg 8 §5 groups it under 'Time & Motion ... temporal cues', which fits a scheduled lane — and REJECTED, because §6's semantic table (which outranks §5's decorative grouping) puts pink in the magenta/fuchsia family carrying 'creativity, divergence, novelty', and at hue 323.2deg it sits 1.3 degrees from intent #FF2FB3. On a 10px dot the mechanical lane would read as the human hand, which is a worse failure than a pale highlight. No modifier_overrides pin was written either: every candidate is an invented hex, a wrong-family attested value, a collision with hi(delegated) #AE47FF, or a darkening that inverts what hi means on a dark theme. Keeper-tunable — the cron member or a pinned override wants a ruling.",
+    "shape": "Natively rounded — the source draws real roundovers, unlike namrop and neo-andean. ATTESTED radii are two values only: 14px (card, .os) and 12px (swatch, panel, log, grad), plus 999px pills. DRAFTED: the scale interpolates below and above them — xs 4, sm 8, md 12, lg 14, xl 16, pill 999 — so lg/md/pill are the source's own numbers and xs/sm/xl are the ramp built to reach them. lift is a faint Ghost Cyan wash rgba(125,249,255,.06), the same hue as the hairline, so a slanted render keeps the cyan edge-language the source calls non-negotiable.",
+    "motion": "msg 8 §8 'Festival Mode': 'Animate synthwave hues slowly', 'Think altar lighting, not nightclub'. pulse 2s sits slower than governed-cognition's cockpit 1.5s per that instruction; amplitude 0.8 sits between GC's 1.0 and namrop's restrained 0.55 — present, not hushed, not strobing. The source's literal figure is 'minutes, not seconds', which is NOT adopted: Festival Mode is described there as a future opt-in toggle for creative synthesis and explicitly 'not governance', and a minutes-long pulse would hush an information channel the schema declares theme-tunable but never theme-removable. Kept at seconds, breathe stretched to 4s as the slowest channel.",
+    "type": "Both stacks are the source's own system stacks verbatim from msg 14 (see provenance for why they are not named custom properties): body from the visualizer's body{}, mono from .log{} and .hex{}. display = @body — the source has no display face. Nothing to vendor, so no webfonts block and font licensing is moot. Size scale mirrors governed-cognition's. leading.code 1.45 is the mock's own .log line-height verbatim; base and prose follow GC.",
+    "background": "None. No assets-src/chromatic-festival/ — the source produced no artwork, only swatches and a mock. Its background is a triple radial-gradient wash (laser violet 20%, electric blue 16%, cempasuchil 10%) over Abyssal Indigo, which is a CSS composition rather than an image and has no token to land in; recorded here so a later asset round does not mistake its absence for an oversight.",
+    "session_type_native": "native = cempasuchil #FF9F1C, the marigold that lights the path home — the fourth session type (keeper-ruled 2026-09-02, GC-owned). main/cron/delegated are three cools (teal, cold lilac, laser violet); the one warm accent in the palette is both the most separable value available and the register's own answer to 'a lane the system lit for itself'. It is threshold's hue, reused as a set member the way the rank ramp already reuses it — the role token is untouched. Separation: min dE 105.2, min RGB distance 238.0, the widest in the set; contrast 9.22:1 on --bg. Sunset pink #FF6EC7 was the doctrinally-quieter alternative and lost at dE 46.0 against cold lilac."
+  },
+  "schemes": {
+    "light": {
+      "color": {
+        "roles": {
+          "structure": "#009196",
+          "info": "#00586f",
+          "stability": "#00746b",
+          "threshold": "#7d4a00",
+          "violation": "#ce1831",
+          "intent": "#c70088"
+        },
+        "surface": {
+          "bg": "#e0e8fe",
+          "panel": "#f3efff",
+          "panel-raised": "#faf7ff",
+          "bg-deep": "#d7ddee",
+          "terminal": "#dae3f8",
+          "raw": "#e3ddf4",
+          "fg": "#1a0f2e",
+          "muted": "#4c4a5d",
+          "muted-alt": "#6754a4",
+          "scrollbar-thumb": "#cabde0",
+          "scrollbar-thumb-hover": "#ac9bca",
+          "scrollbar-track": "#f3efff",
+          "line": "rgba(0, 148, 154, 0.37)",
+          "shade": "rgba(26, 15, 46, 0.14)"
+        },
+        "syntax": {
+          "bg": "#e9e4f8",
+          "fg": "#1a0f2e",
+          "key": "#00586f",
+          "string": "#7d4a00",
+          "number": "#4c4a5d",
+          "bool": "#c70088",
+          "null": "#6754a4"
+        }
+      },
+      "sets": {
+        "ai-usage.harness": {
+          "claude_code": "#009196",
+          "claude_code_secondary": "#7260b1",
+          "hermes": "#7d4a00",
+          "opencode": "#c70088"
+        },
+        "ai-usage.series-rank": {
+          "rank-1": "#009196",
+          "rank-2": "#00586f",
+          "rank-3": "#00746b",
+          "rank-4": "#8371c4",
+          "rank-5": "#6f00c8",
+          "rank-6": "#c70088",
+          "rank-7": "#e253ad",
+          "rank-8": "#7d4a00",
+          "rank-9": "#ae47ff",
+          "rank-10": "#007b98"
+        },
+        "diadem.session-type": {
+          "main": "#00746b",
+          "cron": "#6350a0",
+          "delegated": "#a66bff",
+          "native": "#7d4a00"
+        }
+      },
+      "modifiers": {
+        "hi": {
+          "lightness": -0.1
+        }
+      },
+      "shape": {
+        "lift": "rgba(26, 15, 46, 0.05)"
+      },
+      "notes": {
+        "derivation": "LANE-DRAFTED, KEEPER-TUNABLE — the other half of the pair (keeper 2026-10-01: \"they are forced dark mode or light mode, I want to make the pairs for them please\"). Every value is DERIVED from this theme's own native value for the same token, by one rule applied to all seven themes, never picked: hue held (OKLCH h) and chroma held where sRGB allows; only lightness moves. Roles keep their native WEIGHT — the native contrast against the native bg is carried onto the new bg by a monotone log map (3.5:1 -> 3.0:1, 15:1 -> 8.5:1), so a role that read brighter than its sibling still reads heavier than it, and same-hue pairs stay apart by lightness; floors 4.5:1 for the text-bearing roles (info, violation, intent) and 3:1 for the rest. Categorical sets are rescaled as a WHOLE (native lightness order and log-spacing kept, fitted into the new band on the new panel) — distinctness is their meaning, so a set is never floored member by member; a member that wears a role's colour natively wears that role's colour in this half too, so native identities survive the flip. A last pass pushes the closest pair apart in lightness until each group is at least as separated as its native (OKLab dE x100, capped at 10). Text tokens sit in bands per ground (light: fg-soft 6-9:1, muted 5-7:1, muted-alt 3.5-5:1 — a light ground gives thin type no bloom). An rgba hairline keeps its native EFFECTIVE contrast over its own ground (alpha solved, never copied), floored at 1.45:1 so a line reads as a line. Surfaces keep each surface's own hue. On light they sit on johannah's attested paper ladder (lightness AND a chroma ceiling per surface), so a tinted theme becomes tinted paper, not white; the first draft's near-white ladder was the keeper's 'they revert to a default' (2026-10-01). On dark, chroma stays low so the substrate tints. Shape, motion, type and webfonts are the theme's own in both schemes — that is what makes the two halves one theme.",
+        "roles": "native -> light, contrast on each half's own bg: structure #7df9ff (15.21:1) -> #009196 (3.12:1); info #00cfff (10.25:1) -> #00586f (6.53:1); stability #2ed1c2 (9.93:1) -> #00746b (4.62:1); threshold #ff9f1c (9.22:1) -> #7d4a00 (6.01:1); violation #d72638 (3.81:1) -> #ce1831 (4.51:1); intent #ff2fb3 (5.69:1) -> #c70088 (4.53:1).",
+        "separation": "Minimum pairwise OKLab dE x100 per group, this half vs native: roles 9.3 (native 9.1); ai-usage.harness 17.2 (native 21.9); ai-usage.series-rank 6.9 (native 8.8); diadem.session-type 17.0 (native 20.3). SHORT of native: ai-usage.series-rank 6.9 vs native 8.8 (closest: rank-1/rank-10) — the charts carry the secondary channel (a marker per rank, direct labels, a table view); re-stepping is a token-layer decision.",
+        "surfaces": "fg 14.89:1 on bg, 16.15:1 on panel; muted 7.01:1; muted-alt 5.07:1. fg is the native PANEL #1a0f2e — the dark substrate turned into ink; a light panel sits lighter than the bg and panel-raised lighter still, johannah's attested paper ladder.",
+        "background": "NONE in either half: this theme has never had a plate. --gc-bg carries the field; generate.py ships one if assets-src/chromatic-festival/background.light.<ext> appears.",
+        "theme": "hue crowding carries over honestly: structure, info and stability sit in the source's one cyan/teal family (msg 8 s6) and are separated by lightness, as in the native half (measured values in notes.separation). The jade/verde stability ruling noted natively would widen it in both halves."
+      }
+    }
+  }
+}

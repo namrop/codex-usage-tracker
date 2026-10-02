@@ -71,7 +71,8 @@
     "diadem.session-type": {
       "main": "#b7e4a8",
       "cron": "#e0ba68",
-      "delegated": "#a86eb5"
+      "delegated": "#a86eb5",
+      "native": "#23d7ff"
     }
   },
   "modifiers": {
@@ -133,6 +134,87 @@
     "type": "All three families are the donor's own system stacks verbatim (body 'Avenir Next'/'Segoe UI', display Georgia serif, mono the --mono stack) — nothing to vendor, so font licensing is moot. Avenir Next is an Apple system font; non-Apple platforms fall through to Segoe UI / system-ui exactly as the site does.",
     "motion": "Restrained mythic: slower than the cockpits, more present than johannah — pulse 2.4s at 0.55 amplitude. Channels tunable, never removable.",
     "sets": "LANE-DRAFTED, KEEPER-TUNABLE. series-rank is a ten-ink ramp entirely from attested donor values (ghost cyan, beam cyan rgba(35,215,255) solid, violet-electric, plum-bright, pale orchid, gold-bright, gold, star-gold #f4d486, plainspoken green, quiet plum). harness: claude_code = ghost cyan, secondary = plum-bright, hermes = gold-bright, opencode = violet-electric. session-type: main = green (the at-rest lane), cron = gold, delegated = plum-bright.",
-    "background": "assets-src/namrop/background.webp is the site's real art: public/hero/namrop-question-star-cyberpunk-hero.png (the question-star lighthouse with the violet beam), dimmed 52% toward ink-deep #05010a and re-encoded webp q72 at 1536x1024 for interface-background subtlety."
+    "background": "assets-src/namrop/background.webp is the site's real art: public/hero/namrop-question-star-cyberpunk-hero.png (the question-star lighthouse with the violet beam), dimmed 52% toward ink-deep #05010a and re-encoded webp q72 at 1536x1024 for interface-background subtlety.",
+    "session_type_native": "session-type native = beam cyan #23d7ff, the lighthouse beam itself (attested donor value, already rank-2): the fourth session type, keeper-ruled 2026-09-02, GC-owned. Green/gold/plum are the three received lanes; a Diadem-born session is the beam the tower throws, so it takes the one hue the donor reserves for emitted light. Ghost cyan #5fc3d1 was the quieter option and lost at dE 42.5 / RGB 102.5 against the green. Separation: min dE 56.5, min RGB distance 172.2 (theme floor: main/cron at dE 37.5 / RGB 86.8); contrast 12.05:1 on ink-deep."
+  },
+  "schemes": {
+    "light": {
+      "color": {
+        "roles": {
+          "structure": "#a27e28",
+          "info": "#005c66",
+          "stability": "#2e541f",
+          "threshold": "#8b5b0a",
+          "violation": "#c02f4d",
+          "intent": "#8144a0"
+        },
+        "surface": {
+          "bg": "#eee3f9",
+          "panel": "#f7edff",
+          "panel-raised": "#fbf6ff",
+          "bg-deep": "#e0d9ed",
+          "terminal": "#e9dfef",
+          "raw": "#e8dcf1",
+          "fg": "#180c20",
+          "muted": "#574934",
+          "muted-alt": "#8f5aa0",
+          "scrollbar-thumb": "#dfbca6",
+          "scrollbar-thumb-hover": "#c09e74",
+          "scrollbar-track": "#f7edff",
+          "line": "rgba(166, 126, 45, 0.46)",
+          "shade": "rgba(24, 12, 32, 0.14)"
+        },
+        "syntax": {
+          "bg": "#eae5ed",
+          "fg": "#180c20",
+          "key": "#005c66",
+          "string": "#a27e28",
+          "number": "#574934",
+          "bool": "#8144a0",
+          "null": "#8f5aa0"
+        }
+      },
+      "sets": {
+        "ai-usage.harness": {
+          "claude_code": "#005c66",
+          "claude_code_secondary": "#b075bd",
+          "hermes": "#a27e28",
+          "opencode": "#8144a0"
+        },
+        "ai-usage.series-rank": {
+          "rank-1": "#005c66",
+          "rank-2": "#007188",
+          "rank-3": "#8144a0",
+          "rank-4": "#985fa5",
+          "rank-5": "#6d4178",
+          "rank-6": "#a27e28",
+          "rank-7": "#8b5b0a",
+          "rank-8": "#604900",
+          "rank-9": "#2e541f",
+          "rank-10": "#ad77bf"
+        },
+        "diadem.session-type": {
+          "main": "#2e541f",
+          "cron": "#a27e28",
+          "delegated": "#b075bd",
+          "native": "#006074"
+        }
+      },
+      "modifiers": {
+        "hi": {
+          "lightness": -0.1
+        }
+      },
+      "shape": {
+        "lift": "rgba(24, 12, 32, 0.05)"
+      },
+      "notes": {
+        "derivation": "LANE-DRAFTED, KEEPER-TUNABLE — the other half of the pair (keeper 2026-10-01: \"they are forced dark mode or light mode, I want to make the pairs for them please\"). Every value is DERIVED from this theme's own native value for the same token, by one rule applied to all seven themes, never picked: hue held (OKLCH h) and chroma held where sRGB allows; only lightness moves. Roles keep their native WEIGHT — the native contrast against the native bg is carried onto the new bg by a monotone log map (3.5:1 -> 3.0:1, 15:1 -> 8.5:1), so a role that read brighter than its sibling still reads heavier than it, and same-hue pairs stay apart by lightness; floors 4.5:1 for the text-bearing roles (info, violation, intent) and 3:1 for the rest. Categorical sets are rescaled as a WHOLE (native lightness order and log-spacing kept, fitted into the new band on the new panel) — distinctness is their meaning, so a set is never floored member by member; a member that wears a role's colour natively wears that role's colour in this half too, so native identities survive the flip. A last pass pushes the closest pair apart in lightness until each group is at least as separated as its native (OKLab dE x100, capped at 10). Text tokens sit in bands per ground (light: fg-soft 6-9:1, muted 5-7:1, muted-alt 3.5-5:1 — a light ground gives thin type no bloom). An rgba hairline keeps its native EFFECTIVE contrast over its own ground (alpha solved, never copied), floored at 1.45:1 so a line reads as a line. Surfaces keep each surface's own hue. On light they sit on johannah's attested paper ladder (lightness AND a chroma ceiling per surface), so a tinted theme becomes tinted paper, not white; the first draft's near-white ladder was the keeper's 'they revert to a default' (2026-10-01). On dark, chroma stays low so the substrate tints. Shape, motion, type and webfonts are the theme's own in both schemes — that is what makes the two halves one theme.",
+        "roles": "native -> light, contrast on each half's own bg: structure #e0ba68 (11.22:1) -> #a27e28 (3.06:1); info #5fc3d1 (10.06:1) -> #005c66 (6.24:1); stability #b7e4a8 (14.46:1) -> #2e541f (7.07:1); threshold #b98742 (6.51:1) -> #8b5b0a (4.72:1); violation #be2d4b (3.61:1) -> #c02f4d (4.52:1); intent #c283e4 (7.55:1) -> #8144a0 (5.20:1).",
+        "separation": "Minimum pairwise OKLab dE x100 per group, this half vs native: roles 10.1 (native 11.3); ai-usage.harness 15.1 (native 9.1); ai-usage.series-rank 7.4 (native 7.2); diadem.session-type 12.2 (native 11.3). Every group is at least as separated as its native (or at the dE 10 cap).",
+        "surfaces": "fg 15.28:1 on bg, 16.64:1 on panel; muted 7.06:1; muted-alt 4.11:1. fg is the native PANEL #180c20 — the dark substrate turned into ink; a light panel sits lighter than the bg and panel-raised lighter still, johannah's attested paper ladder.",
+        "background": "The native half's own keeper-selected art, re-encoded for this ground by the native recipe mirrored: the same verbatim source and geometry, washed toward THIS half's bg instead of the native ink. Nothing generated, nothing picked (keeper 2026-10-01: 'You lost the glass, which was important, and the backgrounds'). Exact command: magick /srv/pharos/repos/namrop-site/public/hero/namrop-question-star-cyberpunk-hero.png -resize 1536x1024 -fill '#eee3f9' -colorize 52% -quality 72 assets-src/namrop/background.light.webp (the native plate is the same source and geometry at -colorize 52% toward the native bg). tools/scheme_pairs/plates.py reproduces it. A plate made for the light (a daylight render) would be a new asset, the keeper's call."
+      }
+    }
   }
 }

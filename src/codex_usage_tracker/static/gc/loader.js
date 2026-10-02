@@ -190,12 +190,12 @@
 	//#endregion
 	//#region src/loader.ts
 	var SEED_THEMES = [
-		"governed-cognition",
+		"alexandria",
 		"neo-andean",
 		"johannah"
 	];
 	var SEED_NATIVE_SHAPE = {
-		"governed-cognition": "rounded",
+		alexandria: "hard",
 		"neo-andean": "hard",
 		johannah: "rounded"
 	};
@@ -209,8 +209,20 @@
 		hard: "shape-hard.css",
 		slanted: "shape-slant.css"
 	};
+	var SEED_NATIVE_SCHEME = {
+		alexandria: "dark",
+		"neo-andean": "dark",
+		johannah: "light"
+	};
+	var SCHEME_PREFS = [
+		"native",
+		"light",
+		"dark",
+		"system"
+	];
 	var LS_THEME = "gc.theme";
 	var LS_SHAPE = "gc.shape";
+	var LS_SCHEME = "gc.scheme";
 	var LS_GLASS = "gc.glass";
 	var LS_GLASS_OPACITY = "gc.glassOpacity";
 	var GLASS_OPACITY_DEFAULT = .35;
@@ -227,8 +239,8 @@
 	var cfg = {
 		origin: preset.origin || attr("data-gc-origin") || defaultOrigin(),
 		fallback: preset.fallback || attr("data-gc-fallback") || null,
-		defaultTheme: preset.defaultTheme || attr("data-gc-default-theme") || "governed-cognition",
-		settings: (preset.settings !== void 0 ? preset.settings : attr("data-gc-settings")) !== "local" && preset.settings !== false
+		defaultTheme: preset.defaultTheme || attr("data-gc-default-theme") || "alexandria",
+		settings: false
 	};
 	var roster = {
 		themes: SEED_THEMES.slice(),
@@ -238,14 +250,21 @@
 		shapes: SEED_SHAPES.slice(),
 		shapeCss: { ...SEED_SHAPE_CSS },
 		themeShapes: {},
+		nativeScheme: { ...SEED_NATIVE_SCHEME },
+		themeSchemes: {},
+		halfBackground: {},
 		source: "seed"
 	};
 	var desired = {
 		theme: cfg.defaultTheme,
 		shape: null,
+		scheme: "native",
 		glass: false,
 		glassOpacity: GLASS_OPACITY_DEFAULT
 	};
+	function asSchemePref(value) {
+		return SCHEME_PREFS.indexOf(value) !== -1 ? value : "native";
+	}
 	function clampOpacity(value) {
 		const n = typeof value === "number" ? value : parseFloat(String(value));
 		if (!isFinite(n)) return GLASS_OPACITY_DEFAULT;
@@ -344,19 +363,22 @@
 		}
 		attempt();
 	}
-	function publishBackground(theme) {
+	function publishBackground(theme, scheme) {
 		const el = document.documentElement;
-		const bg = roster.background[theme];
+		const native = roster.nativeScheme[theme] || null;
+		const bg = scheme && native && scheme !== native ? (roster.halfBackground[theme] || {})[scheme] || null : roster.background[theme];
 		if (!bg) {
 			el.style.removeProperty("--gc-bg-image");
 			el.style.removeProperty("--gc-bg-size");
 			el.style.removeProperty("--gc-bg-repeat");
+			el.style.removeProperty("--gc-bg-position");
 			return;
 		}
 		const base = sourceIdx.theme === 1 && cfg.fallback ? cfg.fallback : cfg.origin;
 		el.style.setProperty("--gc-bg-image", "url(\"" + absUrl(joinUrl(base, bg.file)) + "\")");
 		el.style.setProperty("--gc-bg-size", bg.size);
 		el.style.setProperty("--gc-bg-repeat", bg.repeat);
+		el.style.setProperty("--gc-bg-position", bg.position);
 	}
 	var themeSource = null;
 	function setSource(idx) {
@@ -381,13 +403,28 @@
 		if (shape && offered.indexOf(shape) === -1) shape = null;
 		return shape || roster.nativeShape[theme] || offered[0] || "rounded";
 	}
+	function systemScheme() {
+		try {
+			if (typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
+		} catch {}
+		return "light";
+	}
+	function resolveScheme(theme, pref) {
+		const native = roster.nativeScheme[theme] || null;
+		if (pref === "native") return native;
+		const want = pref === "system" ? systemScheme() : pref;
+		const offered = roster.themeSchemes[theme];
+		if (offered && offered.length && offered.indexOf(want) === -1) return native;
+		return want;
+	}
 	function render() {
 		const theme = knownTheme(desired.theme) ? desired.theme : cfg.defaultTheme;
 		const resolved = resolveShape(theme, desired.shape);
+		const scheme = resolveScheme(theme, desired.scheme);
 		setLink("gc-theme", "theme-" + theme + ".css", null, sourceIdx.theme, (idx) => {
 			if (idx >= 0) sourceIdx.theme = idx;
 			setSource(idx);
-			publishBackground(theme);
+			publishBackground(theme, scheme);
 			setLink("gc-shape", roster.shapeCss[resolved] || null, "gc-theme", sourceIdx.theme, (sidx) => {
 				if (sidx >= 0) sourceIdx.shape = sidx;
 			});
@@ -395,11 +432,14 @@
 		if (document.documentElement) {
 			document.documentElement.setAttribute("data-gc-theme", theme);
 			document.documentElement.setAttribute("data-gc-shape", resolved);
-			publishBackground(theme);
+			if (scheme) document.documentElement.setAttribute("data-gc-scheme", scheme);
+			else document.documentElement.removeAttribute("data-gc-scheme");
+			publishBackground(theme, scheme);
 		}
 		document.dispatchEvent(new CustomEvent(APPLY_EVENT, { detail: {
 			theme,
-			shape: resolved
+			shape: resolved,
+			scheme
 		} }));
 		glassRendererSettle();
 		return {
@@ -413,8 +453,13 @@
 		desired.shape = shape || null;
 		store(LS_THEME, theme);
 		store(LS_SHAPE, shape || null);
-		publishSettings();
 		return render();
+	}
+	function setScheme(pref) {
+		desired.scheme = asSchemePref(pref);
+		store(LS_SCHEME, desired.scheme === "native" ? null : desired.scheme);
+		render();
+		return desired.scheme;
 	}
 	function reducedTransparency() {
 		try {
@@ -444,55 +489,14 @@
 	function setGlass(on) {
 		desired.glass = on === true;
 		store(LS_GLASS, desired.glass ? "on" : "off");
-		publishSettings();
 		renderGlass();
 		return desired.glass;
 	}
 	function setGlassOpacity(value) {
 		desired.glassOpacity = clampOpacity(value);
 		store(LS_GLASS_OPACITY, String(desired.glassOpacity));
-		publishSettings();
 		renderGlass();
 		return desired.glassOpacity;
-	}
-	function publishSettings() {
-		if (!cfg.settings || typeof fetch !== "function") return;
-		try {
-			fetch(joinUrl(cfg.origin, "settings"), {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					theme: desired.theme,
-					shape: desired.shape,
-					glass: desired.glass,
-					glassOpacity: desired.glassOpacity
-				})
-			}).catch(() => {});
-		} catch {}
-	}
-	function loadSettings() {
-		if (!cfg.settings) return Promise.resolve(null);
-		return fetchJson(joinUrl(cfg.origin, "settings")).then((data) => {
-			if (!data || typeof data !== "object") return null;
-			const theme = typeof data.theme === "string" ? data.theme : desired.theme;
-			const shape = data.shape === null || typeof data.shape === "string" ? data.shape : desired.shape;
-			const glass = typeof data.glass === "boolean" ? data.glass : desired.glass;
-			const opacity = data.glassOpacity === void 0 ? desired.glassOpacity : clampOpacity(data.glassOpacity);
-			if (glass !== desired.glass || opacity !== desired.glassOpacity) {
-				desired.glass = glass;
-				desired.glassOpacity = opacity;
-				store(LS_GLASS, glass ? "on" : "off");
-				store(LS_GLASS_OPACITY, String(opacity));
-				renderGlass();
-			}
-			if (theme === desired.theme && shape === desired.shape) return data;
-			desired.theme = theme;
-			desired.shape = shape || null;
-			store(LS_THEME, theme);
-			store(LS_SHAPE, shape || null);
-			render();
-			return data;
-		}).catch(() => null);
 	}
 	function current() {
 		const rendered = knownTheme(desired.theme) ? desired.theme : cfg.defaultTheme;
@@ -500,8 +504,18 @@
 			theme: rendered,
 			requestedTheme: desired.theme,
 			shape: desired.shape,
-			resolvedShape: resolveShape(rendered, desired.shape)
+			resolvedShape: resolveShape(rendered, desired.shape),
+			scheme: desired.scheme,
+			resolvedScheme: resolveScheme(rendered, desired.scheme)
 		};
+	}
+	function toBackground(bg) {
+		return bg && typeof bg.file === "string" ? {
+			file: bg.file,
+			size: typeof bg.size === "string" ? bg.size : "cover",
+			repeat: typeof bg.repeat === "string" ? bg.repeat : "no-repeat",
+			position: typeof bg.position === "string" ? bg.position : "center top"
+		} : null;
 	}
 	function parseRoster(data) {
 		if (!data || !Array.isArray(data.themes) || !data.themes.length) return null;
@@ -510,6 +524,9 @@
 		const hard = {};
 		const themeShapes = {};
 		const background = {};
+		const nativeScheme = {};
+		const themeSchemes = {};
+		const halfBackground = {};
 		for (const entry of data.themes) {
 			const name = entry && entry.name;
 			if (typeof name !== "string" || !name) continue;
@@ -517,12 +534,17 @@
 			native[name] = typeof entry.native_shape === "string" ? entry.native_shape : "rounded";
 			themeShapes[name] = Array.isArray(entry.shapes) && entry.shapes.length ? entry.shapes.slice() : null;
 			hard[name] = entry.hard_edged === true;
-			const bg = entry.assets && entry.assets.background;
-			background[name] = bg && typeof bg.file === "string" ? {
-				file: bg.file,
-				size: typeof bg.size === "string" ? bg.size : "cover",
-				repeat: typeof bg.repeat === "string" ? bg.repeat : "no-repeat"
-			} : null;
+			background[name] = toBackground(entry.assets && entry.assets.background);
+			const nat = typeof entry.scheme === "string" ? entry.scheme : SEED_NATIVE_SCHEME[name];
+			if (nat) nativeScheme[name] = nat;
+			themeSchemes[name] = Array.isArray(entry.schemes) && entry.schemes.length ? entry.schemes.slice() : null;
+			const halves = {};
+			const declared = entry.scheme_halves;
+			if (declared && typeof declared === "object") for (const half of Object.keys(declared)) {
+				const a = declared[half] && declared[half].assets;
+				halves[half] = toBackground(a && a.background);
+			}
+			halfBackground[name] = halves;
 		}
 		let shapes = [];
 		let shapeCss = {};
@@ -542,7 +564,10 @@
 			themeShapes,
 			shapes,
 			shapeCss,
-			background
+			background,
+			nativeScheme,
+			themeSchemes,
+			halfBackground
 		} : null;
 	}
 	function adoptRoster(parsed, source) {
@@ -582,7 +607,6 @@
 		}).catch(() => roster);
 	}
 	var switcherLoad = null;
-	var settingsSource = "local";
 	function injectScript(file) {
 		return new Promise((resolve, reject) => {
 			function attempt(base, onFail) {
@@ -626,8 +650,12 @@
 		config: cfg,
 		apply,
 		current,
+		schemes: (theme) => (roster.themeSchemes[theme || current().theme] || []).slice(),
+		nativeScheme: (theme) => roster.nativeScheme[theme] || null,
+		scheme: () => desired.scheme,
+		setScheme,
 		mountSwitcher,
-		settingsSource: () => settingsSource,
+		settingsSource: () => "local",
 		themeSource: () => themeSource,
 		glass: () => desired.glass,
 		glassEffective: () => desired.glass && !reducedTransparency(),
@@ -643,6 +671,7 @@
 	if (typeof document !== "undefined") {
 		desired.theme = read(LS_THEME) || cfg.defaultTheme;
 		desired.shape = read(LS_SHAPE) || null;
+		desired.scheme = asSchemePref(read(LS_SCHEME));
 		desired.glass = read(LS_GLASS) === "on";
 		const storedOpacity = read(LS_GLASS_OPACITY);
 		if (storedOpacity !== null) desired.glassOpacity = clampOpacity(storedOpacity);
@@ -654,10 +683,15 @@
 				if (mq && typeof mq.addEventListener === "function") mq.addEventListener("change", renderGlass);
 			}
 		} catch {}
-		GC.ready = loadRoster().then(() => loadSettings().then((data) => {
-			settingsSource = data ? "origin" : "local";
-			return roster;
-		}));
+		try {
+			if (typeof matchMedia === "function") {
+				const cs = matchMedia("(prefers-color-scheme: dark)");
+				if (cs && typeof cs.addEventListener === "function") cs.addEventListener("change", () => {
+					if (desired.scheme === "system") render();
+				});
+			}
+		} catch {}
+		GC.ready = loadRoster();
 	} else GC.ready = Promise.resolve(roster);
 	//#endregion
 })();

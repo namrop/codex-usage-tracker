@@ -67,7 +67,8 @@
     "diadem.session-type": {
       "main": "#0e5035",
       "cron": "#c4a051",
-      "delegated": "#432660"
+      "delegated": "#432660",
+      "native": "#2433b2"
     }
   },
   "modifiers": {
@@ -132,6 +133,91 @@
     "ai_usage_sets": "LANE-DRAFTED, KEEPER-TUNABLE (kintsugi render: only the default theme inherits proven values). series-rank is a ten-ink ramp entirely from her existing token layer \u2014 inks dark enough to hold a line on paper: ink green, signal wine, ownvoice purple, gold-deep, green-mid, rose, atlas wine, muted plum, gold, green mist. harness: claude_code = ink green, claude_code_secondary = green-mid, hermes = gold, opencode = signal wine.",
     "accents": "KEEPER-FRAMED 2026-08-30, verbatim: 'high signal, very low frequency of use.' accent-red = jlmu.love --signal #8b2942 (the site's OFFICIAL accent_color) and accent-purple = --ownvoice #432660 (the felt-heart purple anchor) join the extras as rare-emphasis inks — reached for deliberately, at most once or twice on a surface, never structural, never a status channel. They share hexes with the ruled violation/intent roles because all four descend from the same two site tokens; the ROLE uses stay governed by role doctrine, and these extras exist so an app can place one deliberate heartword-red or ownvoice-purple stroke without borrowing a governance channel to do it. Existing role assignments unchanged.",
     "background": "assets-src/johannah/background.webp derives from jlmu.love's own outer surround: public/surfaces/codex0-literary-toile-endpaper.webp (the Codex 0 literary-toile endpaper — lanterns, compasses, green books, wine buds on cream), washed 68% toward --paper-dusk #f1e8d2 and kept a seamless 768px tile so it reads as quiet paper under interface text. Render hints: repeat at 650px, the site's own repeat size (DESIGN.md).",
-    "ai-usage.series-rank": "Corrected 2026-08-29: rank-2 no longer wears the violation hue (#8b2942 \u2014 violation is never decorative; replaced with a documented lift of attested atlas-wine) and rank-8 no longer wears the muted text hue (replaced with attested gold-soft). Remaining ramp is palette-attested; keeper-tunable."
+    "ai-usage.series-rank": "Corrected 2026-08-29: rank-2 no longer wears the violation hue (#8b2942 \u2014 violation is never decorative; replaced with a documented lift of attested atlas-wine) and rank-8 no longer wears the muted text hue (replaced with attested gold-soft). Remaining ramp is palette-attested; keeper-tunable.",
+    "session_type_native": "native = lapis #2433b2 — LANE-DRAFTED, KEEPER-TUNABLE, and the one minted value in her set. The fourth session type (Diadem-born, keeper-ruled 2026-09-02) needs a fourth ink, and her attested layer has no free one: the rose/wine inks (#a85560, atlas wine #823236) sit dE 15.9 and dE 10.9 from signal wine — violation's family, which is sacred and never decorative — and quiet plum #96657a lands dE 37.4 from ownvoice purple, the weakest separation on offer. So lapis is derived the way namrop's violation was: ownvoice purple #432660 rotated out of the violet quadrant to ultramarine (HLS h 0.750 -> 0.650) and lifted to hold a line on paper (l 0.263 -> 0.42). It is the codex's other pigment, which is why it belongs in a page-register theme at all. Separation: min dE 42.0 and min RGB distance 88.6 (both against ownvoice purple), dE 76.8 from signal wine; contrast 7.85:1 on cream — darker and steadier than gold's 2.03:1, which is this theme's existing floor."
+  },
+  "schemes": {
+    "dark": {
+      "color": {
+        "roles": {
+          "structure": "#c4a051",
+          "info": "#679d81",
+          "stability": "#81bf9e",
+          "threshold": "#dcc38a",
+          "violation": "#d66d81",
+          "intent": "#ab8dcf"
+        },
+        "surface": {
+          "bg": "#06180f",
+          "panel": "#14281e",
+          "panel-raised": "#1f3329",
+          "bg-deep": "#011008",
+          "fg": "#f1e8d2",
+          "fg-soft": "#ab97a3",
+          "muted": "#a995a1",
+          "muted-alt": "#97667b",
+          "scrollbar-thumb": "#4e4122",
+          "scrollbar-thumb-hover": "#6d5829",
+          "scrollbar-track": "#14281e",
+          "line": "rgba(196, 160, 81, 0.22)",
+          "shade": "rgba(0, 0, 0, 0.5)"
+        },
+        "syntax": {
+          "bg": "#06180f",
+          "fg": "#f1e8d2",
+          "key": "#679d81",
+          "string": "#dcc38a",
+          "number": "#97667b",
+          "bool": "#ab8dcf",
+          "null": "#a995a1"
+        },
+        "extra": {
+          "accent-red": "#d66d81",
+          "accent-purple": "#ab8dcf"
+        }
+      },
+      "sets": {
+        "ai-usage.harness": {
+          "claude_code": "#81bf9e",
+          "claude_code_secondary": "#679d81",
+          "hermes": "#c4a051",
+          "opencode": "#d66d81"
+        },
+        "ai-usage.series-rank": {
+          "rank-1": "#81bf9e",
+          "rank-2": "#ea909a",
+          "rank-3": "#ab8dcf",
+          "rank-4": "#dcc38a",
+          "rank-5": "#679d81",
+          "rank-6": "#ca96ac",
+          "rank-7": "#ffa8a7",
+          "rank-8": "#967f48",
+          "rank-9": "#c4a051",
+          "rank-10": "#82ab97"
+        },
+        "diadem.session-type": {
+          "main": "#81bf9e",
+          "cron": "#c4a051",
+          "delegated": "#ab8dcf",
+          "native": "#aac0ff"
+        }
+      },
+      "modifiers": {
+        "hi": {
+          "lightness": 0.14
+        }
+      },
+      "shape": {
+        "lift": "rgba(241, 232, 210, 0.06)"
+      },
+      "notes": {
+        "derivation": "LANE-DRAFTED, KEEPER-TUNABLE — the other half of the pair (keeper 2026-10-01: \"they are forced dark mode or light mode, I want to make the pairs for them please\"). Every value is DERIVED from this theme's own native value for the same token, by one rule applied to all seven themes, never picked: hue held (OKLCH h) and chroma held where sRGB allows; only lightness moves. Roles keep their native WEIGHT — the native contrast against the native bg is carried onto the new bg by a monotone log map (3.5:1 -> 3.0:1, 15:1 -> 8.5:1), so a role that read brighter than its sibling still reads heavier than it, and same-hue pairs stay apart by lightness; floors 4.5:1 for the text-bearing roles (info, violation, intent) and 3:1 for the rest. Categorical sets are rescaled as a WHOLE (native lightness order and log-spacing kept, fitted into the new band on the new panel) — distinctness is their meaning, so a set is never floored member by member; a member that wears a role's colour natively wears that role's colour in this half too, so native identities survive the flip. A last pass pushes the closest pair apart in lightness until each group is at least as separated as its native (OKLab dE x100, capped at 10). Text tokens sit in bands per ground (light: fg-soft 6-9:1, muted 5-7:1, muted-alt 3.5-5:1 — a light ground gives thin type no bloom). An rgba hairline keeps its native EFFECTIVE contrast over its own ground (alpha solved, never copied), floored at 1.45:1 so a line reads as a line. Surfaces keep each surface's own hue. On light they sit on johannah's attested paper ladder (lightness AND a chroma ceiling per surface), so a tinted theme becomes tinted paper, not white; the first draft's near-white ladder was the keeper's 'they revert to a default' (2026-10-01). On dark, chroma stays low so the substrate tints. Shape, motion, type and webfonts are the theme's own in both schemes — that is what makes the two halves one theme.",
+        "roles": "native -> dark, contrast on each half's own bg: structure #c4a051 (2.03:1) -> #c4a051 (7.42:1); info #3d7358 (4.54:1) -> #679d81 (5.86:1); stability #0e5035 (7.76:1) -> #81bf9e (8.63:1); threshold #8f7333 (3.69:1) -> #dcc38a (10.67:1); violation #8b2942 (6.90:1) -> #d66d81 (5.56:1); intent #432660 (10.22:1) -> #ab8dcf (6.50:1).",
+        "separation": "Minimum pairwise OKLab dE x100 per group, this half vs native: roles 10.3 (native 11.6); ai-usage.harness 10.3 (native 12.6); ai-usage.series-rank 5.5 (native 5.2); diadem.session-type 12.0 (native 14.8). Every group is at least as separated as its native (or at the dE 10 cap).",
+        "surfaces": "fg 15.03:1 on bg, 12.73:1 on panel; muted 6.55:1; muted-alt 3.93:1. ",
+        "background": "The Codex 0 v5 divider leaf (lighthouse, cottages, moon over the sea, heron), outpainted from portrait to 3:2 with the picture flush left and open sea and sky generated across the right 57%, then washed 48% toward this half's bg (#06180f). The toile is a cream endpaper made for paper, so this half needed its own plate; it was generated with the keeper in the loop (2026-10-01: 'I need to be in the loop for that though'; 2026-10-02: 'leave the image on the left and outpaint the ocean to the right', then '1 is the winner'). The leaf's own pixels were pasted back over the model's copy, so only the sea and sky are generated. Pinned 'left top' (keeper 2026-10-02: 'this theme background should pin it to the left edge on phones'). Full recipe: assets-src/README.md.",
+        "theme": "night rules, recorded because they depart from the shared method. GROUND: the substrate takes the body ink's hue (#0e5035, OKLCH h 160.6) rather than the paper's — the codex's own night register is green-gold (the divider beam-cut leaf, 'a pure green-gold nocturnal statement', codex0 style reference 2026-08-04), and a paper-hued dark would be sepia, a register the book does not have. fg = the paper #f1e8d2 itself: the page inverted, ink becomes ground and paper becomes ink. STRUCTURE = the OFFICIAL rule gold #c4a051 verbatim (7.4:1 at night; on paper it was a 2.0:1 hairline). THRESHOLD = attested gold-soft #dcc38a: on paper the consequential gold is the DARKER gold-deep, at night weight reads as light, so it takes the brighter attested gold (10.7:1, dE 10.6 from structure). INFO (5.9:1), STABILITY (8.6:1) and VIOLATION (5.6:1) are lifted past the shared map: info shares the ground's own hue at night, so contrast alone did not carry it (seen in render at 4.5:1), and stability stays the heavier green as it is on paper. LINE = the official gold, alpha solved like every rgba hairline. hi LIGHTENS here (+0.14), the cockpit rule, where on paper it darkens. accent-red / accent-purple follow violation / intent (same site tokens). No plate at night yet: notes.background. The toile is not recoloured for the night, because the keeper's 2026-08-31 ruling on it was 'I did not want a knocked back render of jlmu's toile. I wanted that toile.' A recoloured toile would be that kind of re-encode."
+      }
+    }
   }
 }

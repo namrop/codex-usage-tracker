@@ -88,3 +88,38 @@
 .gc-glass-layer[data-gc-clipped] {
   background: linear-gradient(var(--gc-card-lift, transparent), var(--gc-card-lift, transparent)) var(--gc-glass-tint);
 }
+
+/* THE RIMS (2026-10-02, keeper: "let's see what you can do to make the glass
+ * look better"). liquid-glass-react 1.1.1 lays two 1.5px border rings over its
+ * glass: a white diagonal gradient screened at 20%, and the same ring again at
+ * overlay, each with a fine inset hairline and a soft drop. The 09-02 renderer
+ * vendored the lens and not these, so a panel had no lit edge. Values are the
+ * library's at rest (mouse offset 0; GC has no pointer tracking). They are the
+ * layer's own pseudo-elements and carry no filter, so the layer's backdrop
+ * filter is untouched; a layer holding a cut polygon clips them, so on a cut
+ * corner the ring stops at the cut. */
+.gc-glass-layer::before,
+.gc-glass-layer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  padding: 1.5px;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  box-shadow:
+    0 0 0 0.5px rgba(255, 255, 255, 0.5) inset,
+    0 1px 3px rgba(255, 255, 255, 0.25) inset,
+    0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.gc-glass-layer::before {
+  mix-blend-mode: screen;
+  opacity: 0.2;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.12) 33%, rgba(255, 255, 255, 0.4) 66%, rgba(255, 255, 255, 0) 100%);
+}
+.gc-glass-layer::after {
+  mix-blend-mode: overlay;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.32) 33%, rgba(255, 255, 255, 0.6) 66%, rgba(255, 255, 255, 0) 100%);
+}

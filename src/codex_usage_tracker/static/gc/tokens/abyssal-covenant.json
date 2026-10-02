@@ -1,0 +1,240 @@
+{
+  "name": "abyssal-covenant",
+  "title": "Abyssal Covenant",
+  "description": "Bioluminescent deep-sea light over obsidian substrate: abyss-black mineral surfaces that exist to disappear, and cognitive/ritual/motion lights that appear only when they mean something. A sibling proposal to the canonical Lighthouse palette — canonical leans stellar/navigational, this one leans subsurface, emphasizing when light is allowed to exist at all. Rounded native; the source's own radius pair 14/10. LANE-RECOVERED, UNGRADED — see notes.provenance.",
+  "color": {
+    "roles": {
+      "structure": "#1fb8a6",
+      "info": "#4bc6ff",
+      "stability": "#7be3a1",
+      "threshold": "#f4b942",
+      "violation": "#e0524d",
+      "intent": "#c94bbe"
+    },
+    "surface": {
+      "bg": "#0b0e11",
+      "fg": "#c7d6d9",
+      "panel": "#141a1f",
+      "line": "rgba(199,214,217,.14)",
+      "muted": "#8fb3bd",
+      "muted-alt": "#5d8f9e",
+      "shade": "rgba(0,0,0,.45)",
+      "terminal": "#101614",
+      "raw": "#1c232a",
+      "scrollbar-thumb": "#303c49",
+      "scrollbar-thumb-hover": "#3d4c5b",
+      "scrollbar-track": "#141a1f",
+      "bg-deep": "#07090c",
+      "panel-raised": "#1c232a",
+      "fg-soft": "#8fb3bd"
+    },
+    "syntax": {
+      "bg": "#1c232a",
+      "fg": "#c7d6d9",
+      "key": "#4bc6ff",
+      "string": "#f4b942",
+      "number": "#8fb3bd",
+      "bool": "#c94bbe",
+      "null": "#5d8f9e"
+    },
+    "extra": {
+      "photic-cyan": "#2fe6e0",
+      "pulse-violet": "#8a6cff",
+      "deep-kelp": "#101614",
+      "cold-lumen": "#8fb3bd",
+      "ember-glow": "#ffd47b",
+      "magenta-glow": "#ffb5f2"
+    },
+    "scheme": "dark"
+  },
+  "sets": {
+    "ai-usage.harness": {
+      "claude_code": "#2fe6e0",
+      "claude_code_secondary": "#1fb8a6",
+      "hermes": "#ffd47b",
+      "opencode": "#c94bbe"
+    },
+    "ai-usage.series-rank": {
+      "rank-1": "#4bc6ff",
+      "rank-2": "#2fe6e0",
+      "rank-3": "#1fb8a6",
+      "rank-4": "#7be3a1",
+      "rank-5": "#f4b942",
+      "rank-6": "#c94bbe",
+      "rank-7": "#8a6cff",
+      "rank-8": "#ffd47b",
+      "rank-9": "#ffb5f2",
+      "rank-10": "#00a3ee"
+    },
+    "diadem.session-type": {
+      "main": "#2fe6e0",
+      "cron": "#1fb8a6",
+      "delegated": "#8a6cff",
+      "native": "#ffb5f2"
+    }
+  },
+  "modifiers": {
+    "hi": {
+      "lightness": 0.14
+    }
+  },
+  "modifier_overrides": {
+    "roles.structure": {
+      "hi": "#2fe6e0"
+    },
+    "sets.diadem.session-type.native": {
+      "hi": "#ffd4f7"
+    }
+  },
+  "shape": {
+    "native": "rounded",
+    "radius": {
+      "xs": "4px",
+      "sm": "8px",
+      "md": "10px",
+      "lg": "12px",
+      "xl": "14px",
+      "pill": "999px"
+    },
+    "lift": "rgba(199,214,217,.06)"
+  },
+  "motion": {
+    "timings": {
+      "fast": "0.14s",
+      "med": "0.2s",
+      "slide": "0.24s",
+      "pulse": "2.2s",
+      "pulse-fast": "1.1s",
+      "blink": "2.6s",
+      "flash": "2s",
+      "breathe": "3.8s"
+    },
+    "amplitudes": {
+      "pulse": 0.6
+    }
+  },
+  "type": {
+    "family": {
+      "body": "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, \"Apple Color Emoji\", \"Segoe UI Emoji\"",
+      "display": "@body",
+      "mono": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace"
+    },
+    "scale": {
+      "xs": "11px",
+      "sm": "12px",
+      "base": "14px",
+      "lg": "16px",
+      "xl": "22px"
+    },
+    "leading": {
+      "code": 1.5,
+      "base": 1.45,
+      "prose": 1.65
+    }
+  },
+  "notes": {
+    "provenance": "Source of record: ChatGPT session 69706d76-28a8-8325-b206-d806a8015f67 'Abyssal Covenant Palette' (2026-01-21, model gpt-5-2 / gpt-5-2-thinking), exported at lantern_chamber_logs_split/chatgpt_exports_split/imports/acubens-home-20260612T022654Z/conversations/01545-abyssal-covenant-palette-69706d76-28a8-8325-b206-d806a8015f67.md. The session has only TWO user turns — the brief ('propose an alternative color system for Lighthouse OS'), then 'Give me a full html sketch using these colors'. Luis never graded this palette in-session. It carries NO keeper grade; it is a lane-recovered sibling palette. No canon note exists for it yet; the April palette note governed_cognition_palette_2026-04-03.md names it only as lineage. Message 12's '(emoji) Digital Architecture — Lighthouse OS Palette HTML Sketch' header is a routing tag, not a grade. Message 8 is the palette system (named hexes + semantic mapping table + governance rules); message 12 is the HTML sketch whose :root and derived values are the authored token layer. Source hexes are uppercase in both messages; this file lowercases them to match every sibling theme file and the generator's own shift_lightness output — values unchanged.",
+    "roles": "All six ATTESTED, read straight off message 8's section-5 semantic mapping table (row cited per role). structure = Survey Teal #1FB8A6, row 'Structure / Plan' (section 2: 'Structural outlines, grouping, hierarchy'). stability = Drift Green #7BE3A1, row 'Progress / Stabilize'. threshold = Ember Gold #F4B942, row 'Commit / Irreversible' (hard rule: 'must only appear on actions that cannot be undone'). violation = Blood Coral #E0524D, row 'Warning / Violation' (hard rule: 'must never be decorative or used for emphasis'). intent = Rite Magenta #C94BBE, row 'Human creative intent' (hard rule: 'may only be invoked by explicit human action'). Colors are quarantined to meaning here already — the source and GC agree on doctrine before they agree on hues.",
+    "info_soft_mapping": "The ONE soft mapping. The source has no 'information channel' row; info = Biolume Blue #4BC6FF, row 'Execute / In motion' (section 4: 'Active processes, execution flow'), the closest available. Alternative considered and REJECTED: Cold Lumen #8FB3BD, row 'Metadata / Context', which reads as the natural info channel but is section 2's declared text-secondary ('Secondary annotations, metadata') and is already taken here by surface.muted / surface.fg-soft — spending it on a role would collide the quiet-data hue with the quiet-text hue and leave metadata text and metadata keys indistinguishable. Biolume Blue is drawn from the motion family, whose intent note reads 'temporal... alive but never permanent'; as info it is used at rest, which is a mild stretch of the source's own framing. KEEPER-TUNABLE.",
+    "focus_vs_structure": "The source SEPARATES focus from structure: 'Focus / Select' = Photic Cyan #2FE6E0, 'Structure / Plan' = Survey Teal #1FB8A6 — two rows, two hues. GC's roles are closed-ish and grow only by pressure through the spec, so no 'focus' role was invented. Instead the split is encoded through the modifier layer: GC's `hi` modifier means 'highlighted / active / selected', which is precisely the source's focus/selection channel, so modifier_overrides pins roles.structure's hi to Photic Cyan #2FE6E0. Structure at rest is Survey Teal; structure highlighted/selected is Photic Cyan — the source's two rows, expressed as one role plus one state. The derived value this replaces would have been #40dfcc (+0.14 lightness of Survey Teal), a plausible but unattested teal. The override shape is the one generate.py:305 reads (theme['modifier_overrides'][<token path>][<modifier>]) and tests/test_generator.py:174 exercises verbatim for this exact path.",
+    "coexistence_rule": "KEEPER ITEM, unenforceable here. The source's hard rules include 'Photic Cyan must not coexist with Ember Gold in the same control' — which, after the mapping above, reads as: structure-hi and threshold must not appear together in one control. GC has no mechanism to express a co-occurrence constraint; it is a consumer discipline, not a token. Recorded so it is not lost with the palette's other governance rules.",
+    "surfaces": "Substrates ATTESTED from message 8 section 1, whose intent note is 'these colors must never signal meaning. They exist to disappear.' bg = Abyss Black #0B0E11 ('primary background; true dark without blue crush'), panel = Trench Slate #141A1F ('secondary panels, sidebars'), panel-raised = Basalt Ink #1C232A ('code blocks, inactive containers'), raw = Basalt Ink for the same reason (the source names it the code-block surface), terminal = Deep Kelp #101614 ('alternate reading surface to reduce monotony'). bg-deep = #07090C, attested as the end stop of the sketch's body gradient (linear-gradient(180deg, var(--bg-primary), #07090c 70%)). fg = Thought Pearl #C7D6D9 ('primary text, reasoning layers'); muted and fg-soft = Cold Lumen #8FB3BD ('secondary annotations, metadata'). line = the sketch's --border rgba(199,214,217,.14) VERBATIM (a Thought Pearl hairline, not a hue). shade = the sketch's --shadow color rgba(0,0,0,.45), verbatim from box-shadow: 0 12px 40px rgba(0,0,0,.45). muted-alt = #5d8f9e, DRAFTED: Cold Lumen shifted -0.16 lightness in HLS via the generator's own shift_lightness — a documented darker shift of an attested value, dim enough to sit under muted without becoming a second text color.",
+    "scrollbar": "DRAFTED, per the keeper ruling of 2026-08-29: scrollbars are quiet structure with little semantic value — muted/dim, never an accent. thumb #303c49 and hover #3d4c5b are Basalt Ink lifted +0.10 / +0.16 lightness (documented shifts of an attested substrate); track = Trench Slate #141A1F, attested. Deliberately drawn from the substrate family, not the cognitive lights — in this palette especially, a luminous scrollbar would be light appearing without meaning, which the source's own base-layer intent forbids.",
+    "syntax": "Follows the schema's declared fallbacks rather than inventing a code grammar: key = roles.info, string = roles.threshold, bool = roles.intent, number = surface.muted, null = surface.muted-alt. syntax.bg = Basalt Ink #1C232A, which the source names as the code-block surface directly (section 1) rather than the schema's surface.panel fallback; syntax.fg = Thought Pearl.",
+    "sets": "LANE-DRAFTED, KEEPER-TUNABLE. Set meaning is distinctness-from-siblings, not absolute semantics; all three sets are pairwise distinct. harness: claude_code = Photic Cyan, claude_code_secondary = Survey Teal (the two Claude lanes as the cognitive-light pair, at two intensities), opencode = Rite Magenta, hermes = #FFD47B — the attested .btn-commit text tint from the sketch, NOT Ember Gold itself. Both sibling themes give hermes their structural gold rather than their threshold gold (johannah #c4a051 vs threshold #8f7333; namrop #e0ba68 vs threshold #b98742), and this palette has no second gold, so the sketch's lighter commit tint stands in. A harness color paints every series, dot and lane label — that is routine, and the source's hard rule is that Ember Gold 'must only appear on actions that cannot be undone'. session-type: main = Photic Cyan (the focus/selection lane, the one a human is actually in), cron = Survey Teal (structural, mechanical, scheduled), delegated = Pulse Violet #8A6CFF, 'Emergence / Phase shift' — sub-agent lanes as the system's emergent states.",
+    "series_rank": "LANE-DRAFTED, KEEPER-TUNABLE. Ten-slot ramp, eight of ten palette-attested: Biolume Blue, Photic Cyan, Survey Teal, Drift Green, Ember Gold, Rite Magenta, Pulse Violet, ember-glow #FFD47B, magenta-glow #FFB5F2, and rank-10 = #00a3ee, DRAFTED as Biolume Blue deepened -0.18 lightness (a documented shift, held apart from both cyans). Blood Coral #E0524D is ABSENT by rule: the violation hue never enters a decorative series, and the source says the same thing in its own words. Thought Pearl #C7D6D9 is absent because fg is never a series line, and Cold Lumen is absent because it is the muted text hue (both exclusions follow johannah's 2026-08-29 correction). KEEPER ITEM: rank-5 does carry the threshold hue, which both sibling themes also do (johannah rank-4, namrop rank-7) — but the source's hard rule against Ember Gold appearing anywhere but irreversible actions is stricter than GC's set doctrine, and this is the one place the two collide. Flagged rather than silently passed; drop rank-5 to a documented gold shift if the keeper reads the hard rule as binding on sets.",
+    "shape": "Rounded native. The radius scale is the sketch's own geometry: xl 14px = --radius, md 10px = --radius-sm, lg 12px (buttons, inputs, pre, nav items), sm 8px (inline code), pill 999px (chips) — all five ATTESTED. xs 4px is DRAFTED as half of sm; the sketch has no tier below 8px. Non-zero at every tier, so the rounded/hard cross-check in conformance.py passes honestly. lift = rgba(199,214,217,.06), DRAFTED: a faint Thought Pearl wash, the same channel triplet as the attested hairline at lower alpha, so the slant overlay's background lift reads as the border it replaces.",
+    "motion": "DRAFTED from the source's stated posture, which is unusually explicit: 'No gradients. No blinking. Motion must be semantic, not animated noise', and of the motion colors 'they should feel alive — but never permanent'. Calm rather than absent: pulse 2.2s at 0.6 amplitude — slower than namrop's cockpit, more present than johannah's paper. NOTE on `blink`: the source forbids blinking outright, but GC rules information channels theme-tunable and NEVER theme-removable — hush is a value, not a code path. So blink is tuned to its slowest, quietest setting (2.6s) rather than zeroed. Every duration and amplitude > 0.",
+    "type": "The sketch's --sans and --mono stacks VERBATIM; display = @body (the sketch has one display voice, its sans, and the alias keeps that honest rather than inventing a serif). All are system stacks — nothing to vendor, no webfonts, no CDN. Scale: xs 11px, sm 12px, base 14px, lg 16px are the sketch's real sizes (kicker/chip 12px, .h1 14px, h2 16px, badges 11px); xl 22px is DRAFTED — the sketch never sets display-scale type. leading.base 1.45 is ATTESTED (body line-height); code 1.5 and prose 1.65 are drafted.",
+    "background": "NONE. assets-src/abyssal-covenant/ is deliberately absent — this palette has no site, no donor art, and no rendered surface of its own; the substrate colors are the background.",
+    "grade": "LANE-DRAFTED, KEEPER-TUNABLE throughout. Distinct from the sibling themes' status: governed-cognition, johannah and namrop each extract from a real, keeper-touched surface (Diadem's theme-default.css, jlmu.love, namrop.com). This one extracts from an ungraded model proposal in a two-turn session. Every value is either attested to that session or a documented shift of one; nothing here is a taste call the keeper has ratified.",
+    "session_type_native": "native = Rite Magenta at glow intensity (--magenta-glow #ffb5f2), the fourth session type (keeper-ruled 2026-09-02, GC-owned set): a Diadem-born session is light the system made itself, so it wears the palette's own glow rather than a borrowed hue. Chosen over Ember Gold's family on the source's hard rule (the ember must only appear on actions that cannot be undone, and a session dot is routine) and over Rite Magenta #c94bbe itself, which sits closer to Pulse Violet than the glow does. Separation from the other three: min dE 57.6 (to delegated), min RGB distance 138.5 — both far above this theme's existing floor (main/cron sit at dE 17.9); contrast 12.1:1 on --bg. The derived hi would clip to #fffcff (near-white, hue gone), so hi is PINNED in modifier_overrides to #ffd4f7 — the same lift held to +0.06 lightness, brighter without washing out."
+  },
+  "schemes": {
+    "light": {
+      "color": {
+        "roles": {
+          "structure": "#00766a",
+          "info": "#005879",
+          "stability": "#00582f",
+          "threshold": "#674900",
+          "violation": "#c13433",
+          "intent": "#af31a6"
+        },
+        "surface": {
+          "bg": "#e4e9ee",
+          "panel": "#eaf3fa",
+          "panel-raised": "#f3f9ff",
+          "bg-deep": "#dadde2",
+          "terminal": "#dde5e2",
+          "raw": "#d9e3ec",
+          "fg": "#141a1f",
+          "fg-soft": "#22434b",
+          "muted": "#30515a",
+          "muted-alt": "#376876",
+          "scrollbar-thumb": "#bac6d2",
+          "scrollbar-thumb-hover": "#99a6b4",
+          "scrollbar-track": "#eaf3fa",
+          "line": "rgba(122, 136, 139, 0.39)",
+          "shade": "rgba(20, 26, 31, 0.14)"
+        },
+        "syntax": {
+          "bg": "#e4e8ec",
+          "fg": "#141a1f",
+          "key": "#005879",
+          "string": "#674900",
+          "number": "#30515a",
+          "bool": "#af31a6",
+          "null": "#376876"
+        }
+      },
+      "sets": {
+        "ai-usage.harness": {
+          "claude_code": "#005653",
+          "claude_code_secondary": "#00766a",
+          "hermes": "#644900",
+          "opencode": "#af31a6"
+        },
+        "ai-usage.series-rank": {
+          "rank-1": "#005879",
+          "rank-2": "#009b97",
+          "rank-3": "#00766a",
+          "rank-4": "#00582f",
+          "rank-5": "#674900",
+          "rank-6": "#af31a6",
+          "rank-7": "#8f75ff",
+          "rank-8": "#a77e1c",
+          "rank-9": "#76366d",
+          "rank-10": "#007cb7"
+        },
+        "diadem.session-type": {
+          "main": "#005552",
+          "cron": "#00766a",
+          "delegated": "#8f75ff",
+          "native": "#7c3c73"
+        }
+      },
+      "modifiers": {
+        "hi": {
+          "lightness": -0.1
+        }
+      },
+      "modifier_overrides": {
+        "roles.structure": {
+          "hi": "#005f5c"
+        }
+      },
+      "shape": {
+        "lift": "rgba(20, 26, 31, 0.05)"
+      },
+      "notes": {
+        "derivation": "LANE-DRAFTED, KEEPER-TUNABLE — the other half of the pair (keeper 2026-10-01: \"they are forced dark mode or light mode, I want to make the pairs for them please\"). Every value is DERIVED from this theme's own native value for the same token, by one rule applied to all seven themes, never picked: hue held (OKLCH h) and chroma held where sRGB allows; only lightness moves. Roles keep their native WEIGHT — the native contrast against the native bg is carried onto the new bg by a monotone log map (3.5:1 -> 3.0:1, 15:1 -> 8.5:1), so a role that read brighter than its sibling still reads heavier than it, and same-hue pairs stay apart by lightness; floors 4.5:1 for the text-bearing roles (info, violation, intent) and 3:1 for the rest. Categorical sets are rescaled as a WHOLE (native lightness order and log-spacing kept, fitted into the new band on the new panel) — distinctness is their meaning, so a set is never floored member by member; a member that wears a role's colour natively wears that role's colour in this half too, so native identities survive the flip. A last pass pushes the closest pair apart in lightness until each group is at least as separated as its native (OKLab dE x100, capped at 10). Text tokens sit in bands per ground (light: fg-soft 6-9:1, muted 5-7:1, muted-alt 3.5-5:1 — a light ground gives thin type no bloom). An rgba hairline keeps its native EFFECTIVE contrast over its own ground (alpha solved, never copied), floored at 1.45:1 so a line reads as a line. Surfaces keep each surface's own hue. On light they sit on johannah's attested paper ladder (lightness AND a chroma ceiling per surface), so a tinted theme becomes tinted paper, not white; the first draft's near-white ladder was the keeper's 'they revert to a default' (2026-10-01). On dark, chroma stays low so the substrate tints. Shape, motion, type and webfonts are the theme's own in both schemes — that is what makes the two halves one theme.",
+        "roles": "native -> light, contrast on each half's own bg: structure #1fb8a6 (7.80:1) -> #00766a (4.52:1); info #4bc6ff (9.97:1) -> #005879 (6.43:1); stability #7be3a1 (12.30:1) -> #00582f (7.05:1); threshold #f4b942 (10.93:1) -> #674900 (6.79:1); violation #e0524d (5.05:1) -> #c13433 (4.52:1); intent #c94bbe (4.82:1) -> #af31a6 (4.51:1).",
+        "separation": "Minimum pairwise OKLab dE x100 per group, this half vs native: roles 10.7 (native 13.3); ai-usage.harness 10.1 (native 13.7); ai-usage.series-rank 10.7 (native 7.5); diadem.session-type 10.5 (native 13.7). Every group is at least as separated as its native (or at the dE 10 cap).",
+        "surfaces": "fg 14.36:1 on bg, 15.62:1 on panel; muted 7.02:1; muted-alt 5.05:1. fg is the native PANEL #141a1f — the dark substrate turned into ink; a light panel sits lighter than the bg and panel-raised lighter still, johannah's attested paper ladder.",
+        "background": "NONE in either half: this theme has never had a plate. --gc-bg carries the field; generate.py ships one if assets-src/abyssal-covenant/background.light.<ext> appears.",
+        "theme": "the source's focus/structure split is carried: structure-hi stays pinned to Photic Cyan's hue (modifier_overrides), fitted DARKER than structure because on a light ground emphasis is a deeper ink."
+      }
+    }
+  }
+}

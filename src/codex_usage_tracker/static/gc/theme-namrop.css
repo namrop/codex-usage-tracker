@@ -49,9 +49,11 @@
   --gc-cat-diadem-session-type-main: #b7e4a8;
   --gc-cat-diadem-session-type-cron: #e0ba68;
   --gc-cat-diadem-session-type-delegated: #a86eb5;
+  --gc-cat-diadem-session-type-native: #23d7ff;
   --gc-cat-diadem-session-type-main-hi: #e4f5de;
   --gc-cat-diadem-session-type-cron-hi: #ecd5a3;
   --gc-cat-diadem-session-type-delegated-hi: #c49dcd;
+  --gc-cat-diadem-session-type-native-hi: #6ae4ff;
 
   /* -- surfaces -- */
   --gc-bg: #05010a;
@@ -73,11 +75,12 @@
   /* -- background asset: consumers layer this OVER --gc-bg, so a 404
    * (origin outage, missing vendored file) costs the image, never the
    * page. Relative URL — resolves beside this stylesheet, origin-served
-   * or vendored, exactly like the fonts. Every theme pins all three so
+   * or vendored, exactly like the fonts. Every theme pins all four so
    * cascade-order theme swaps cannot leak a previous theme's image. -- */
   --gc-bg-image: url(assets/namrop-bg-110f0d4c768f.webp);
   --gc-bg-size: cover;
   --gc-bg-repeat: no-repeat;
+  --gc-bg-position: center top;
 
   /* -- scheme: the theme declares its own browser color-scheme -- */
   color-scheme: dark;
@@ -148,6 +151,117 @@
   --gc-lh-code: 1.5;
   --gc-lh-base: 1.6;
   --gc-lh-prose: 1.7;
+}
+
+/* -- the light half of the pair: selected by data-gc-scheme="light" on
+ * <html> (the loader sets it). Colour only — shape, motion and type are
+ * this theme's own in both schemes. Source: tokens/namrop.json schemes.light -- */
+:root[data-gc-scheme="light"] {
+  /* -- roles: the invariant layer (structure info stability threshold violation intent) -- */
+  --gc-role-structure: #a27e28;
+  --gc-role-info: #005c66;
+  --gc-role-stability: #2e541f;
+  --gc-role-threshold: #8b5b0a;
+  --gc-role-violation: #c02f4d;
+  --gc-role-intent: #8144a0;
+  --gc-role-structure-hi: #795e1e;
+  --gc-role-info-hi: #002e33;
+  --gc-role-stability-hi: #1a2f11;
+  --gc-role-threshold-hi: #5b3c07;
+  --gc-role-violation-hi: #97253d;
+  --gc-role-intent-hi: #64357c;
+
+  /* -- categorical sets: distinctness-from-siblings -- */
+  --gc-cat-ai-usage-harness-claude_code: #005c66;
+  --gc-cat-ai-usage-harness-claude_code_secondary: #b075bd;
+  --gc-cat-ai-usage-harness-hermes: #a27e28;
+  --gc-cat-ai-usage-harness-opencode: #8144a0;
+  --gc-cat-ai-usage-harness-claude_code-hi: #002e33;
+  --gc-cat-ai-usage-harness-claude_code_secondary-hi: #9c52ac;
+  --gc-cat-ai-usage-harness-hermes-hi: #795e1e;
+  --gc-cat-ai-usage-harness-opencode-hi: #64357c;
+  --gc-cat-ai-usage-series-rank-rank-1: #005c66;
+  --gc-cat-ai-usage-series-rank-rank-2: #007188;
+  --gc-cat-ai-usage-series-rank-rank-3: #8144a0;
+  --gc-cat-ai-usage-series-rank-rank-4: #985fa5;
+  --gc-cat-ai-usage-series-rank-rank-5: #6d4178;
+  --gc-cat-ai-usage-series-rank-rank-6: #a27e28;
+  --gc-cat-ai-usage-series-rank-rank-7: #8b5b0a;
+  --gc-cat-ai-usage-series-rank-rank-8: #604900;
+  --gc-cat-ai-usage-series-rank-rank-9: #2e541f;
+  --gc-cat-ai-usage-series-rank-rank-10: #ad77bf;
+  --gc-cat-ai-usage-series-rank-rank-1-hi: #002e33;
+  --gc-cat-ai-usage-series-rank-rank-2-hi: #004755;
+  --gc-cat-ai-usage-series-rank-rank-3-hi: #64357c;
+  --gc-cat-ai-usage-series-rank-rank-4-hi: #7b4b86;
+  --gc-cat-ai-usage-series-rank-rank-5-hi: #4f2f57;
+  --gc-cat-ai-usage-series-rank-rank-6-hi: #795e1e;
+  --gc-cat-ai-usage-series-rank-rank-7-hi: #5b3c07;
+  --gc-cat-ai-usage-series-rank-rank-8-hi: #2d2200;
+  --gc-cat-ai-usage-series-rank-rank-9-hi: #1a2f11;
+  --gc-cat-ai-usage-series-rank-rank-10-hi: #9854af;
+  --gc-cat-diadem-session-type-main: #2e541f;
+  --gc-cat-diadem-session-type-cron: #a27e28;
+  --gc-cat-diadem-session-type-delegated: #b075bd;
+  --gc-cat-diadem-session-type-native: #006074;
+  --gc-cat-diadem-session-type-main-hi: #1a2f11;
+  --gc-cat-diadem-session-type-cron-hi: #795e1e;
+  --gc-cat-diadem-session-type-delegated-hi: #9c52ac;
+  --gc-cat-diadem-session-type-native-hi: #003641;
+
+  /* -- surfaces -- */
+  --gc-bg: #eee3f9;
+  --gc-fg: #180c20;
+  --gc-panel: #f7edff;
+  --gc-line: rgba(166, 126, 45, 0.46);
+  --gc-muted: #574934;
+  --gc-muted-alt: #8f5aa0;
+  --gc-shade: rgba(24, 12, 32, 0.14);
+  --gc-scrollbar-thumb: #dfbca6;
+  --gc-scrollbar-track: #f7edff;
+  --gc-terminal: #e9dfef;
+  --gc-raw: #e8dcf1;
+  --gc-scrollbar-thumb-hover: #c09e74;
+  --gc-bg-deep: #e0d9ed;
+  --gc-panel-raised: #fbf6ff;
+  --gc-fg-soft: var(--gc-muted);
+
+  /* -- background asset: consumers layer this OVER --gc-bg, so a 404
+   * (origin outage, missing vendored file) costs the image, never the
+   * page. Relative URL — resolves beside this stylesheet, origin-served
+   * or vendored, exactly like the fonts. Every theme pins all four so
+   * cascade-order theme swaps cannot leak a previous theme's image. -- */
+  --gc-bg-image: url(assets/namrop-light-bg-0f2ef50bfb6f.webp);
+  --gc-bg-size: cover;
+  --gc-bg-repeat: no-repeat;
+  --gc-bg-position: center top;
+
+  /* -- scheme: the theme declares its own browser color-scheme -- */
+  color-scheme: light;
+  --gc-scheme: light;
+
+  /* -- syntax (falls back to roles/surfaces when the theme omits it) -- */
+  --gc-syntax-bg: #eae5ed;
+  --gc-syntax-fg: #180c20;
+  --gc-syntax-key: #005c66;
+  --gc-syntax-string: #a27e28;
+  --gc-syntax-number: #574934;
+  --gc-syntax-bool: #8144a0;
+  --gc-syntax-null: #8f5aa0;
+
+  /* -- theme-private extras (never rely on these across themes) -- */
+  --gc-extra-beam-cyan: #23d7ff;
+  --gc-extra-ink: #120719;
+  --gc-extra-ink-warm: #1b0b25;
+  --gc-extra-keeper-cream: #fff0b8;
+  --gc-extra-orchid-pale: #d9a8e6;
+  --gc-extra-plum: #6f417f;
+  --gc-extra-plum-bright: #a86eb5;
+  --gc-extra-star-gold: #f4d486;
+  --gc-extra-wine: #3f1434;
+
+  /* -- lift: a wash tuned to this half's ground -- */
+  --gc-lift-color: rgba(24, 12, 32, 0.05);
 }
 
 /* reduced-motion outranks every theme — the reader's own directive

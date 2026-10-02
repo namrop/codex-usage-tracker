@@ -49,9 +49,11 @@
   --gc-cat-diadem-session-type-main: #0e5035;
   --gc-cat-diadem-session-type-cron: #c4a051;
   --gc-cat-diadem-session-type-delegated: #432660;
+  --gc-cat-diadem-session-type-native: #2433b2;
   --gc-cat-diadem-session-type-main-hi: #062518;
   --gc-cat-diadem-session-type-cron-hi: #a98639;
   --gc-cat-diadem-session-type-delegated-hi: #29183b;
+  --gc-cat-diadem-session-type-native-hi: #1b2788;
 
   /* -- surfaces -- */
   --gc-bg: #f1e8d2;
@@ -73,11 +75,12 @@
   /* -- background asset: consumers layer this OVER --gc-bg, so a 404
    * (origin outage, missing vendored file) costs the image, never the
    * page. Relative URL — resolves beside this stylesheet, origin-served
-   * or vendored, exactly like the fonts. Every theme pins all three so
+   * or vendored, exactly like the fonts. Every theme pins all four so
    * cascade-order theme swaps cannot leak a previous theme's image. -- */
   --gc-bg-image: url(assets/johannah-bg-98aa005880e1.webp);
   --gc-bg-size: 650px;
   --gc-bg-repeat: repeat;
+  --gc-bg-position: center top;
 
   /* -- scheme: the theme declares its own browser color-scheme -- */
   color-scheme: light;
@@ -145,6 +148,114 @@
   --gc-lh-code: 1.5;
   --gc-lh-base: 1.6;
   --gc-lh-prose: 1.7;
+}
+
+/* -- the dark half of the pair: selected by data-gc-scheme="dark" on
+ * <html> (the loader sets it). Colour only — shape, motion and type are
+ * this theme's own in both schemes. Source: tokens/johannah.json schemes.dark -- */
+:root[data-gc-scheme="dark"] {
+  /* -- roles: the invariant layer (structure info stability threshold violation intent) -- */
+  --gc-role-structure: #c4a051;
+  --gc-role-info: #679d81;
+  --gc-role-stability: #81bf9e;
+  --gc-role-threshold: #dcc38a;
+  --gc-role-violation: #d66d81;
+  --gc-role-intent: #ab8dcf;
+  --gc-role-structure-hi: #d6bd86;
+  --gc-role-info-hi: #92b9a5;
+  --gc-role-stability-hi: #b0d7c2;
+  --gc-role-threshold-hi: #ecdfc1;
+  --gc-role-violation-hi: #e6a5b1;
+  --gc-role-intent-hi: #d0bfe4;
+
+  /* -- categorical sets: distinctness-from-siblings -- */
+  --gc-cat-ai-usage-harness-claude_code: #81bf9e;
+  --gc-cat-ai-usage-harness-claude_code_secondary: #679d81;
+  --gc-cat-ai-usage-harness-hermes: #c4a051;
+  --gc-cat-ai-usage-harness-opencode: #d66d81;
+  --gc-cat-ai-usage-harness-claude_code-hi: #b0d7c2;
+  --gc-cat-ai-usage-harness-claude_code_secondary-hi: #92b9a5;
+  --gc-cat-ai-usage-harness-hermes-hi: #d6bd86;
+  --gc-cat-ai-usage-harness-opencode-hi: #e6a5b1;
+  --gc-cat-ai-usage-series-rank-rank-1: #81bf9e;
+  --gc-cat-ai-usage-series-rank-rank-2: #ea909a;
+  --gc-cat-ai-usage-series-rank-rank-3: #ab8dcf;
+  --gc-cat-ai-usage-series-rank-rank-4: #dcc38a;
+  --gc-cat-ai-usage-series-rank-rank-5: #679d81;
+  --gc-cat-ai-usage-series-rank-rank-6: #ca96ac;
+  --gc-cat-ai-usage-series-rank-rank-7: #ffa8a7;
+  --gc-cat-ai-usage-series-rank-rank-8: #967f48;
+  --gc-cat-ai-usage-series-rank-rank-9: #c4a051;
+  --gc-cat-ai-usage-series-rank-rank-10: #82ab97;
+  --gc-cat-ai-usage-series-rank-rank-1-hi: #b0d7c2;
+  --gc-cat-ai-usage-series-rank-rank-2-hi: #f5ccd1;
+  --gc-cat-ai-usage-series-rank-rank-3-hi: #d0bfe4;
+  --gc-cat-ai-usage-series-rank-rank-4-hi: #ecdfc1;
+  --gc-cat-ai-usage-series-rank-rank-5-hi: #92b9a5;
+  --gc-cat-ai-usage-series-rank-rank-6-hi: #e2c5d2;
+  --gc-cat-ai-usage-series-rank-rank-7-hi: #ffefee;
+  --gc-cat-ai-usage-series-rank-rank-8-hi: #b9a26d;
+  --gc-cat-ai-usage-series-rank-rank-9-hi: #d6bd86;
+  --gc-cat-ai-usage-series-rank-rank-10-hi: #adc8bb;
+  --gc-cat-diadem-session-type-main: #81bf9e;
+  --gc-cat-diadem-session-type-cron: #c4a051;
+  --gc-cat-diadem-session-type-delegated: #ab8dcf;
+  --gc-cat-diadem-session-type-native: #aac0ff;
+  --gc-cat-diadem-session-type-main-hi: #b0d7c2;
+  --gc-cat-diadem-session-type-cron-hi: #d6bd86;
+  --gc-cat-diadem-session-type-delegated-hi: #d0bfe4;
+  --gc-cat-diadem-session-type-native-hi: #f1f5ff;
+
+  /* -- surfaces -- */
+  --gc-bg: #06180f;
+  --gc-fg: #f1e8d2;
+  --gc-panel: #14281e;
+  --gc-line: rgba(196, 160, 81, 0.22);
+  --gc-muted: #a995a1;
+  --gc-muted-alt: #97667b;
+  --gc-shade: rgba(0, 0, 0, 0.5);
+  --gc-scrollbar-thumb: #4e4122;
+  --gc-scrollbar-track: #14281e;
+  --gc-terminal: var(--gc-bg);
+  --gc-raw: var(--gc-bg);
+  --gc-scrollbar-thumb-hover: #6d5829;
+  --gc-bg-deep: #011008;
+  --gc-panel-raised: #1f3329;
+  --gc-fg-soft: #ab97a3;
+
+  /* -- background asset: consumers layer this OVER --gc-bg, so a 404
+   * (origin outage, missing vendored file) costs the image, never the
+   * page. Relative URL — resolves beside this stylesheet, origin-served
+   * or vendored, exactly like the fonts. Every theme pins all four so
+   * cascade-order theme swaps cannot leak a previous theme's image. -- */
+  --gc-bg-image: url(assets/johannah-dark-bg-402c6bcdfcaf.webp);
+  --gc-bg-size: cover;
+  --gc-bg-repeat: no-repeat;
+  --gc-bg-position: left top;
+
+  /* -- scheme: the theme declares its own browser color-scheme -- */
+  color-scheme: dark;
+  --gc-scheme: dark;
+
+  /* -- syntax (falls back to roles/surfaces when the theme omits it) -- */
+  --gc-syntax-bg: #06180f;
+  --gc-syntax-fg: #f1e8d2;
+  --gc-syntax-key: #679d81;
+  --gc-syntax-string: #dcc38a;
+  --gc-syntax-number: #97667b;
+  --gc-syntax-bool: #ab8dcf;
+  --gc-syntax-null: #a995a1;
+
+  /* -- theme-private extras (never rely on these across themes) -- */
+  --gc-extra-accent-purple: #ab8dcf;
+  --gc-extra-accent-red: #d66d81;
+  --gc-extra-atlas-gold: #d7af77;
+  --gc-extra-atlas-wine: #823236;
+  --gc-extra-gold-soft: #dcc38a;
+  --gc-extra-green-mist: #7aa38f;
+
+  /* -- lift: a wash tuned to this half's ground -- */
+  --gc-lift-color: rgba(241, 232, 210, 0.06);
 }
 
 /* reduced-motion outranks every theme — the reader's own directive

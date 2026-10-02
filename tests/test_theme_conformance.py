@@ -183,7 +183,8 @@ def test_vendored_gc_snapshot_present_and_carries_declared_sets() -> None:
     """The fallback snapshot must exist and hold the ai-usage sets — an
     origin outage renders yesterday's theme, never unstyled."""
     assert (GC_SNAPSHOT / "loader.js").is_file()
-    for name in ("governed-cognition", "neo-andean", "johannah"):
+    # alexandria replaced the dropped governed-cognition theme as the default (2026-10-02)
+    for name in ("alexandria", "neo-andean", "johannah"):
         css = (GC_SNAPSHOT / f"theme-{name}.css").read_text(encoding="utf-8")
         for rank in range(1, 11):
             assert f"--gc-cat-ai-usage-series-rank-rank-{rank}:" in css, (

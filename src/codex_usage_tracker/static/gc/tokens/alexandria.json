@@ -1,0 +1,232 @@
+{
+  "name": "alexandria",
+  "title": "Alexandria",
+  "description": "The Lighthouse of the Universe register: a 27th-century Alexandria harbour at night — indigo sea-and-sky substrate, the beacon's amber gold, the city's edge-cyan, the tower's own rose-and-crimson rails. Engineered metal and wet stone, hard edges, no roundover. Every role hue is sampled from ONE keeper-selected plate (the offshore return view, 2026-04-27) rather than inherited from the sibling neo-andean palette. Working name — keeper-tunable.",
+  "color": {
+    "roles": {
+      "structure": "#7DC6DB",
+      "info": "#B87733",
+      "stability": "#34D574",
+      "threshold": "#E8B264",
+      "violation": "#E31C3A",
+      "intent": "#CE7296"
+    },
+    "surface": {
+      "bg": "#091927",
+      "fg": "#E5E0D7",
+      "panel": "#122A3E",
+      "line": "rgba(125, 198, 219, 0.22)",
+      "muted": "#87898D",
+      "muted-alt": "#68707A",
+      "shade": "rgba(2, 4, 7, 0.6)",
+      "terminal": "#0D1218",
+      "raw": "#020407",
+      "scrollbar-thumb": "#383E49",
+      "scrollbar-thumb-hover": "#454D5A",
+      "scrollbar-track": "#122A3E",
+      "bg-deep": "#020407",
+      "panel-raised": "#183752",
+      "fg-soft": "#CBBBAF"
+    },
+    "syntax": {
+      "bg": "#0D1218",
+      "fg": "#E5E0D7",
+      "key": "#B87733",
+      "string": "#E8B264",
+      "number": "#87898D",
+      "bool": "#CE7296",
+      "null": "#68707A"
+    },
+    "extra": {
+      "beam-pale": "#F5D694",
+      "lantern-core": "#E8B264",
+      "window-amber": "#DAAA68",
+      "city-cyan-pale": "#B6E6F1",
+      "harbour-cyan-deep": "#3D93B1",
+      "rail-rose-deep": "#C23367",
+      "rail-crimson": "#903840",
+      "harbour-slate": "#383E49",
+      "spray-pearl": "#DAE3E5",
+      "sea-ink": "#020407"
+    },
+    "scheme": "dark"
+  },
+  "sets": {
+    "ai-usage.harness": {
+      "claude_code": "#7DC6DB",
+      "claude_code_secondary": "#B6E6F1",
+      "hermes": "#E8B264",
+      "opencode": "#CE7296"
+    },
+    "ai-usage.series-rank": {
+      "rank-1": "#B6E6F1",
+      "rank-2": "#7DC6DB",
+      "rank-3": "#3D93B1",
+      "rank-4": "#34D574",
+      "rank-5": "#CE7296",
+      "rank-6": "#C23367",
+      "rank-7": "#F5D694",
+      "rank-8": "#E8B264",
+      "rank-9": "#B87733",
+      "rank-10": "#87898D"
+    },
+    "diadem.session-type": {
+      "main": "#34D574",
+      "cron": "#E8B264",
+      "delegated": "#CE7296",
+      "native": "#7DC6DB"
+    }
+  },
+  "modifiers": {
+    "hi": {
+      "lightness": 0.14
+    }
+  },
+  "shape": {
+    "native": "hard",
+    "radius": {
+      "xs": "0px",
+      "sm": "0px",
+      "md": "0px",
+      "lg": "0px",
+      "xl": "0px",
+      "pill": "0px"
+    },
+    "lift": "rgba(232, 178, 100, 0.07)"
+  },
+  "motion": {
+    "timings": {
+      "fast": "0.13s",
+      "med": "0.2s",
+      "slide": "0.24s",
+      "pulse": "3s",
+      "pulse-fast": "1.2s",
+      "blink": "1.6s",
+      "flash": "1.8s",
+      "breathe": "4s"
+    },
+    "amplitudes": {
+      "pulse": 0.7
+    }
+  },
+  "type": {
+    "family": {
+      "body": "'DIN Alternate', Bahnschrift, 'Avenir Next Condensed', 'Segoe UI', system-ui, sans-serif",
+      "display": "'DIN Condensed', 'Bahnschrift SemiCondensed', 'Avenir Next Condensed', 'Segoe UI Semibold', system-ui, sans-serif",
+      "mono": "ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace"
+    },
+    "scale": {
+      "xs": "11px",
+      "sm": "12px",
+      "base": "14px",
+      "lg": "16px",
+      "xl": "21px"
+    },
+    "leading": {
+      "code": 1.5,
+      "base": 1.55,
+      "prose": 1.65
+    }
+  },
+  "notes": {
+    "provenance": "One plate, one sampler. Every role and surface hex below is a k-means cluster centroid taken from the VERBATIM canon source /srv/pharos/atrium/canon/20_digital_architecture/color_schemes/lighthouse_of_the_universe_alexandria/lighthouse_alexandria_location_angle_offshore_return_view_selected_2026-04-27.png (1024x1536 PNG, 2.28 MiB, keeper-selected 2026-04-27: 'Luis selected the middle image from the first location-angle pass as good and asked to save it'). Lane thesis: lighthouse_of_the_universe_alexandria_photoreal_wallpaper_style_baseline_2026-04-04.md, uid 019d5701-649f-749f-8068-9a3331cfb667. That note's palette-continuity section says the change from the neo-andean sibling lane is 'not a different palette ... higher saturation, brighter signal intensity' — taken literally that is the neo-andean remap_2026-08-29 trap restated, so the hues here are ATTESTED FROM THE PIXELS, and where the pixels disagree with the prose the pixels win.",
+    "sampled_centroids": "Sampler: PIL + numpy k-means over the full 1,572,864-pixel frame, accents thresholded on HLS saturation/lightness FIRST so the small bright pixels are not drowned by the dark field (the frame's median lightness is 0.120). Region | centroid | h/l/s | n. lantern core (h .08-.13, l>.60) | #E8B264 | .098/.651/.742 | 10,156 px, 67% of cluster. beam peak (same mask) | #F5D694 | .113/.771/.829 | 33% of cluster. city window-amber, BEAM WEDGE EXCLUDED (y 380-820, not(y<420 and x<560), h .06-.13, s>.5) | #DAAA68 (58%) and #A2692D (42%) | .097/.631/.602 and .085/.406/.565 | 327 px. city cyan (city band, h .50-.60, s>.45, l>.40) | #7DC6DB (43%), #B6E6F1 (38%), #3D93B1 (19%) | .538/.675/.566 | 951 px. tower-shaft lit pixels only (x 460-670, y 380-790, s>.35, l>.30) | #903840 (46%), #F0BFB8 (19%), #CE7296 (18%), #C6975D (17%) | crimson .985/.392/.440 and rose .935/.627/.484 | 2,581 px. rail magenta tight (h .89-.97, s>.55) | #A21F46, #B82D60, #C23367 | .939-.951 | 368 px. rail crimson (h>.955, s>.45) | #9D243C, #7C2130 | .967-.971 | 396 px. sky field (l .05-.12) | #091927 (41%), #0D1218 (59%) | .576/.093/.640 | 536,099 px. city-dark between spires (l .12-.20, s>.35) | #122A3E | .574/.157/.550 | 234,676 px, 96% of cluster. darkest 2% of frame | #020407 | .585/.017/.560 | 29,214 px. beam-haze neutral (l>.85, s<.40) | #E5E0D7 (46%), #DAE3E5 (30%) | .107/.871/.212 | 233 px. warm haze (l .70-.90, s .10-.35) | #CBBBAF | .071/.741/.212 | 1,332 px. rock/spray mid (l .40-.60, s<.20) | #68707A (44%), #87898D (34%) | .593/.443/.080 and .611/.541/.026 | 20,588 px. harbour mid (l .22-.38, s<.30) | #383E49 (41%), #4E535C (30%) | .606/.254/.131 | 100,842 px.",
+    "spatial_evidence": "Three facts from the sampler decided the role map, and they overturn the lane's own prose. (1) GOLD IS THE FIELD, NOT THE CHROME: of 88,490 lit pixels (s>.30, l>.30) 79,520 — 89.9% — fall in h .056-.139. (2) CYAN IS THE CITY: in the city band, cyan splits 191 / 95 / 665 across the left, middle and right thirds — it draws the skyline and is nearly absent from the tower. (3) MAGENTA IS THE TOWER: of 686 city-band magenta pixels, 673 lie in the middle third, i.e. on the tower shaft itself. So the plate's own grammar is: the city is drawn in cyan, the tower is marked in rose, and gold is the light everything sits in.",
+    "roles": "OVERTURNED from the drafting proposal, on the evidence above. The proposal was structure = the beam/lantern gold ('the lighthouse's own signal is the structural voice of this world'). Rejected for two reasons. First, neo-andean's own honest_overlaps note names its load-bearing distinction as 'the gold-structural chrome (vs GC's teal)'; a second gold-structural theme does not merely fail to earn Alexandria a distinction, it erases neo-andean's. Sampled, the collision is real: the lantern-core gold #E8B264 is only 32 RGB-units from neo-andean's Solar Gold #FFC857 — visually one color. Second, structure is the most-used chrome role (borders, rings, focus, the skeleton), and gold is already 89.9% of this plate's lit pixels; putting the most abundant hue on the most-used role is exactly how a theme becomes a wash. So: structure = #7DC6DB, the city-cyan centroid — in this plate cyan is literally the edge light of the engineered world, the hue that draws every spire, gantry and service deck. info = #B87733, the city's window-amber: a harbour-library civilization's lit windows ARE quiet data at rest, which is the info doctrine ('keys, links-at-rest, quiet data'). threshold = #E8B264, the lantern core — the beacon is the rare, directed, consequential signal, 'warnings at the edge' in the most literal sense a lighthouse can offer; the motion block gives it the beam's period. intent = #CE7296, the tower-rail rose, sampled from the one hue the plate reserves for the tower and nothing else (673/686 px) — the human hand, marked on the structure it built. violation and stability below.",
+    "info_shift": "info is the DEEPER of the two window-amber centroids, #A2692D (h .085, l .406, s .565), lifted in lightness only .406 -> .461 -> #B87733. Reason for the lift: at the sampled lightness it reads 3.89:1 against the bg and 4.49:1 against bg-deep; lifted it reads 4.85:1 / 5.60:1. Hue and saturation are untouched. The BRIGHTER window-amber centroid #DAAA68 was rejected for this role because it sits 17 units from threshold's lantern gold — the two would have been one color. It is kept as extra 'window-amber'. FLAG FOR KEEPER: 4.85:1 is fine for UI accents and borderline for link text. It is doctrinally right (info is the quiet channel, and in this plate the quiet channel genuinely is dim), but if links read too dim in a real app, lift to l .48 (#C07C35, 5.23:1) rather than changing the hue.",
+    "stability_shift": "DOCUMENTED SHIFT, not a sample: this plate carries no green. Searched h .22-.45 at s>.25, l>.22 and found EIGHT pixels in 1.57 million, all near-white bloom (#D8EADD, #C5E0D2) — there is no green in the Lighthouse of the Universe. So stability is a rotation of the city-cyan centroid #7DC6DB (h .537, l .675, s .566) to h .400, l .520, s .657 -> #34D574, a sea-glass emerald. All three axes moved, deliberately: rotating the hue alone (holding the cyan's own l/s) lands 55 units from structure, which would have put the at-rest role and the chrome role in the same family. Deepening and saturating opens that to 127. Result is 163 from BOTH governed-cognition's and neo-andean's Highland Lime #A4F000 and 142 from namrop's #b7e4a8 — no green in the estate is near it.",
+    "violation_shift": "Donor: #903840, the DOMINANT tower-shaft lit cluster (46% of 2,581 px, h .985, l .392, s .440) — the crimson end of the rails' crimson-to-rose gradient. CORRECTION TO THE DRAFTING BRIEF, recorded rather than papered over: the brief assumed the sampled red would sit inside the magenta quadrant and need rotating out of it. It does not. Taking the magenta quadrant as h .83-.95 (intent sits at .935), both red donors — #903840 at .985 and the secondary #9D243C at .967 — already sample OUTSIDE it, and the naive lightness-only lift of either lands 83-97 units from intent, not on top of it. The separation violation needs here is therefore not a hue rotation but an ALARM lift: saturation .440 -> .78 and lightness .392 -> .50, which turns a wine-dark rail into a signal. The small hue nudge .985 -> .975 that remains is aimed the other way — away from governed-cognition's and neo-andean's Integrity Red #E10600 (h .004), opening that gap from ~51 to 62 so Alexandria's violation is its own red. Final #E31C3A: 128 from intent, 101 from info, 62 from #E10600, 3.81:1 on the bg. Sacred, never decorative.",
+    "surfaces": "bg = #091927, the sky-field centroid — the harbour night itself, and the color the background plate is dimmed toward, so image and flat color are the same substrate. bg-deep / raw = #020407, the darkest 2% of the frame (the open sea). panel = #122A3E, the city-dark centroid sampled BETWEEN the spires (234,676 px, 96% of its cluster) — the harbour's own mid-dark, which is why panels sit on the plate rather than on it. panel-raised = #183752, a documented +0.05 lightness on panel. terminal = #0D1218, the low-saturation sky/sea dark. fg = #E5E0D7, the beam-haze neutral (l>.85, s<.40; h .107 — warm, gold-tinged, because in this plate every white IS beam-lit): pearl at 13.54:1 on bg, 11.2:1 on panel, and 124 units clear of threshold's gold so a gate never reads as text. fg-soft = #CBBBAF, the warm-haze centroid. muted = #87898D and muted-alt = #68707A, the two rock-and-spray mid-tone centroids — wet stone, the plate's only neutrals (5.08:1 and 3.55:1). line = the structure cyan at 0.22 alpha, the namrop hairline pattern applied to this theme's chrome hue. scrollbars are quiet structure per the 2026-08-29 ruling: thumb #383E49 and hover #454D5A are the harbour mid-tones, never an accent, track on panel.",
+    "divergence": "Role-for-role RGB distance against the two dark siblings. structure #7DC6DB: 185 from neo-andean #FFC857, 138 from governed-cognition #00B3A4. info #B87733: 246 / 233. stability #34D574: 163 / 163. threshold #E8B264: 97 / 34. violation #E31C3A: 62 / 62. intent #CE7296: 83 / 83. Six of six roles differ by >=60 from neo-andean; five of six from governed-cognition. Internal minimum pairwise distance between the six roles is 85 (threshold/intent), which is wider than namrop's 75 — no two roles in this theme are near neighbours.",
+    "honest_overlaps": "One overlap, named rather than engineered away. threshold #E8B264 is 34 units from governed-cognition's #FFC857 — the same role in both themes, because April doctrine named threshold 'Commit Gold' and this plate's beacon independently samples into that family. That is lineage, not copying: #E8B264 is the k-means centroid of 10,156 lantern pixels, not a value carried over. It is also 97 from neo-andean's Copper Earth, so the three themes' thresholds are not a set of three near-identical golds. KEEPER OPTION if 6/6 divergence is wanted: the beam-peak centroid #F5D694 (already carried as extra 'beam-pale') puts threshold 63 from #FFC857 — the cost is that fg separation drops from 124 to 70, which is a worse trade in a reading surface than a 34-unit overlap in a role the doctrine says is rare.",
+    "background": "assets-src/alexandria/background.webp is a documented RE-ENCODE of a REFERENCE asset, made for size only. The keeper corrected a re-encode once already ('I wanted that toile', johannah), so the verbatim source is named here and stays recoverable: /srv/pharos/atrium/canon/20_digital_architecture/color_schemes/lighthouse_of_the_universe_alexandria/lighthouse_alexandria_location_angle_offshore_return_view_selected_2026-04-27.png, 1024x1536, 2,397,995 bytes, unmodified in canon. Exact command: magick /srv/pharos/atrium/canon/20_digital_architecture/color_schemes/lighthouse_of_the_universe_alexandria/lighthouse_alexandria_location_angle_offshore_return_view_selected_2026-04-27.png -crop 1024x683+0+110 +repage -fill '#091927' -colorize 48% -quality 72 assets-src/alexandria/background.webp — 33,636 bytes, 1024x683, well inside the ~500KB interface-background line. The 48% colorize toward the theme's own bg is the namrop treatment (52% toward ink-deep); checked by eye at 45/48/52, and 48 is where the beam, the rails and the city lights all still read once dimmed.",
+    "background_crop": "CROPPED, not full-portrait, and not upscaled to namrop's 1536x1024 — both departures are deliberate. The source is a phone wallpaper; under background-size: cover on a 16:9 desktop a 2:3 portrait shows only 576 of its 1536 rows — it loses 62.5%, nearly two thirds of its height, and SURFACES.md's wiring block sets size and repeat but not background-position, so which third is lost depends on the consumer's default (0% 0%) rather than on this theme. Cropping a 3:2 band at y=110 takes that decision back: the band runs from just above the lantern finial down through the rock base, and BOTH anchorings were rendered and looked at — top-anchored (the CSS default) keeps lantern, beam and the full city line; centre-anchored keeps them too, losing only the waterline. Offset 110 rather than the centred 426 because the beam and lantern live in the top third of the portrait and a centred band decapitates the lighthouse. No upscale to 1536x1024: the source is 1024 wide, so 1536 would be 50% invented pixels for a field that is then dimmed 48% and, on the dark themes, sat behind a backdrop-filter. The tradeoff is a ~2.5x scale-up on a 2560px display, which on a dimmed, blurred field is the cheaper of the two costs. background.json records only size/repeat, per the asset convention.",
+    "shape": "Natively HARD, radius zero at every tier — the conformance cross-check reads the scale, and a zero scale with native 'hard' is what this plate's world actually is: engineered metal, cut stone, harbour concrete, service galleries and gantries, with no roundover anywhere in the frame. The lane baseline's photoreal lock-in asks for 'believable metal and glass, engineered joints and seams, wet stone' and forbids 'painterly blur' — that is a hard-edged grammar. Being natively hard means the picker offers this theme hard and slanted only, the neo-andean arrangement. lift is a faint wash of the lantern gold (rgba(232,178,100,0.07)), so under the default lift treatment the cut edges catch beacon light rather than a neutral white.",
+    "motion": "A lighthouse sweeps, and the theme's pulse IS the beam's period: 3s at amplitude 0.7 — slower than the cockpits (1.5s/1.0) and slower than namrop (2.4s/0.55), because a beacon's job is to be unhurried and unmissable. Amplitude 0.7 sits above namrop's 0.55: the sweep is slow but it is not faint. Every other channel is present and > 0 (fast .13s, med .2s, slide .24s, pulse-fast 1.2s, blink 1.6s, flash 1.8s, breathe 4s) — hush is a value, not a code path, and prefers-reduced-motion still outranks all of it.",
+    "type": "SYSTEM STACKS ONLY — nothing vendored, so nothing to license and nothing that names a font it cannot render. The register wants a condensed technical face (the lane is engineered infrastructure, signage and service decks), so the body and display stacks lead with the condensed/technical system faces that actually ship — DIN Alternate, DIN Condensed and Avenir Next Condensed on Apple platforms, Bahnschrift on Windows — and then fall through to Segoe UI / system-ui, exactly as namrop's Apple-first Avenir Next stack does. No entry in either stack is cross-platform; the fallthrough is what is cross-platform. KEEPER OPTION: Rajdhani and Oxanium are already vendored in this repo for neo-andean (fonts/rajdhani-latin-*.woff2, fonts/oxanium-latin-200-800.woff2) and would suit this register well; adopting either means copying neo-andean's webfonts block into this file, never naming the family without it. Deliberately NOT done here, both to keep Alexandria distinct from neo-andean's face and to keep this theme zero-payload.",
+    "sets": "LANE-DRAFTED, KEEPER-TUNABLE — every value is a plate sample or a role hue, none invented. ai-usage.series-rank walks the plate's own three families and their tiers: pale city cyan, city cyan, deep harbour cyan, the sea-glass green, rail rose, deep rail rose, beam-pale gold, lantern gold, window amber, and the rock-grey mid-tone as the tenth line. Violation is excluded from the ramp (never decorative) and fg is excluded (a series line never wears the text color); minimum pairwise distance across the ten is 61. harness: claude_code = city cyan, secondary = pale city cyan, hermes = lantern gold, opencode = rail rose (min pairwise 69). session-type: main = the sea-glass green (the at-rest lane), cron = lantern gold, delegated = rail rose (min pairwise 85).",
+    "keeper_rulings_owed": "Three. (1) THE NAME — 'Alexandria' is a working name; the lane's own title is 'Lighthouse of the Universe', and the theme could as easily be lighthouse, pharos or beacon. (2) THE PLATE — four keeper-selected images were candidates; the offshore return view won on the sampler, carrying the widest attested spread (city cyan across the whole skyline, tower rails, beam, lantern and window amber all in one frame), where city-to-sea and base/massive-rocks put the city small and distant and would have forced more derivation. If the keeper prefers a different plate the roles must be re-sampled from it, not transposed. (3) THE SHAPE — hard is proposed from the lane's photoreal/engineered lock-in; if the keeper wants Alexandria natively slanted instead (the cut grammar would suit the service-gallery geometry), the radius scale is already zero and only shape.native changes.",
+    "session_type_native": "native = city cyan #7DC6DB (the Pharos beam itself, structure's hue reused as a set member exactly as cron reuses lantern gold): the fourth session type, keeper-ruled 2026-09-02, GC-owned. A Diadem-born session is the light this harbour emits rather than one it receives. Deep harbour cyan #3D93B1 was the alternative and lost on legibility over the navy bg. Separation: min dE 61.8, min RGB distance 127.1 (theme floor is cron/delegated at 60.6 / 85.3); contrast 9.30:1 on --bg."
+  },
+  "schemes": {
+    "light": {
+      "color": {
+        "roles": {
+          "structure": "#267286",
+          "info": "#995a0b",
+          "stability": "#00642f",
+          "threshold": "#6c4700",
+          "violation": "#d30030",
+          "intent": "#a34c70"
+        },
+        "surface": {
+          "bg": "#d9ebfd",
+          "panel": "#e7f3ff",
+          "panel-raised": "#f3f9ff",
+          "bg-deep": "#d7dee5",
+          "terminal": "#dce4ed",
+          "raw": "#dbe2e9",
+          "fg": "#122a3e",
+          "fg-soft": "#473a30",
+          "muted": "#5f6165",
+          "muted-alt": "#727a84",
+          "scrollbar-thumb": "#bec4cf",
+          "scrollbar-thumb-hover": "#9ea5b1",
+          "scrollbar-track": "#e7f3ff",
+          "line": "rgba(70, 143, 163, 0.47)",
+          "shade": "rgba(18, 42, 62, 0.14)"
+        },
+        "syntax": {
+          "bg": "#e4e8ec",
+          "fg": "#122a3e",
+          "key": "#995a0b",
+          "string": "#6c4700",
+          "number": "#5f6165",
+          "bool": "#a34c70",
+          "null": "#727a84"
+        }
+      },
+      "sets": {
+        "ai-usage.harness": {
+          "claude_code": "#267286",
+          "claude_code_secondary": "#26535d",
+          "hermes": "#6c4700",
+          "opencode": "#a34c70"
+        },
+        "ai-usage.series-rank": {
+          "rank-1": "#27545e",
+          "rank-2": "#267286",
+          "rank-3": "#3f95b3",
+          "rank-4": "#00642f",
+          "rank-5": "#a34c70",
+          "rank-6": "#e85887",
+          "rank-7": "#a58848",
+          "rank-8": "#6c4700",
+          "rank-9": "#995a0b",
+          "rank-10": "#797a7e"
+        },
+        "diadem.session-type": {
+          "main": "#00642f",
+          "cron": "#6c4700",
+          "delegated": "#a34c70",
+          "native": "#267286"
+        }
+      },
+      "modifiers": {
+        "hi": {
+          "lightness": -0.1
+        }
+      },
+      "shape": {
+        "lift": "rgba(18, 42, 62, 0.05)"
+      },
+      "notes": {
+        "derivation": "LANE-DRAFTED, KEEPER-TUNABLE — the other half of the pair (keeper 2026-10-01: \"they are forced dark mode or light mode, I want to make the pairs for them please\"). Every value is DERIVED from this theme's own native value for the same token, by one rule applied to all seven themes, never picked: hue held (OKLCH h) and chroma held where sRGB allows; only lightness moves. Roles keep their native WEIGHT — the native contrast against the native bg is carried onto the new bg by a monotone log map (3.5:1 -> 3.0:1, 15:1 -> 8.5:1), so a role that read brighter than its sibling still reads heavier than it, and same-hue pairs stay apart by lightness; floors 4.5:1 for the text-bearing roles (info, violation, intent) and 3:1 for the rest. Categorical sets are rescaled as a WHOLE (native lightness order and log-spacing kept, fitted into the new band on the new panel) — distinctness is their meaning, so a set is never floored member by member; a member that wears a role's colour natively wears that role's colour in this half too, so native identities survive the flip. A last pass pushes the closest pair apart in lightness until each group is at least as separated as its native (OKLab dE x100, capped at 10). Text tokens sit in bands per ground (light: fg-soft 6-9:1, muted 5-7:1, muted-alt 3.5-5:1 — a light ground gives thin type no bloom). An rgba hairline keeps its native EFFECTIVE contrast over its own ground (alpha solved, never copied), floored at 1.45:1 so a line reads as a line. Surfaces keep each surface's own hue. On light they sit on johannah's attested paper ladder (lightness AND a chroma ceiling per surface), so a tinted theme becomes tinted paper, not white; the first draft's near-white ladder was the keeper's 'they revert to a default' (2026-10-01). On dark, chroma stays low so the substrate tints. Shape, motion, type and webfonts are the theme's own in both schemes — that is what makes the two halves one theme.",
+        "roles": "native -> light, contrast on each half's own bg: structure #7dc6db (9.30:1) -> #267286 (4.50:1); info #b87733 (4.85:1) -> #995a0b (4.51:1); stability #34d574 (9.25:1) -> #00642f (6.02:1); threshold #e8b264 (9.31:1) -> #6c4700 (6.80:1); violation #e31c3a (3.81:1) -> #d30030 (4.53:1); intent #ce7296 (5.48:1) -> #a34c70 (4.51:1).",
+        "separation": "Minimum pairwise OKLab dE x100 per group, this half vs native: roles 10.4 (native 13.9); ai-usage.harness 10.4 (native 11.2); ai-usage.series-rank 10.0 (native 8.8); diadem.session-type 13.1 (native 17.3). Every group is at least as separated as its native (or at the dE 10 cap).",
+        "surfaces": "fg 12.09:1 on bg, 13.08:1 on panel; muted 5.10:1; muted-alt 3.57:1. fg is the native PANEL #122a3e — the dark substrate turned into ink; a light panel sits lighter than the bg and panel-raised lighter still, johannah's attested paper ladder.",
+        "background": "The native half's own keeper-selected art, re-encoded for this ground by the native recipe mirrored: the same verbatim source and geometry, washed toward THIS half's bg instead of the native ink. Nothing generated, nothing picked (keeper 2026-10-01: 'You lost the glass, which was important, and the backgrounds'). Exact command: magick /srv/pharos/atrium/canon/20_digital_architecture/color_schemes/lighthouse_of_the_universe_alexandria/lighthouse_alexandria_location_angle_offshore_return_view_selected_2026-04-27.png -crop 1024x683+0+110 +repage -fill '#d9ebfd' -colorize 48% -quality 72 assets-src/alexandria/background.light.webp (the native plate is the same source and geometry at -colorize 48% toward the native bg). tools/scheme_pairs/plates.py reproduces it. A plate made for the light (a daylight render) would be a new asset, the keeper's call."
+      }
+    }
+  }
+}

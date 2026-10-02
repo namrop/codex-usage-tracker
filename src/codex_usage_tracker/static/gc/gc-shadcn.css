@@ -13,11 +13,14 @@
  *
  * Token-pure: zero literals; verified by `python3 conformance.py css`.
  *
- * shadcn apps toggle light/dark with a .dark class; GC themes carry their
- * scheme in their values (johannah is light, the rest dark), so both scopes
- * receive the SAME mappings and the theme decides. When the scheme axis
- * lands (designed 2026-08-30, deferred to the theme round) this file is
- * where light/dark variants meet shadcn's .dark convention.
+ * shadcn apps toggle light/dark with a .dark class; GC carries the scheme in
+ * its own values instead, so both scopes receive the SAME mappings and the
+ * theme decides. The scheme axis landed 2026-10-01: every theme is a light/
+ * dark pair, the loader resolves the app's preference onto <html> as
+ * data-gc-scheme, and the --gc-* tokens these lines read already hold the
+ * rendered half — nothing here changes per scheme. An app that also drives
+ * shadcn's .dark class should derive it from --gc-scheme (or gc:apply's
+ * `scheme`), not from a toggle of its own, or the two can disagree.
  *
  * --chart-1..5: interim mapping onto the ai-usage series-rank set — the only
  * published multi-series ramp today. Repoint to --gc-spectrum-* when the
