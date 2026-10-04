@@ -223,6 +223,14 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
             # published table). Re-verify against the live table before
             # changing these four numbers.
             "claude-sonnet-5": {"input": "2", "output": "10", "cache_read": "0.20", "cache_write": "2.50"},
+            # Sonnet 5.5: Anthropic's own model-pricing table, read 2026-10-03:
+            # https://platform.claude.com/docs/en/about-claude/pricing.md
+            # USD/MTok: base input $2, 5m cache write $2.50, cache hit $0.20,
+            # output $10. The same page's Long context pricing section says
+            # Claude 4.6 and later have standard rates across the full 1M
+            # window, so there is deliberately no nested "long" table.
+            # These are API list-price equivalents, not a Claude Max bill.
+            "claude-sonnet-5-5": {"input": "2", "output": "10", "cache_read": "0.20", "cache_write": "2.50"},
             "claude-sonnet-4-6": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.75"},
             "claude-haiku-4-5": {"input": "1", "output": "5", "cache_read": "0.10", "cache_write": "1.25"},
             # The provider-reported dated ID is Haiku 4.5; the shorter ID

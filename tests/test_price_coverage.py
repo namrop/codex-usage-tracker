@@ -64,6 +64,24 @@ def test_meridian_claude_traffic_resolves_to_anthropic_rates():
     assert classify("custom:meridian-primary", "claude-opus-5") == "exact"
 
 
+def test_sonnet_5_5_on_meridian_uses_its_published_rate_without_a_long_tier():
+    model = "claude-sonnet-5-5"
+    assert LIST_PRICES["anthropic"]["models"][model] == {
+        "input": "2", "output": "10", "cache_read": "0.20", "cache_write": "2.50",
+    }
+    assert classify("custom:meridian-primary", model) == "exact"
+    result = estimate_list_price([{
+        "provider": "custom:meridian-primary", "model": model,
+        "input_tokens": 1_000_000, "output_tokens": 1_000_000,
+        "cache_read_tokens": 1_000_000, "cache_write_tokens": 1_000_000,
+        "total_tokens": 4_000_000, "context_basis": "long",
+    }])
+    assert result["estimate_usd"] == "14.70"
+    assert result["long_context_tokens"] == 0
+    assert coverage_report([_pair("custom:meridian-primary", model)])["actionable"] == []
+    assert classify("custom:meridian-primary", "gpt-6-sol") == "unpriced"
+
+
 def test_haiku_4_5_dated_id_on_meridian_uses_verified_haiku_rates():
     """The provider reports the dated API ID, not the requested short alias."""
     model = "claude-haiku-4-5-20251001"
