@@ -269,6 +269,20 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
     # read as an actual cost of zero.
     "openai": {
         "models": {
+            # GPT-6.1 Sol: OpenAI's own model page and Standard rate card,
+            # both fetched directly as markdown on 2026-10-04:
+            # https://developers.openai.com/api/docs/models/gpt-6.1-sol.md
+            # https://developers.openai.com/api/docs/pricing.md
+            # USD/MTok (input / cache read / cache write / output):
+            # short 2 / 0.10 / 2.50 / 10; long 4 / 0.20 / 5 / 15.
+            # This model's OWN page confirms >272K prompt tokens reprices
+            # the entire request, matching the global threshold above.
+            # Do not borrow GPT-6 Sol's $0.20 short cache-read rate: this
+            # model publishes $0.10. Standard tier only, no regional premium.
+            "gpt-6.1-sol": {
+                "input": "2", "output": "10", "cache_read": "0.10", "cache_write": "2.50",
+                "long": {"input": "4", "output": "15", "cache_read": "0.20", "cache_write": "5"},
+            },
             # GPT-6 Sol and Luna, released 2026-09-22 at roughly half their
             # GPT-5.6 equivalents. Rates read 2026-09-24 from each model's own
             # page (developers.openai.com/api/docs/models/<id>) AND the master
@@ -333,6 +347,18 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
     # hand until a divergence is actually observed.
     "openai-codex": {
         "models": {
+            # GPT-6.1 Sol API list-price counterfactual for Codex usage,
+            # NOT an actual subscription charge or Codex-quota multiplier.
+            # Sources read directly on 2026-10-04:
+            # https://developers.openai.com/api/docs/models/gpt-6.1-sol.md
+            # https://developers.openai.com/api/docs/pricing.md
+            # All four short/long rates and this model's >272K boundary are
+            # verified there. Kept as a separate entry, not a provider alias,
+            # so the Codex and API tables remain independently editable.
+            "gpt-6.1-sol": {
+                "input": "2", "output": "10", "cache_read": "0.10", "cache_write": "2.50",
+                "long": {"input": "4", "output": "15", "cache_read": "0.20", "cache_write": "5"},
+            },
             # Added 2026-09-24. gpt-5.6-terra was the single largest coverage
             # gap in the ledger — 1.007 BILLION tokens over 14 days priced as
             # nothing, because the model existed in the "openai" block but had

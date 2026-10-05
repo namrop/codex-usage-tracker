@@ -43,6 +43,17 @@ def test_no_entry_and_no_default_is_unpriced_not_guessed():
     assert classify("openai", "gpt-99-imaginary") == "unpriced"
 
 
+def test_gpt_6_1_sol_closes_only_the_verified_provider_gaps():
+    for provider in ("openai", "openai-codex"):
+        assert classify(provider, "gpt-6.1-sol") == "exact"
+        assert coverage_report([_pair(provider, "gpt-6.1-sol")])["actionable"] == []
+        assert LIST_PRICES[provider]["default"] is None
+        assert classify(provider, "gpt-6.2-sol") == "unpriced"
+    # A verified OpenAI rate must not paper over missing or foreign routes.
+    for provider in ("custom", "custom:meridian-primary", "custom:meridian-yugen"):
+        assert classify(provider, "gpt-6.1-sol") == "unpriced"
+
+
 def test_unknown_provider_is_unpriced():
     assert classify("provider-that-does-not-exist", "anything") == "unpriced"
 

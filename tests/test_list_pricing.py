@@ -3,6 +3,8 @@ aggregates through provider list prices; unpriced is coverage, never guessed."""
 
 from decimal import Decimal
 
+import pytest
+
 from codex_usage_tracker.list_pricing import LIST_PRICES, estimate_list_price
 
 
@@ -124,6 +126,60 @@ def test_opencode_go_prices_glm_but_leaves_qwen_unpriced():
     assert mixed["estimate_usd"] == "1.40"
     assert mixed["priced_token_share"] == 0.5
     assert mixed["unpriced_providers"] == ["opencode-go"]
+
+
+# ── 2026-10-04 GPT-6.1 Sol pricing round ─────────────────────────────────
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai-codex"])
+def test_gpt_6_1_sol_has_its_own_published_rates(provider):
+    # OpenAI model page + Standard rate card, read 2026-10-04. In particular,
+    # the $0.10 cached-input rate is NOT GPT-6 Sol's $0.20 sibling rate.
+    assert LIST_PRICES[provider]["models"]["gpt-6.1-sol"] == {
+        "input": "2", "output": "10", "cache_read": "0.10", "cache_write": "2.50",
+        "long": {"input": "4", "output": "15", "cache_read": "0.20", "cache_write": "5"},
+    }
+    assert LIST_PRICES["openai"]["models"]["gpt-6.1-sol"] is not (
+        LIST_PRICES["openai-codex"]["models"]["gpt-6.1-sol"]
+    )
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai-codex"])
+@pytest.mark.parametrize("basis, expected", [
+    ("standard", "14.60"), ("long", "24.20"), ("aggregate", "14.60"),
+])
+def test_gpt_6_1_sol_prices_all_four_buckets_on_the_declared_basis(provider, basis, expected):
+    result = estimate_list_price([dict(_bucket(
+        provider, "gpt-6.1-sol",
+        input_tokens=1_000_000, output_tokens=1_000_000,
+        cache_read_tokens=1_000_000, cache_write_tokens=1_000_000,
+    ), context_basis=basis)])
+    assert result["estimate_usd"] == expected
+    assert result["priced_token_share"] == 1.0
+    assert result["long_context_tokens"] == (4_000_000 if basis == "long" else 0)
+    assert result["aggregate_context_tokens"] == (4_000_000 if basis == "aggregate" else 0)
+    assert result["long_context_unverified_tokens"] == 0
+    assert result["rate_basis"] == "standard"
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai-codex"])
+@pytest.mark.parametrize("cache_write, expected_basis", [(1_000, "standard"), (1_001, "long")])
+def test_gpt_6_1_sol_request_boundary_includes_cache(provider, cache_write, expected_basis):
+    from codex_usage_tracker.list_pricing import accumulate_price_bucket, finalize_price_buckets
+
+    buckets = {}
+    accumulate_price_bucket(buckets, {
+        "provider": provider, "model_reported": "gpt-6.1-sol", "record_kind": "api_attempt",
+        "input_tokens": 1_000, "cache_read_tokens": 270_000,
+        "cache_write_tokens": cache_write, "output_tokens": 1_000,
+    })
+    rows = finalize_price_buckets(buckets)
+    assert rows[0]["context_basis"] == expected_basis
+    result = estimate_list_price(rows)
+    assert result["priced_token_share"] == 1.0
+    assert result["long_context_tokens"] == (
+        rows[0]["total_tokens"] if expected_basis == "long" else 0
+    )
 
 
 # ── 2026-09-06 Astra / promotional-sol pricing round ─────────────────────
