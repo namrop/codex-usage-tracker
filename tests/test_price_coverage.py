@@ -54,6 +54,42 @@ def test_gpt_6_1_sol_closes_only_the_verified_provider_gaps():
         assert classify(provider, "gpt-6.1-sol") == "unpriced"
 
 
+def test_k3_256k_uses_verified_k3_api_equivalent_rates():
+    """Kimi documents this ID as K3 with a smaller context envelope, not
+    a separate API-priced model or a subscription-quota discount to apply."""
+    model = "k3-256k"
+    assert classify("kimi-coding", model) == "exact"
+    assert LIST_PRICES["kimi-coding"]["models"][model] == {
+        "input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.00",
+    }
+    result = estimate_list_price([{
+        "provider": "kimi-coding", "model": model,
+        "input_tokens": 1_000_000, "output_tokens": 1_000_000,
+        "cache_read_tokens": 1_000_000, "cache_write_tokens": 1_000_000,
+        "total_tokens": 4_000_000,
+    }])
+    assert result["estimate_usd"] == "21.30"
+    assert result["priced_token_share"] == 1.0
+    assert result["long_context_tokens"] == 0
+    assert coverage_report([_pair("kimi-coding", model)])["actionable"] == []
+    assert LIST_PRICES["kimi-coding"]["default"] is None
+    assert classify("kimi-coding", "k3-128k") == "unpriced"
+    assert classify("custom:meridian-yugen", model) == "unpriced"
+
+
+def test_glm_on_meridian_remains_an_actionable_attribution_gap():
+    """A background-review row with a GLM request ID on a Claude endpoint
+    must not borrow Z.ai's known GLM rate or be suppressed as permanent."""
+    provider, model = "custom:meridian-yugen", "glm-5.3"
+    assert resolve_rate_provider(provider, model) == provider
+    assert classify(provider, model) == "unpriced"
+    assert (provider, model) not in ACKNOWLEDGED_UNPRICED
+    report = coverage_report([_pair(provider, model)])
+    assert [(row["provider"], row["model"]) for row in report["actionable"]] == [
+        (provider, model),
+    ]
+
+
 def test_unknown_provider_is_unpriced():
     assert classify("provider-that-does-not-exist", "anything") == "unpriced"
 

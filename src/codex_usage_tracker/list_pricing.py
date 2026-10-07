@@ -553,6 +553,24 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
     "kimi-coding": {
         "models": {
             "k3": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.00"},
+            # k3-256k: added 2026-10-06. Kimi's first-party model matrix
+            # https://www.kimi.com/code/docs/en/kimi-code/models.html
+            # (read 2026-10-06) explicitly identifies BOTH k3 and k3-256k as
+            # model version K3; this ID caps context at 262,144 tokens. It is
+            # not a sibling-model rate inference or a generic suffix strip.
+            # Kimi Code has no per-token bill; use K3's published API card as
+            # the counterfactual, not the matrix's subscription-quota ratio
+            # (k3 uses about twice the quota of k3-256k).
+            # All four rates re-read 2026-10-06 from the raw vendor export:
+            # https://platform.kimi.ai/docs/pricing/chat.md
+            # Its JSX DocTable supplies $3 input / $15 output / $0.30 cache
+            # hit / $3 cache write at default 5min TTL ($6 at 1h, not modeled).
+            # The text extractor drops these cells; raw curl retains them.
+            # No long tier: the model's own first-party guide explicitly
+            # states flat pricing with no context-length tiering:
+            # https://platform.kimi.ai/docs/guide/kimi-k3-quickstart.md
+            # (read 2026-10-06, "How is Kimi K3 billed?").
+            "k3-256k": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.00"},
             "kimi-k3": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.00"},
         },
         "default": None,
