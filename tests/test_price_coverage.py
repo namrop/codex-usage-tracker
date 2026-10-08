@@ -165,6 +165,68 @@ def test_openrouter_opus_5_5_has_its_own_verified_route_price():
     assert classify("openrouter", "anthropic/claude-opus-5.6") == "unpriced"
 
 
+def test_openrouter_gpt_6_1_sol_closes_only_its_verified_route_gap():
+    model = "openai/gpt-6.1-sol"
+    assert classify("openrouter", model) == "exact"
+    assert LIST_PRICES["openrouter"]["models"][model] == {
+        "input": "2", "output": "10", "cache_read": "0.10", "cache_write": "2.50",
+        "long": {"input": "4", "output": "15", "cache_read": "0.20", "cache_write": "5"},
+    }
+    assert coverage_report([_pair("openrouter", model)])["actionable"] == []
+    assert LIST_PRICES["openrouter"]["default"] is None
+    assert classify("openrouter", "openai/gpt-6.2-sol") == "unpriced"
+    assert classify("openrouter", "gpt-6.1-sol") == "unpriced"
+    for provider in ("custom", "custom:meridian-primary", "custom:meridian-yugen"):
+        assert classify(provider, model) == "unpriced"
+
+
+@pytest.mark.parametrize("basis, expected", [
+    ("standard", "14.60"), ("long", "24.20"), ("aggregate", "14.60"),
+])
+def test_openrouter_gpt_6_1_sol_prices_all_four_published_rates(basis, expected):
+    result = estimate_list_price([{
+        "provider": "openrouter", "model": "openai/gpt-6.1-sol",
+        "input_tokens": 1_000_000, "output_tokens": 1_000_000,
+        "cache_read_tokens": 1_000_000, "cache_write_tokens": 1_000_000,
+        "total_tokens": 4_000_000, "context_basis": basis,
+    }])
+    assert result["estimate_usd"] == expected
+    assert result["priced_token_share"] == 1.0
+    assert result["long_context_tokens"] == (4_000_000 if basis == "long" else 0)
+    assert result["aggregate_context_tokens"] == (4_000_000 if basis == "aggregate" else 0)
+    assert result["long_context_unverified_tokens"] == 0
+    assert result["rate_basis"] == "standard"
+
+
+@pytest.mark.parametrize("record_kind, cache_write, expected_basis", [
+    ("api_attempt", 1_000, "standard"),
+    ("api_attempt", 1_001, "long"),
+    ("historical_aggregate", 1_001, "aggregate"),
+])
+def test_openrouter_gpt_6_1_sol_context_tier_uses_the_request_boundary(
+    record_kind, cache_write, expected_basis,
+):
+    from codex_usage_tracker.list_pricing import accumulate_price_bucket, finalize_price_buckets
+
+    buckets = {}
+    accumulate_price_bucket(buckets, {
+        "provider": "openrouter", "model_reported": "openai/gpt-6.1-sol",
+        "record_kind": record_kind,
+        "input_tokens": 1_000, "cache_read_tokens": 270_000,
+        "cache_write_tokens": cache_write, "output_tokens": 1_000,
+    })
+    rows = finalize_price_buckets(buckets)
+    assert rows[0]["context_basis"] == expected_basis
+    result = estimate_list_price(rows)
+    assert result["priced_token_share"] == 1.0
+    assert result["long_context_tokens"] == (
+        rows[0]["total_tokens"] if expected_basis == "long" else 0
+    )
+    assert result["aggregate_context_tokens"] == (
+        rows[0]["total_tokens"] if expected_basis == "aggregate" else 0
+    )
+
+
 def test_meridian_priced_identically_to_direct_anthropic():
     tokens = dict(input_tokens=1_000_000, output_tokens=100_000)
     direct = estimate_list_price([

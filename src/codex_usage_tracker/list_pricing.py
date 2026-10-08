@@ -434,6 +434,25 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
             "anthropic/claude-opus-5.5": {
                 "input": "4", "output": "20", "cache_read": "0.20", "cache_write": "5",
             },
+            # GPT-6.1 Sol on this exact OpenRouter route, read 2026-10-07:
+            # https://openrouter.ai/api/v1/models
+            # https://openrouter.ai/api/v1/models/openai/gpt-6.1-sol/endpoints
+            # https://openrouter.ai/openai/gpt-6.1-sol
+            # Catalog per-token prompt/completion/cache-read/cache-write:
+            # 0.000002 / 0.00001 / 0.0000001 / 0.0000025, converted to USD/MTok.
+            # Its own override starts at min_prompt_tokens 272000 and lists
+            # 0.000004 / 0.000015 / 0.0000002 / 0.000005. The exact model's
+            # first-party page independently confirms the >272K full-request
+            # boundary (raw markdown read 2026-10-07):
+            # https://developers.openai.com/api/docs/models/gpt-6.1-sol.md
+            # Standard routing only: the OpenRouter page lists Flex at half,
+            # Fast at twice and regional endpoints at 1.1x these rates. The
+            # ledger has no endpoint/tier identity, so this remains an estimate,
+            # not an exact bill. Source OpenRouter, not a borrowed OpenAI entry.
+            "openai/gpt-6.1-sol": {
+                "input": "2", "output": "10", "cache_read": "0.10", "cache_write": "2.50",
+                "long": {"input": "4", "output": "15", "cache_read": "0.20", "cache_write": "5"},
+            },
             # The 272K long-context override is published in the catalog for
             # both GPT-6 routes and matches OpenAI's own documented threshold
             # and multipliers — independent cross-confirmation.
