@@ -26,7 +26,7 @@ from typing import Any, Mapping
 TRACKER = Path("/srv/pharos/repos/codex-usage-tracker")
 MAILROOM = Path("/srv/pharos/repos/oasis-mailroom")
 CANON = Path("/srv/pharos/atrium/canon")
-MANIFEST_REL = "07_systems/ai_usage_tracker/billing/ai_subscription_receipts.jsonl"
+MANIFEST_REL = "22_life_and_logistics/finances/ai_subscriptions/ai_subscription_receipts.jsonl"
 BILLING_LEDGER = "/home/luis/.local/state/codex-usage-tracker/billing_facts.sqlite3"
 # The canon root is root-owned while .git is luis's: name it safe for this
 # call rather than depending on whichever HOME's gitconfig the scheduler has.
@@ -85,9 +85,11 @@ def _commit_manifest(count: int) -> str:
     message = (f"ai usage: {count} subscription charge{'s' if count != 1 else ''} from receipt mail "
                f"(monthly receipts job, keeper msg 1553058626350874726)") if count else (
         "ai usage: receipts file changes an earlier run left uncommitted (monthly receipts job)")
-    added = _run([*GIT, "add", "--", MANIFEST_REL], cwd=CANON, timeout=120)
-    if added.returncode != 0:
-        raise RuntimeError(f"git add failed: {added.stderr.strip()[-300:]}")
+    tracked = _run([*GIT, "ls-files", "--error-unmatch", "--", MANIFEST_REL], cwd=CANON, timeout=120)
+    if tracked.returncode != 0:
+        added = _run([*GIT, "add", "--", MANIFEST_REL], cwd=CANON, timeout=120)
+        if added.returncode != 0:
+            raise RuntimeError(f"git add failed: {added.stderr.strip()[-300:]}")
     for attempt in range(3):
         result = _run([*GIT, "commit", "-q", "--only", "-m", message, "--", MANIFEST_REL], cwd=CANON, timeout=300)
         if result.returncode == 0:

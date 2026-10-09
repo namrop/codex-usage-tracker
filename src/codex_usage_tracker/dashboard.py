@@ -65,7 +65,7 @@ from . import prebuilt_views, usage_cache
 
 
 DEFAULT_ATRIUM_ROOT = "/Users/luisramirez/Digital_Workspace"
-SUBSCRIPTION_RECEIPTS_MANIFEST = "07_systems/ai_usage_tracker/billing/ai_subscription_receipts.jsonl"
+SUBSCRIPTION_RECEIPTS_MANIFEST = "22_life_and_logistics/finances/ai_subscriptions/ai_subscription_receipts.jsonl"
 DEFAULT_LEDGER_RELATIVE_PATH = "12_runtime/ledgers/codex_usage/codex_usage_ledger.jsonl"
 QUOTA_RESPONSE_FIELDS = (
     "harness",
