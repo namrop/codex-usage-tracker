@@ -310,6 +310,30 @@ def test_provider_rows_use_explicit_mapping_grouping_sorting_and_bounded_other(t
     assert "private-provider" not in json.dumps(rows)
 
 
+def test_antigravity_direct_and_bridge_pool_as_google(tmp_path):
+    """Paperclip SIL-78, keeper 2026-10-22: "google label is allowed. we should
+    do that". Direct agy calls and the Meridian agy bridge as recorded by
+    Hermes and OpenClaw are one Google row, never Other."""
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage("agy-direct", "2026-07-13T03:10:00Z", provider="antigravity",
+               model_requested="gemini-3.8-flash-n", input_tokens=50),
+        _usage("agy-hermes", "2026-07-13T03:20:00Z", provider="custom:meridian-agy",
+               model_requested="gemini-3.8-flash-high", input_tokens=30),
+        _usage("agy-openclaw", "2026-07-13T03:30:00Z", provider="meridian-agy",
+               model_requested="gemini-3.8-flash-high", input_tokens=20),
+        _usage("anthropic", "2026-07-13T03:40:00Z", provider="anthropic",
+               model_requested="claude-opus-5", input_tokens=10),
+    ], fact_type="usage_event_v1")
+
+    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+
+    assert [(row["label"], row["total_tokens"]) for row in payload["provider_rows"]] == [
+        ("Google", 100), ("Anthropic", 10),
+    ]
+    validate_unified_public_projection(payload)
+
+
 def test_current_provider_and_model_splits_do_not_collapse_to_other(tmp_path):
     ledger = tmp_path / "usage.sqlite3"
     append_sqlite_facts(ledger, [
