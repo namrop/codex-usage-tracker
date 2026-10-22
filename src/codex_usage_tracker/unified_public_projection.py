@@ -312,8 +312,12 @@ def _ratio_percentage(numerator: int, denominator: int) -> float:
 def _bounded_groups(
     groups: dict[Any, dict[str, Any]], *, other_key: Any, maximum: int
 ) -> list[tuple[Any, dict[str, Any]]]:
+    # A group whose corrections net it to exactly zero was wholly superseded
+    # (SIL-77: an OpenClaw transcript row reversed and recounted from Codex's
+    # per-call rows under another provider) and is dropped below like any
+    # empty group. Only a NEGATIVE net is arithmetic the chart cannot show.
     if any(
-        group["has_token_correction"] and group["total_tokens"] <= 0
+        group["has_token_correction"] and group["total_tokens"] < 0
         for group in groups.values()
     ):
         raise ValueError("public comparison groups cannot represent correction arithmetic")

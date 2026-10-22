@@ -157,12 +157,17 @@ def request_context_basis(row: Mapping[str, Any]) -> str:
     evidence that any one call was long-context. Aggregates price at the
     standard rate and are reported as such rather than guessed either way.
     """
-    if row.get("record_kind") != "api_attempt":
-        return "aggregate"
     prompt = sum(
         int(row.get(field) or 0)
         for field in ("input_tokens", "cache_read_tokens", "cache_write_tokens")
     )
+    # A correction that reverses one whole request (it names the record kind
+    # it reverses) prices on that request's own basis, so the pair nets to
+    # zero at either tier (SIL-77 OpenClaw Codex backfill).
+    if row.get("record_kind") == "correction" and row.get("x_corrected_record_kind") == "api_attempt":
+        prompt = abs(prompt)
+    elif row.get("record_kind") != "api_attempt":
+        return "aggregate"
     return "long" if prompt > LONG_CONTEXT_PROMPT_TOKENS else "standard"
 
 # provider -> {"models": {model: rates}, "default": rates | None}

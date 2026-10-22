@@ -849,6 +849,32 @@ def test_builder_rejects_nonpositive_comparison_group_from_correction_arithmetic
     assert "overcorrected" not in str(exc_info.value)
 
 
+def test_builder_drops_a_group_its_corrections_net_to_exactly_zero(tmp_path):
+    # SIL-77: an OpenClaw transcript row reversed in full and recounted under
+    # another provider leaves its old group empty, not unrepresentable.
+    ledger = tmp_path / "usage.sqlite3"
+    append_sqlite_facts(ledger, [
+        _usage(
+            "superseded", "2026-07-13T03:10:00Z", provider="openai",
+            model_requested="gpt-5.6", input_tokens=50,
+        ),
+        _usage(
+            "positive", "2026-07-13T03:11:00Z", provider="anthropic",
+            model_requested="claude-sonnet-5", input_tokens=100,
+        ),
+        _usage(
+            "reversal", "2026-07-13T03:10:00Z", provider="openai",
+            model_requested="gpt-5.6", record_kind="correction",
+            input_tokens=-50, corrects_source_namespace="private:source",
+            corrects_source_event_id="superseded",
+        ),
+    ], fact_type="usage_event_v1")
+
+    payload = build_unified_public_projection(ledger, hours=1, now=NOW)
+    assert [(row["label"], row["total_tokens"]) for row in payload["provider_rows"]] == [("Anthropic", 100)]
+    assert payload["summary"]["total_tokens"] == 100
+
+
 def test_size_guard_measures_pretty_serialization_actually_written(tmp_path, monkeypatch):
     ledger = tmp_path / "usage.sqlite3"
     append_sqlite_facts(ledger, [], fact_type="usage_event_v1")

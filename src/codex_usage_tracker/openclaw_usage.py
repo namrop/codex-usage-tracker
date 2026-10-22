@@ -72,7 +72,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from .canonical_ledger import ValidationError, canonical_timestamp, decimal_string, normalize_fact
 
@@ -304,7 +304,11 @@ def collect_openclaw_usage(
         finally:
             connection.close()
     codex = {"files_read": 0, "calls": 0, "before_cutover": 0, "duplicate_response": 0, "malformed": 0}
-    yield from _codex_rollout_calls(home, source_prefix, cutover_ms, threads, codex)
+    yield from codex_rollout_calls(
+        home, source_prefix, threads, codex,
+        counted=lambda turn_id: _rollout_counted(turn_id, cutover_ms),
+        min_mtime=cutover_ms / 1000 - _ROLLOUT_MTIME_SLACK.total_seconds(),
+    )
     return {"skipped": skipped, "stores": stores, "codex_rollouts": codex}
 
 
@@ -325,23 +329,26 @@ def _codex_usage(usage: Any) -> dict[str, int | None] | None:
     }
 
 
-def _codex_rollout_calls(
+def codex_rollout_calls(
     home: str | Path,
     source_prefix: str,
-    cutover_ms: int,
     threads: dict[tuple[str, str], tuple[str, str | None, bool]],
     counts: dict[str, int],
+    *,
+    counted: Callable[[str], bool],
+    min_mtime: float | None = None,
 ) -> Iterator[dict[str, Any]]:
-    """One ``api_attempt`` per Codex ``token_usage_record`` in a turn that
-    started at or after the cutover."""
+    """One ``api_attempt`` per Codex ``token_usage_record`` in a turn for which
+    ``counted(turn_id)`` holds (the lane: turns started at or after the
+    cutover; the SIL-77 backfill: turns started before it). Files last
+    written before ``min_mtime`` are not read."""
     root = Path(home).expanduser()
     if not root.is_dir():
         return
-    oldest_mtime = cutover_ms / 1000 - _ROLLOUT_MTIME_SLACK.total_seconds()
     seen: set[str] = set()
     for path in sorted(root.glob(_ROLLOUT_GLOB)):
         try:
-            if not path.is_file() or path.stat().st_mtime < oldest_mtime:
+            if not path.is_file() or (min_mtime is not None and path.stat().st_mtime < min_mtime):
                 continue
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
@@ -371,7 +378,7 @@ def _codex_rollout_calls(
                 if not (thread_id and turn_id and response_id):
                     counts["malformed"] += 1
                     continue
-                if not _rollout_counted(turn_id, cutover_ms):
+                if not counted(turn_id):
                     counts["before_cutover"] += 1
                     continue
                 if response_id in seen:
