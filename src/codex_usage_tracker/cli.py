@@ -798,6 +798,7 @@ def cmd_collect_all(args: argparse.Namespace) -> int:
             search_ledger=args.search_ledger,
             search_audit=args.search_audit,
             openclaw_home=args.openclaw_home or None,
+            antigravity_home=getattr(args, "antigravity_home", None) or None,
             usage_since=getattr(args, "usage_since", None),
         )
     except Exception as exc:
@@ -1265,6 +1266,14 @@ def main() -> int:
         help=(
             "OpenClaw home; its agents' stores are read (read-only) for model calls and web "
             "searches. Empty string disables the OpenClaw lanes"
+        ),
+    )
+    collect_parser.add_argument(
+        "--antigravity-home",
+        default=os.environ.get("ANTIGRAVITY_HOME", "~/.gemini/antigravity-cli"),
+        help=(
+            "Antigravity CLI (agy) home; its conversation stores are read (read-only) for "
+            "direct agy model calls. Empty string disables the Antigravity lane"
         ),
     )
     collect_parser.add_argument(

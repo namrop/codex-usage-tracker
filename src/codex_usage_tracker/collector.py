@@ -64,6 +64,7 @@ from .search_events import (
     write_watermark,
 )
 from .usage_adapters import collect_claude_usage, collect_hermes_usage, collect_opencode_usage
+from .antigravity_usage import ANTIGRAVITY_USAGE_LANE, collect_antigravity_usage
 from .openclaw_usage import (
     OPENCLAW_SEARCH_LANE,
     OPENCLAW_USAGE_LANE,
@@ -1025,6 +1026,7 @@ def collect_all(
     search_ledger: str | Path | None = None,
     search_audit: str | Path | None = None,
     openclaw_home: str | Path | None = None,
+    antigravity_home: str | Path | None = None,
     usage_since: float | None = None,
     claude_retry_files: Iterable[str] = (),
     retry_files_out: list[str] | None = None,
@@ -1386,6 +1388,15 @@ def collect_all(
                 OPENCLAW_USAGE_LANE,
                 lambda: collect_openclaw_usage(openclaw_home, f"{source_prefix}:openclaw"),
             )
+        # Direct Antigravity CLI (agy) calls (Paperclip SIL-78: "ensure agy
+        # usage is accounted for"). Bridged agy calls are recorded by the
+        # calling harness and skipped by the adapter.
+        antigravity_rows: list[dict[str, Any]] = []
+        if antigravity_home is not None:
+            antigravity_rows = collect_source(
+                ANTIGRAVITY_USAGE_LANE,
+                lambda: collect_antigravity_usage(antigravity_home, f"{source_prefix}:antigravity"),
+            )
         usage_batches = [
             persist_source("hermes", usage_ledger, hermes, fact_type="usage_event_v1"),
             *(
@@ -1397,6 +1408,10 @@ def collect_all(
         if openclaw_home is not None:
             usage_batches.append(
                 persist_source(OPENCLAW_USAGE_LANE, usage_ledger, openclaw_rows, fact_type="usage_event_v1")
+            )
+        if antigravity_home is not None:
+            usage_batches.append(
+                persist_source(ANTIGRAVITY_USAGE_LANE, usage_ledger, antigravity_rows, fact_type="usage_event_v1")
             )
         result["usage"] = _aggregate_append_results(usage_batches)
         if usage_since is not None:

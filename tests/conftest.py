@@ -50,6 +50,8 @@ def _isolate_default_sources(tmp_path, monkeypatch):
       an active WAL.
     """
     monkeypatch.setenv("OPENCLAW_HOME", str(tmp_path / "no-openclaw-home"))
+    # ``collect-all`` also defaults to reading ~/.gemini/antigravity-cli.
+    monkeypatch.setenv("ANTIGRAVITY_HOME", str(tmp_path / "no-antigravity-home"))
     # CLI parser defaults (the dashboard reads SEARCH_LEDGER_PATH as "is a
     # ledger configured", so the module defaults are patched, not the env).
     monkeypatch.setattr("codex_usage_tracker.cli.DEFAULT_SEARCH_LEDGER", str(tmp_path / "default-search-ledger.sqlite3"))
