@@ -60,7 +60,7 @@ _CONFIDENCE_VALUES = frozenset({"exact", "reconstructed", "mixed", "unknown"})
 _PUBLIC_SOURCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _PUBLIC_PROVIDER_LABELS = frozenset({
     "Codex", "Anthropic", "OpenAI", "OpenCode Go", "OpenCode", "OpenRouter",
-    "DeepSeek", "Local models", "LLM Gateway", "Kimi Coding", "Z.AI", "Google", "Other",
+    "DeepSeek", "Local models", "LLM Gateway", "Kimi Coding", "Z.AI", "Other",
 })
 _PUBLIC_PROVIDER_MAP = {
     "openai-codex": "Codex",
@@ -87,16 +87,6 @@ _PUBLIC_PROVIDER_MAP = {
     # Pooled here as on every share view; they used to fall into Other.
     "custom:meridian-primary": "Anthropic",
     "custom:meridian-yugen": "Anthropic",
-    # Antigravity CLI (agy) on the Google AI plan (keeper, Paperclip SIL-78,
-    # 2026-10-22: "google label is allowed. we should do that"). Direct agy
-    # calls (`antigravity` lane) and the Meridian agy bridge as recorded by
-    # Hermes (`custom:meridian-agy`) and OpenClaw (`meridian-agy`) are one
-    # Google account: the bridge is a route, as the Claude Meridian lanes are.
-    # agy can also serve Claude on that plan; the account, not the model,
-    # names the provider.
-    "antigravity": "Google",
-    "custom:meridian-agy": "Google",
-    "meridian-agy": "Google",
 }
 _PUBLIC_HARNESS_MAP = {
     "hermes": "Hermes",
