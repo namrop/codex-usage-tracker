@@ -464,6 +464,32 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
                 "input": "10", "output": "50", "cache_read": "1.00", "cache_write": "12.50",
                 "long": {"input": "20", "output": "75", "cache_read": "2.00", "cache_write": "25"},
             },
+            # GLM-5.3 on this exact OpenRouter route, read 2026-10-21:
+            # https://openrouter.ai/api/v1/models
+            # https://openrouter.ai/api/v1/models/z-ai/glm-5.3/endpoints
+            # Catalog model-level per-token prompt/completion/cache-read:
+            # 0.000000079 / 0.0000014 / 0.000000078, converted to USD/MTok.
+            # First observed 2026-10-21 (two ACP sessions, 31 calls).
+            #
+            # DISPERSION IS EXTREME ON THIS ROUTE, worse than the caveat above.
+            # The catalog figure is the Wafer (wafer/us, fp4) endpoint's row:
+            # the lowest input and output price among the 48 endpoints listed
+            # at read time. Most endpoints, including Z.AI's own (z-ai/fp8),
+            # list 1.40 / 4.40 / 0.26, which equals the first-party ``zai``
+            # entry in this table; the priority-tier alibaba/prime endpoint
+            # lists 2.80 / 8.80 / 0.56. Every endpoint other than Wafer's
+            # bills more for input and output, so this entry sits at the
+            # floor of the range, not its centre. The served endpoint is not
+            # recorded (no provider_request_id on these rows, and Hermes sets
+            # no OpenRouter provider-routing preferences), so it cannot be
+            # chosen per request. Same figure Hermes' own estimate used.
+            #
+            # cache_write: the ``input_cache_write`` key is ABSENT at model
+            # level and on every endpoint but Amazon Bedrock's. Recorded as 0
+            # (written-down possible understatement, not a verified zero).
+            # No long-context tier: no endpoint publishes a context override,
+            # so no nested "long" table.
+            "z-ai/glm-5.3": {"input": "0.079", "output": "1.40", "cache_read": "0.078", "cache_write": "0"},
             # cache_write ABSENT from the catalog for the four models below —
             # the ``input_cache_write`` key is simply not present on the model
             # or any endpoint. Recorded as 0, which is a KNOWN UNDERSTATEMENT
