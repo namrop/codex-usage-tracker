@@ -147,6 +147,44 @@ def test_haiku_4_5_dated_id_on_meridian_uses_verified_haiku_rates():
     assert result["priced_token_share"] == 1.0
     assert coverage_report([_pair("custom:meridian-yugen", model)])["actionable"] == []
 
+def test_antigravity_bridge_gemini_resolves_to_first_party_google_rates():
+    """SIL-114: the Meridian agy bridge carries Gemini 3.8 Flash at a
+    thinking-level selector. Google's own card (read 2026-10-23) has one
+    rate with no context split and no per-token cache write."""
+    provider, model = "custom:meridian-agy", "gemini-3.8-flash-high"
+    expected = {"input": "0.75", "output": "3.75", "cache_read": "0.075", "cache_write": "0"}
+    for level in ("", "-high", "-medium", "-low"):
+        assert LIST_PRICES["google"]["models"]["gemini-3.8-flash" + level] == expected
+    assert LIST_PRICES["google"]["default"] is None
+    assert resolve_rate_provider(provider, model) == "google"
+    assert classify(provider, model) == "exact"
+    result = estimate_list_price([{
+        "provider": provider, "model": model,
+        "input_tokens": 1_000_000, "output_tokens": 1_000_000,
+        "cache_read_tokens": 10_000_000, "cache_write_tokens": 1_000_000,
+        "total_tokens": 13_000_000, "context_basis": "long",
+    }])
+    # 0.75 + 3.75 + 10 x 0.075 + 0: no long table, so a long request stays
+    # on the single published rate and is not reported as long-billed.
+    assert result["estimate_usd"] == "5.25"
+    assert result["long_context_tokens"] == 0
+    assert result["priced_token_share"] == 1.0
+    assert coverage_report([_pair(provider, model)])["actionable"] == []
+
+
+def test_antigravity_bridge_alias_does_not_price_foreign_or_unlisted_models():
+    """The same lane lists Claude and GPT-OSS ids, and agy served some
+    bridge generations with claude-opus-4-6-thinking. None may borrow Gemini
+    rates, and an unlisted Gemini id must still wake the nightly job."""
+    provider = "custom:meridian-agy"
+    for model in ("claude-opus-4-6-thinking", "claude-sonnet-4-6",
+                  "gpt-oss-120b-medium", "gemini-3.9-flash-high"):
+        assert resolve_rate_provider(provider, model) == provider
+        assert classify(provider, model) == "unpriced"
+    # The Claude Meridian lanes do not gain Gemini rates either.
+    assert classify("custom:meridian-yugen", "gemini-3.8-flash-high") == "unpriced"
+
+
 def test_openrouter_opus_5_5_has_its_own_verified_route_price():
     model = "anthropic/claude-opus-5.5"
     assert classify("openrouter", model) == "exact"

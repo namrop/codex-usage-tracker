@@ -112,9 +112,21 @@ RATE_BASIS = "standard"
 # Hermes ledger writer, not here. An alias would price these rows correctly
 # today, but it would hide the writer defect and claim that every anonymous
 # custom endpoint is Meridian.
+#
+# ``custom:meridian-agy`` added 2026-10-23 (SIL-114, nightly price-coverage
+# job). It is the same Meridian bridge running the Antigravity CLI (agy) on
+# Luis's Google AI subscription, port 3459. The subscription has no per-token
+# bill, so Google's public Gemini API card is the counterfactual, exactly as
+# Anthropic's is for the Claude lanes. The exact-model guard matters even
+# more here: Hermes' config lists Claude (``claude-opus-4-6-thinking``,
+# ``claude-sonnet-4-6``) and ``gpt-oss-120b-medium`` ids on this same lane,
+# and agy's own stores show 15 bridge generations served by
+# ``claude-opus-4-6-thinking``. Those must NOT pick up Gemini rates; they
+# fall through and surface as coverage.
 PROVIDER_RATE_ALIASES: Dict[str, str] = {
     "custom:meridian-yugen": "anthropic",
     "custom:meridian-primary": "anthropic",
+    "custom:meridian-agy": "google",
 }
 
 
@@ -400,6 +412,55 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
                 "input": "5", "output": "30", "cache_read": "0.50", "cache_write": "0",
                 "long": {"input": "10", "output": "45", "cache_read": "1.00", "cache_write": "0"},
             },
+        },
+        "default": None,
+    },
+    # Google, FIRST-PARTY Gemini API card. Added 2026-10-23 (SIL-114) for the
+    # Antigravity bridge (``custom:meridian-agy``, aliased above), which
+    # carries a Google AI subscription with no per-token bill. Rates read
+    # 2026-10-23 from Google's own pricing page, Standard tier, Paid column:
+    # https://ai.google.dev/gemini-api/docs/pricing.md (section "Gemini 3.8
+    # Flash", plain curl, HTML table text). Thinking levels confirmed on the
+    # model's own page (same date):
+    # https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash.md
+    # ("Thinking: Supported (low, medium, high)").
+    #
+    # Read: input $0.75, output $3.75 ("including thinking tokens"), context
+    # caching $0.075, all "through December 31, 2026".
+    #
+    # DATED TARIFF, NOT MODELED: the same page states every one of these
+    # rates DOUBLES "starting January 1, 2027" ($1.50 / $7.50 / $0.15). This
+    # table has no date dimension, so from 2027-01-01 this entry understates
+    # new Gemini traffic 2x. Pricing the pre-2027 rows at the 2027 rate would
+    # overstate them instead, so the current rate is recorded and the
+    # understatement is written down here. RECHECK at the turn of the year.
+    # The nightly gate will NOT wake for it, because the model stays "exact".
+    #
+    # cache_write: Google publishes NO per-token cache-write rate. Explicit
+    # caching bills storage at $0.50 / 1M tokens PER HOUR, a time-based
+    # charge this per-token table cannot express. Recorded as 0, a
+    # written-down possible understatement rather than a verified zero. (The
+    # ledger records zero cache-write tokens on this lane anyway.)
+    #
+    # No long-context tier: the 3.8 Flash card publishes a single rate with
+    # no prompt-size split, so no nested "long" table, and nothing goes in
+    # LONG_CONTEXT_UNVERIFIED.
+    #
+    # The ``-high`` / ``-medium`` / ``-low`` ids are agy's thinking-level
+    # selectors for this one model, not separate models. agy's own
+    # conversation stores (served-model field) show the bridge's Gemini
+    # generations were all served by ``gemini-3.8-flash-n``, agy's internal
+    # name for Gemini 3.8 Flash. Google bills thinking as output tokens, with
+    # no per-level price, so each level carries the model's rate as an
+    # explicit entry. The suffix is NOT stripped generically.
+    #
+    # No provider default: a new Gemini id must surface as coverage.
+    "google": {
+        "models": {
+            "gemini-3.8-flash": {"input": "0.75", "output": "3.75", "cache_read": "0.075", "cache_write": "0"},
+            "gemini-3.8-flash-high": {"input": "0.75", "output": "3.75", "cache_read": "0.075", "cache_write": "0"},
+            "gemini-3.8-flash-medium": {"input": "0.75", "output": "3.75", "cache_read": "0.075", "cache_write": "0"},
+            "gemini-3.8-flash-low": {"input": "0.75", "output": "3.75", "cache_read": "0.075", "cache_write": "0"},
         },
         "default": None,
     },
