@@ -683,6 +683,31 @@ LIST_PRICES: Dict[str, Dict[str, Any]] = {
             # (read 2026-10-06, "How is Kimi K3 billed?").
             "k3-256k": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.00"},
             "kimi-k3": {"input": "3", "output": "15", "cache_read": "0.30", "cache_write": "3.00"},
+            # k3.1-pro: added 2026-10-25 (SIL-150). Its own row on Moonshot's
+            # API card, NOT inferred from K3 (it is cheaper than K3):
+            # https://platform.kimi.ai/docs/pricing/chat (read 2026-10-25),
+            # row `kimi-k3.1-pro`: $2.00 input / $10.00 output / $0.20 cached
+            # input / $2.00 cache write at the default 5m TTL ($4.00 at 1h,
+            # not modeled, so 1h-TTL writes are understated 2x as for K3).
+            # Cross-checked on the RMB card https://platform.kimi.com/docs/pricing/chat
+            # (read 2026-10-25): ¥13 / ¥68 / ¥1.30 / ¥13 5m / ¥26 1h, with the
+            # same card's K3 row at ¥20 matching the K3 entry above.
+            # PROVENANCE: on 2026-10-25 the raw `.md` export served an EMPTY
+            # K3 table (the 2026-10-06 note above no longer holds); these
+            # cells were read from the JSX DocTable props in the rendered
+            # HTML page fetched with plain curl.
+            # Id mapping: Kimi Code's model matrix
+            # https://www.kimi.com/code/docs/en/kimi-code/models.html (read
+            # 2026-10-25) lists Kimi Code id `k3.1-pro` as model version
+            # K3.1 Pro. `k3.1-pro-highspeed` is a DIFFERENT model id with its
+            # own, higher card row ($4 / $20); it is deliberately not added
+            # (unobserved), and must never resolve to this entry.
+            # No long tier: the model's own guide
+            # https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart.md
+            # (read 2026-10-25, "How is Kimi K3.1 Pro billed?") states flat
+            # pricing with "no tiering by context length".
+            "k3.1-pro": {"input": "2.00", "output": "10.00", "cache_read": "0.20", "cache_write": "2.00"},
+            "kimi-k3.1-pro": {"input": "2.00", "output": "10.00", "cache_read": "0.20", "cache_write": "2.00"},
         },
         "default": None,
     },

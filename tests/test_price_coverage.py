@@ -412,8 +412,21 @@ def test_published_rates_reached_the_providers_that_serve_them():
         ("zai", "glm-5.3"), ("zai", "glm-5.3-flash"), ("zai", "glm-5.2"),
         ("opencode-go", "glm-5.3"), ("opencode-go", "glm-5.2"),
         ("kimi-coding", "k3"), ("kimi-coding", "kimi-k3"),
+        ("kimi-coding", "k3.1-pro"), ("kimi-coding", "kimi-k3.1-pro"),
     ):
         assert classify(provider, model) == "exact", f"{provider}/{model}"
+
+
+def test_k3_1_pro_carries_its_own_card_row_and_highspeed_stays_unpriced():
+    """SIL-150: K3.1 Pro is priced from its own row on Moonshot's card
+    (cheaper than K3), and the Highspeed id -- a distinct, dearer row -- must
+    surface as coverage rather than borrow the base model's rate."""
+    from codex_usage_tracker.list_pricing import LIST_PRICES
+
+    rates = LIST_PRICES["kimi-coding"]["models"]["k3.1-pro"]
+    assert rates == {"input": "2.00", "output": "10.00", "cache_read": "0.20", "cache_write": "2.00"}
+    assert "long" not in rates
+    assert classify("kimi-coding", "k3.1-pro-highspeed") == "unpriced"
 
 
 def test_local_zero_dollar_providers_are_covered():
