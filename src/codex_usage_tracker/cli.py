@@ -34,6 +34,7 @@ LOGGER = logging.getLogger(__name__)
 
 DEFAULT_ATRIUM_ROOT = "/Users/luisramirez/Digital_Workspace"
 DEFAULT_LEDGER_RELATIVE_PATH = "12_runtime/ledgers/codex_usage/codex_usage_ledger.jsonl"
+DAEMON_FETCH_RETRY_DELAYS = (60, 120, 300, 600)
 DEFAULT_SOL_ATRIUM_ROOT = "/srv/pharos/atrium/canon"
 DEFAULT_SOL_HERMES_HOME = os.environ.get("HERMES_HOME") or "/var/lib/hermes/primary"
 DEFAULT_CLAUDE_PROBE_DIR = "~/.local/state/codex-usage-tracker/claude-probe"
@@ -875,6 +876,38 @@ def _collect_summary_line(result: dict[str, Any]) -> str:
     return "collect-all: " + " ".join(fields)
 
 
+def _fetch_usage_with_retries(stop_event: threading.Event) -> Optional[dict]:
+    """Retry failed reads within this hour; never retry a durable append.
+
+    Use monotonic elapsed time so request duration counts toward the budget.
+    The final backoff repeats until it would reach the next hourly boundary;
+    the caller then resumes its normal top-of-hour schedule. A failed request
+    that itself runs past the boundary starts the new hour's budget at once,
+    so the outer hourly sleep cannot skip the hour it landed in.
+    """
+    deadline = time_module.monotonic() + _sleep_until_next_hour()
+    failures = 0
+    while not stop_event.is_set():
+        payload = fetch_usage()
+        if payload is not None:
+            return payload
+        delay = DAEMON_FETCH_RETRY_DELAYS[min(failures, len(DAEMON_FETCH_RETRY_DELAYS) - 1)]
+        failures += 1
+        now = datetime.now().isoformat()
+        remaining = deadline - time_module.monotonic()
+        if remaining <= 0:
+            print(f"{now} fetch failed after the hour boundary; fetching again for the new hour.")
+            deadline = time_module.monotonic() + _sleep_until_next_hour()
+            failures = 0
+            continue
+        if delay >= remaining:
+            print(f"{now} fetch failed; next retry at next hour boundary.")
+            return None
+        print(f"{now} fetch failed; retrying in {delay}s (retry {failures}).")
+        stop_event.wait(delay)
+    return None
+
+
 def cmd_daemon(args: argparse.Namespace) -> int:
     ledger_path = _resolve_ledger_path(args.atrium_root, args.ledger)
     stop_event = threading.Event()
@@ -885,6 +918,10 @@ def cmd_daemon(args: argparse.Namespace) -> int:
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
+    LOGGER.info(
+        "Hourly usage daemon started; fetch retry delays=%s seconds (last repeats within hour)",
+        DAEMON_FETCH_RETRY_DELAYS,
+    )
 
     while not stop_event.is_set():
         delay = _sleep_until_next_hour()
@@ -893,10 +930,11 @@ def cmd_daemon(args: argparse.Namespace) -> int:
         if stop_event.is_set():
             break
 
-        payload = fetch_usage()
+        # No stop check here: a successful in-flight fetch is still recorded
+        # once; the loop condition ends the daemon after that append.
+        payload = _fetch_usage_with_retries(stop_event)
         now = datetime.now().isoformat()
         if payload is None:
-            print(f"{now} fetch failed; will retry at next hour boundary.")
             continue
         try:
             append_row(payload, ledger_path)

@@ -148,7 +148,17 @@ codex-usage-tracker daemon --ledger /tmp/test_ledger.jsonl
 Daemon behavior:
 
 - Sleeps until the next top-of-hour boundary (`minute=0`, `second=0`)
-- Fetches and writes ledger row
+- Fetches and writes one ledger row on success; failed fetches write no rows
+- On a fetch failure, retries after 1, 2, 5, then 10 minutes; repeats the
+  10-minute backoff while it fits before the next hourly boundary, then
+  resumes the hourly schedule. Each attempt re-reads credentials read-only.
+  If a slow failed request crosses the boundary, starts the new hour's fetch
+  immediately rather than sleeping through that hour.
+- Logs full chained tracebacks on fetch/read failures (not credential values,
+  request headers or response bodies). A DNS outage is a failed observation,
+  never zero usage; no historical rows are invented to fill an outage.
+- Never re-fetches/re-appends a saved sample because projection or summary
+  rendering failed
 - Repeats indefinitely
 - Handles `SIGINT` / `SIGTERM` and prints a shutdown message
 

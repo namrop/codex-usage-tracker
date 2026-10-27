@@ -79,8 +79,8 @@ def _read_auth_file() -> Optional[Dict[str, Any]]:
     try:
         with auth_file.open("r", encoding="utf-8") as fp:
             return json.load(fp)
-    except (OSError, json.JSONDecodeError) as exc:
-        LOGGER.error("Failed to read auth file %s: %s", auth_file, exc)
+    except (OSError, json.JSONDecodeError):
+        LOGGER.exception("Failed to read auth file %s", auth_file)
         return None
 
 
